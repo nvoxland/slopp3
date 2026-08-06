@@ -736,7 +736,7 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
     ;; what landed
     :delta :deltas :group :forms :affected :renamed :renamed-namespaces
     :mentions :changed-nses :reverted :skipped-shared :moved-to :moved :rewrote
-    :callers :edges-declared :export-not-landed :export-note
+    :callers :edges-declared :export-not-landed :export-note :shadowed :shadowed-note
     :extracted :step :to-ns :keys :unknown-shape
     ;; what a realias moved, and what it declined to
     :sites :lib :left-behind

@@ -13,7 +13,7 @@
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
             [slopp.store.render :as render]
-            [clojure.string :as str] [clojure.set :as set] [slopp.index.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules]))
+            [clojure.string :as str] [clojure.set :as set] [slopp.index.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit]))
 
 (defn- sites-in-analysis
   "[row col] positions (in the analyzed source) where `def-ns/def-name` is
@@ -917,7 +917,10 @@
   pure analysis over a store value; the executor applies it atomically.
   Returns {:error msg} with teaching for the impossible cases, else
   {:new-ns? :new-src|:append :to-require-adds :rewrites {fid {:ns :name :node
-  :src}} :require-adds {ns spec-str} :module-rows :removals :moved}.
+  :src}} :require-adds {ns spec-str} :module-rows :removals :moved :shadowed}.
+  `:shadowed` is ALWAYS present, empty or not — an empty vector says the
+  dequalification was checked against the moved forms' locals and cleared,
+  where an absent key would only say this version does not look.
   Every `:module-rows` entry is `{:from-ns :from-var :to :to-name}` — the
   CALL, in both directions, so a consumer can act per moved var rather than
   per caller.
@@ -928,8 +931,14 @@
   visibility replaces var privacy); opts {:export true} marks them ^:export
   for a deep target with outside callers. Known limits (compile-gated, they
   fail honestly): :refer'd moved names refuse up front; java :import
-  clauses aren't copied; a local shadowing a qualified stay-callee inside a
-  moved form would mis-qualify."
+  clauses aren't copied; a local shadowing a bare stay-callee inside a moved
+  form mis-qualifies, and fails at COMPILE because the same rewrite reaches
+  the binding vector.
+  The OPPOSITE direction does not fail at all — a dequalified call landing on
+  a local of its own name is valid Clojure that calls the local — so it is
+  REPORTED as :shadowed rather than refused: the detector
+  (slopp.edit/local-name?) has no scope tracking, and refusing on an
+  over-match would block a legitimate move with no way through."
   [store from-ns moved-names to-ns opts]
   (let [moved    (set (map symbol moved-names))
         missing  (remove #(store/form-named store from-ns %) moved)
@@ -1084,6 +1093,24 @@
                                            (fn [s] (when (and (some? (namespace s))
                                                               (to-prefixes (symbol (namespace s))))
                                                      (symbol (name s))))))
+            ;; dequalify's blind spot, REPORTED rather than refused. `base/x`
+            ;; goes bare, and if the moved form binds a LOCAL named `x` the
+            ;; result is valid Clojure that calls the local — different
+            ;; behaviour, nothing red until the runtime. The mirror direction
+            ;; (qualify turning a bare local into `from/x`) rewrites the
+            ;; binding vector too, so it fails at compile and stays a
+            ;; documented limit. local-name? has no scope tracking, which is
+            ;; exactly why this reports: refusing on an over-match would block
+            ;; a legitimate move with no way through.
+            shadowed    (vec (for [e (store/forms store from-ns)
+                                   :when (moved (:name e))
+                                   :let [sx (store/form-sexpr (:node e))]
+                                   :when sx
+                                   s (distinct (filter symbol? (tree-seq coll? seq sx)))
+                                   :when (and (some? (namespace s))
+                                              (to-prefixes (symbol (namespace s)))
+                                              (edit/local-name? sx (symbol (name s))))]
+                               {:form (:name e) :was s :now (symbol (name s))}))
             to-specs    (cond-> need-specs
                           from-alias (conj {:lib from-ns
                                             :spec (str "[" from-ns " :as " from-alias "]")}))
@@ -1164,7 +1191,8 @@
                    :module-rows module-rows
                    :removals (vec (sort moved))
                    :from-require-drops from-require-drops
-                   :caller-require-drops caller-require-drops}
+                   :caller-require-drops caller-require-drops
+                   :shadowed shadowed}
             new-ns?
             (assoc :new-src
                    (str "(ns " to-ns

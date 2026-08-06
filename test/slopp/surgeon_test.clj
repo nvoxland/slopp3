@@ -531,3 +531,35 @@
         (is (nil? (get (:module-tiers (:store @sess)) "tu.split"))
             (pr-str (:module-tiers (:store @sess)))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-move-that-dequalifies-into-a-locals-shadow-says-so
+  ;; The target ns gets no self-alias, so `base/dead-ends` goes bare on the
+  ;; way in. When the moved form BINDS a local of that name, the result
+  ;; compiles, passes every gate, and calls the local instead of the var.
+  ;; Nothing here is red — which is why the move has to SAY so.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'shx.base "(ns shx.base)\n\n(defn dead-ends \"D.\" [x] [x])\n")
+      (ops/module-dep! sess "shx.mid" "shx.base" :prompt "mid calls base")
+      (ops/ingest! sess 'shx.mid
+                   (str "(ns shx.mid (:require [shx.base :as base]))\n\n"
+                        "(defn summarize \"S.\" [{:keys [dead-ends]}]\n"
+                        "  (base/dead-ends dead-ends))\n"))
+      (is (= [[3]] (ops/query-eval sess "(shx.mid/summarize {:dead-ends 3})"))
+          "before the move the qualified call reaches the var")
+      (let [r (ops/move-forms! sess 'shx.mid '[summarize] 'shx.base
+                               :prompt "consolidate")]
+        (is (nil? (:error r)) (pr-str r))
+        (testing "the move LANDS and reports the collision it made"
+          (is (= [{:form 'summarize :was 'base/dead-ends :now 'dead-ends}]
+                 (:shadowed r)))
+          (is (string? (:shadowed-note r))
+              "the rows alone do not say the code still compiles"))
+        (testing "the damage the report exists for"
+          (is (re-find #"\(dead-ends dead-ends\)"
+                       (query/query-source sess 'shx.base))
+              "the call went bare onto its own parameter")
+          (let [after (ops/query-eval sess "(shx.base/summarize {:dead-ends 3})")]
+            (is (not= [[3]] after)
+                (str "the local now answers the call: " (pr-str after))))))
+      (finally (ops/close! sess)))))

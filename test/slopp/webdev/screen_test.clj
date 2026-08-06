@@ -39,12 +39,36 @@
   (let [web-clj (io/file (.toURI (io/resource "slopp/web.clj")))
         web-dir (io/file (.getParentFile web-clj) "web")
         prefix  (inc (count (.getPath web-dir)))
-        fw      (into {"slopp/web.clj" (slurp web-clj)}
+        subtree (into {"slopp/web.clj" (slurp web-clj)}
                       (for [f (file-seq web-dir)
                             :when (and (.isFile f) (.endsWith (.getName f) ".clj"))]
-                        [(str "slopp/web/" (subs (.getPath f) prefix)) (slurp f)]))]
+                        [(str "slopp/web/" (subs (.getPath f) prefix)) (slurp f)]))
+        ;; ...plus what the framework requires from OUTSIDE its own subtree.
+        ;; The derivation above reads slopp/web/** and stops, which is the
+        ;; same assumption a hand-kept list makes — that the framework IS the
+        ;; subtree — so it went stale the day slopp.web.router started calling
+        ;; slopp.lang, and vendored a router that cannot load. Production has
+        ;; this right (build.clj's slim file-set names slopp/lang.cljc); this
+        ;; is the test's SECOND derivation of the same fact, and the two
+        ;; disagreed. Following the requires is what keeps them agreeing:
+        ;; a .cljc wins over a .clj, because that is the one slopp.lang is.
+        fw      (into subtree
+                      (for [nm (distinct
+                                (map second
+                                     (mapcat #(re-seq #"\[slopp\.([a-z][a-z0-9.*+!?<>=_-]*)" %)
+                                             (vals subtree))))
+                            :when (not (str/starts-with? nm "web"))
+                            :let [base (str "slopp/" (str/replace nm "." "/"))
+                                  hit  (some (fn [ext]
+                                               (when-let [u (io/resource (str base ext))]
+                                                 [(str base ext) u]))
+                                             [".cljc" ".clj"])]
+                            :when hit]
+                        [(first hit) (slurp (second hit))]))]
     (is (contains? fw "slopp/web/screen.clj")
         "the derivation found the framework — an empty file map vendors nothing and every assertion below would fail for the wrong reason")
+    (is (contains? fw "slopp/lang.cljc")
+        "and its out-of-subtree deps: slopp.web.router calls slopp.lang, which ships WITH the framework and does not live under it")
     ;; and its DEPS, for the same reason and with the same cause: vendoring
     ;; copies SOURCE and discards the pom, so the framework's own requires have
     ;; to arrive separately. Production derives this list at build time into

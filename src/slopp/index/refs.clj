@@ -508,7 +508,13 @@
     :what "a symbol token, INCLUDING a quoted one, which the CST rewrite
            reaches like any other"
     :blind "a symbol ASSEMBLED at runtime — (symbol (str base \".core\")) — is
-            not a token, so no pass can see it and no report can name it"}
+            not a token, so no pass can see it and no report can name it.
+
+            And `:rewrite`'s promise that the change is VERIFIED means it
+            compiles, which is not the same as meaning what it did. A move
+            dequalifying `base/x` onto a form that binds a LOCAL named `x`
+            passes every gate and calls the local; move-plan reports those as
+            `:shadowed` because no oracle downstream can"}
 
    {:kind :string :producer 'occurrences-of :handling :report
     :what "the name inside a string literal. :prose splits the risk: a string

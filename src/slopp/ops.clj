@@ -2127,7 +2127,11 @@ recompiled (session/after-write! session ns-sym)]
   :module-edge delta — the move IS the declared intent), refusing only a
   cycle-closer; `:export true` marks moved vars ^:export when the deep
   target must stay callable from outside its subtree. One atomic group +
-  changeset, compile-gated, verified across every touched namespace."
+  changeset, compile-gated, verified across every touched namespace.
+  The one thing that verification structurally cannot see is REPORTED
+  instead: `:shadowed` names each moved call dequalified onto a LOCAL of the
+  same name — valid Clojure that calls the local, so it compiles and stays
+  green while the behaviour changes."
   [session from-ns form-names to-ns & {:keys [prompt agent export]}]
   (let [st   (:store @session)
         plan (refactor/move-plan st from-ns form-names to-ns {:export export})]
@@ -2364,6 +2368,20 @@ recompiled (session/after-write! session ns-sym)]
                                  :group gid
                                  :test summary}
                           (seq edges) (assoc :edges-declared edges)
+                          ;; the one thing this move did that NOTHING
+                          ;; downstream can catch: the compile gate is happy,
+                          ;; the suite is green, and the call reaches a
+                          ;; different thing than it did before.
+                          (seq (:shadowed plan))
+                          (assoc :shadowed (:shadowed plan)
+                                 :shadowed-note
+                                 (str "a dequalified call landed on a LOCAL of"
+                                      " the same name. This COMPILES and stays"
+                                      " green — the call now reaches the local"
+                                      " rather than the var, so the behaviour"
+                                      " changed and no test can see it. Rename"
+                                      " the local, or the moved var, in each"
+                                      " row above."))
                           (seq miss)
                           (assoc :export-not-landed miss
                                  :export-note

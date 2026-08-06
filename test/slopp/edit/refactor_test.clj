@@ -637,3 +637,37 @@
     (let [p (refactor/realias-plan (stranded-store) 'w.c 'thing 'other)]
       (is (:error p))
       (is (re-find #"clojure\.string" (:error p))))))
+
+(deftest a-dequalified-call-landing-in-a-locals-shadow-is-reported
+  ;; move-plan dequalifies `base/dead-ends` -> `dead-ends`, because the target
+  ;; ns gets no self-alias. If the moved form also BINDS a local of that name,
+  ;; the result is valid Clojure with different behaviour: the local shadows
+  ;; the var, so nothing is red until the runtime throws a ClassCastException
+  ;; somewhere else. The MIRROR direction (qualifying a bare ref that is a
+  ;; local) rewrites the binding vector too and therefore fails at compile —
+  ;; honestly. This one does not, which is the whole reason it is reported.
+  (let [base      "(ns sh.base)\n\n(defn dead-ends \"D.\" [x] [x])\n"
+        moving    (fn [params body]
+                    (-> (store/empty-store)
+                        (store/ingest 'sh.base base)
+                        (store/ingest 'sh.mid
+                                      (str "(ns sh.mid (:require [sh.base :as base]))\n\n"
+                                           "(defn summarize \"S.\" " params "\n  " body ")\n"))))
+        shadowing (moving "[{:keys [dead-ends]}]" "(base/dead-ends dead-ends)")
+        clean     (moving "[ends]" "(base/dead-ends ends)")
+        p         (refactor/move-plan shadowing 'sh.mid '[summarize] 'sh.base {})
+        q         (refactor/move-plan clean 'sh.mid '[summarize] 'sh.base {})]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    ;; REPORTED, never refused: the detector (edit/local-name?) has no scope
+    ;; tracking and over-matches by design, so under a refusal its cost turns
+    ;; from a slightly wrong hint into a legitimate move blocked with no way
+    ;; through.
+    (is (= [{:form 'summarize :was 'base/dead-ends :now 'dead-ends}]
+           (:shadowed p)))
+    ;; The control, and it carries its own liveness: the SAME dequalification
+    ;; runs here and the report is silent, so the empty answer is a judgement
+    ;; about locals rather than a rewrite that never happened.
+    (let [moved-src (apply str (map str (:append q)))]
+      (is (re-find #"\(dead-ends ends\)" moved-src)
+          (str "control must dequalify too: " moved-src))
+      (is (empty? (:shadowed q))))))

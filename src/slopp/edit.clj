@@ -92,16 +92,27 @@
         (map symbol)
         ["binding" "with-redefs" "with-local-vars"]))
 
-(defn- local-name?
+(defn local-name?
   "Is `sym` bound as a LOCAL name anywhere in sexpr `s` — a parameter vector or
   a let-style binding vector, destructuring included?
 
-  Used ONLY to explain a D3 refusal, never to permit one. A local named
-  `binding` cannot invoke `clojure.core/binding` (locals shadow it), so the
-  refusal IS a false positive — but permitting on that basis needs real scope
-  tracking to be sound, and a denylist with a hole is worse than one with a
-  confusing message. So: still refuse, and say why. Over-matching here costs a
-  slightly wrong hint and nothing else."
+  DELIBERATELY imprecise, and that bounds what it may be used for. There is no
+  scope tracking: it finds the name in ANY binding vector under a binder head,
+  not only one that covers the reference. So it may REPORT a shadow and must
+  never be the thing that REFUSES one. Both callers pay the over-match the
+  same way:
+
+  - `dialect-check` explains a D3 refusal it does not permit. A local named
+    `binding` cannot invoke `clojure.core/binding` (locals shadow it), so the
+    refusal IS a false positive — but permitting on that basis needs real
+    scope tracking to be sound, and a denylist with a hole is worse than one
+    with a confusing message. So: still refuse, and say why.
+  - `slopp.edit.refactor/move-plan` reports `:shadowed` when dequalifying a
+    moved call would land it on a local of the same name. Over-matching costs
+    a spurious warning; refusing on it would block a legitimate move with no
+    way through.
+
+  Over-matching here costs a slightly wrong hint and nothing else."
   [s sym]
   (boolean
    (some (fn [node]
