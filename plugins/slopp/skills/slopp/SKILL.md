@@ -822,6 +822,11 @@ full map.
   substitution. Absence of either means checked-and-none, never unchecked.
 - `:sites` (ns_realias) — qualified references rewritten. Zero is a real
   answer: the alias was declared and never used.
+- `:callers-unrewritten` (edit_move_forms) — the caller POPULATION beside
+  `:rewrote`. Every row is a form the reference graph says calls a moved name
+  that the rewrite did not change. Usually empty; a row is not automatically a
+  bug (a quoted target is left whole on purpose), but read it — a count with
+  no population beside it is how "rewrote 2 of 4 callers" once reported `:ok`.
 - `:shadowed` (edit_move_forms) — **the one report that green does not
   cover.** Moving a form INTO a namespace it calls makes those refs BARE, and
   if the moved form binds a LOCAL of that name the call now reaches the local:

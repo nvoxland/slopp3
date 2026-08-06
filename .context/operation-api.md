@@ -254,6 +254,33 @@ write time, instead of a fresh JVM catching it later.
   `refactor/move-plan` (unit-tested), atomic executor. Limits (refused or
   compile-gated): `:refer`'d moved names, java `:import`, shadowed-local
   mis-qualification.
+  **A CALLER IS ADDRESSED BY FORM ID, never by name** (2026-08-06, friction
+  #18). A `defmethod` body defines no var, so the store names the form nil and
+  every reference row it produces carries `:from-var` nil — and the caller set
+  was keyed on that name. Three decisions read it, so a nameless caller was
+  missing from all three: it got no require, no alias and no rewrite, and the
+  move returned `:ok` having rewritten 2 of 4. The row has carried
+  `:from-form` all along, which is the only address every form has. The cycle
+  check read the same name set, so a two-way split whose stay-side caller was
+  a `defmethod` was not refused at all — it planned a require cycle and left
+  the cold-load gate to find it against a namespace that had not moved.
+  **`:callers-unrewritten`** is the population beside the count: every form the
+  graph says calls a moved name that the pass did not change. Empty is
+  ordinary and a row is not always a bug, but `rewrote 2 of 4` can no longer
+  read as success — the watched-red run reports `:rewrote 0, :callers []`
+  beside the exact form it missed.
+  **NO QUOTED SYMBOL IS EVER REWRITTEN TO AN ALIAS.** An alias is the calling
+  namespace's private business and a quoted name is resolved by whoever reads
+  it later, so all three passes agree: a call takes the alias (bare in the
+  target, which has no self-alias), a quoted reference into the moved set
+  takes `to-ns`'s FULL name, and a quoted name that would merely be
+  dequalified or alias-qualified is left exactly as written. `rewrite-symbols`
+  gained `{:skip-quoted true}` / `{:only-quoted true}` for it — opt-in,
+  because a RENAME rewrites a quoted name to another fully-qualified name and
+  is right to. Live population: `slopp.git` holds
+  `(store/late-ref 'slopp.git.client/fetch-remote!)` and `slopp.ops` one for
+  `slopp.kernel.boot`. Getting it wrong is invisible twice over — the form
+  compiles, and a late-bound carrier only resolves at its first CALL.
   **`:shadowed` is the one limit that is neither refused nor compile-gated**,
   and it is the reason the two shadow directions are not one entry. A moved
   form's refs INTO the target go BARE (the target gets no self-alias), so
