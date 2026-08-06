@@ -372,6 +372,25 @@ reads wrong. `:test-sibling` means the `-test` namespace still carries the old
 name, which files its tests under the old module. Absence of `:left-behind`
 means checked-and-none, not unchecked.
 
+**SOURCE inside a string comes back under `:string-source`, and it is the one
+row whose sibling half DID move.** A fixture written as `(store/ingest st
+'acme.billing "(ns acme.billing)\n…")` names the namespace twice, three tokens
+apart. The quoted symbol is a token and gets rewritten; the `(ns …)` inside the
+string does not. What you are left with is a fixture that ingests source
+declaring one namespace under the name of another — and it stays green, because
+a fixture shaped like that usually asserts `nil`. Rank these above ordinary
+token strings: nothing else in `:left-behind` is a pair that has come apart.
+
+**REGEX literals come back under `:regex`, and they are the ones to judge
+first.** A pattern is data, so no rewrite reaches it, and a regex escapes its
+dots so the text sweep misses the spelling too. The failure is asymmetric,
+which is what makes it worth ranking: a PRESENCE assertion built on a stale
+pattern turns red and you go fix it, while an ABSENCE assertion — `(is (not
+(re-find #"acme\.billing" src)))` — becomes permanently true and guards
+nothing, forever, with no symptom. Reporting rather than rewriting is
+deliberate: a pattern may be matching text rather than code, and substituting
+inside one silently changes what a guard searches for.
+
 **Qualified KEYWORDS come back under `:keyword`, and they are the silent
 class.** `:acme.billing/customer-id` survives `acme.billing` → `acme.invoice`
 intact, because a keyword is not a reference — nothing breaks, no test turns
@@ -553,7 +572,7 @@ on searching for a string that could no longer occur anywhere.
 
 A search pattern is DATA: `ns_rename` rewrites requires, qualified references,
 quoted symbols and prose, while `rename_sweep` matches text and a regex escapes
-its dots — so no verb reaches it. Pair the absence with a match against
+its dots — so no verb REWRITES it. Pair the absence with a match against
 something you KNOW contains the name:
 
 ```clj
@@ -561,9 +580,20 @@ something you KNOW contains the name:
 (is (= [] (vec (re-seq #"acme\.client" src))))                          ; …and it is absent HERE
 ```
 
-slopp reports this one for you: the **`stale-pattern`** advisory flags a regex
-naming a name in your store's OWN root family that is neither a namespace nor a
-prefix of one. The scoping is deliberate and it is the fixture rule read
+slopp reports this one for you, at two different moments. `ns_rename` names
+every pattern spelling the old name under `:left-behind :regex`, which is the
+earlier and more useful half — you are told at the moment the staleness is
+CREATED, while you still remember what the pattern was for. Later, the
+**`stale-pattern`** advisory flags a regex naming a name in your store's OWN
+root family that is neither a namespace nor a prefix of one.
+
+The two are not redundant, and the gap between them is worth knowing: the
+advisory can only see a pattern naming a namespace that no longer EXISTS. A
+rename that frees a name for something else to reuse leaves a pattern that
+still resolves and now matches the WRONG code, and no existence check can ever
+say so. Only the rename's report catches that one.
+
+The advisory's scoping is deliberate and it is the fixture rule read
 backwards — *a fixture that names no real production code is exactly a fixture
 this check cannot see*. One more reason to name fixtures after nothing real.
 

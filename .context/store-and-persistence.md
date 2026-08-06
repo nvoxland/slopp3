@@ -171,6 +171,46 @@ sites derive from it:
 - `db/write-snapshot!` is the single transaction tail `persist!`/`append!`
   share — element rows + next-id + registry meta rows + blobs.
 
+## The name-keyed registers (`store/name-keyed-registers`, 2026-08-06)
+
+The registers keyed by a NAME rather than by form id — the total account of
+where a namespace or module name appears OUTSIDE the code that spells it.
+Five: `:module-tiers`, `:module-platforms`, `:module-roles` (namespace grain)
+and `:modules`, `:module-test-edges` (module grain, and both name modules in
+their VALUES as well as their keys). `:namespaces` is declared here too, as
+`:kind :primary` — it is the index rather than a claim about a name, and
+`ns-rename!` re-keys it directly, but a row nobody wrote and a row handled
+elsewhere are indistinguishable from outside.
+
+**Why it exists is the same argument as the fold-field registry, learned
+twice.** A name in code is a reference and the CST rewrite reaches it; a name
+in a register is a DECLARATION, which no rewrite walks, so a re-addressing verb
+has to move it and missing one is silent — the declaration ends up naming a
+namespace that no longer exists while the code that moved goes ungated. This
+store accumulated fifteen orphans in one wave of deletions before
+`ns-grained-registers` existed.
+
+That fix did not generalise, and the gap is worth recording because it stood
+through every rename slopp ever ran: the two MODULE-grained registers were
+re-keyed by a hand-written arm inside `ns-rename!` that named `:modules` and
+never `:module-test-edges`. Which failure a rename produced depended on nothing
+a reader could see — whether the edge happened to be test-only. Now:
+
+- `ns-grained-registers` is DERIVED from this map (`:grain :namespace` + a
+  `:record` fn), so the two cannot disagree; they already had, over
+  `:module-roles`.
+- `store/rekey-module-registers` handles the module grain from the same list,
+  with each row's `:edge-opts` carrying `:test-only` — the test relation is an
+  option rather than a branch somebody has to remember to write.
+- `refs/occurrences-of` scans the `:kind :declaration` rows, keys AND values,
+  so a register that did NOT follow a rename is REPORTED rather than silent.
+- `rename-test/a-rename-leaves-no-name-keyed-register-naming-the-old-name`
+  derives its population from the store value (every string-keyed map is a
+  name-keyed register; `:namespaces` is keyed by symbols), so a sixth register
+  is graded by existing rather than by being added to the test.
+
+ADDING A REGISTER = one row here. Nothing else.
+
 ## Gotchas
 
 - Delta payloads must stay plain EDN data (no CST nodes, no objects).

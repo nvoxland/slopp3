@@ -549,6 +549,58 @@ one cause**, and here the discriminator cost nothing — the lint LIST names its
 forms while the count only says "2". A count invites the story; the list ends
 it.
 
+### Sharpening (2026-08-06): the conflation moves UP, into the vocabulary a check reports in
+
+Every statement of Core 1 so far points at a check's RESULT: an empty list that
+could mean clean or could mean nothing was looked at. Epic A found the same
+shape one level higher, in the VOCABULARY the result is expressed in.
+
+`refs/occurrences-of` is the one producer every rename verb reads, and it tagged
+each row with a `:via` — seven values, documented as a table in its docstring.
+The table was accurate prose. It was also the only account of the vocabulary
+that existed, so:
+
+- Its `:register` row named three registers against a store that had **five**.
+  A `:module-roles` declaration was re-keyed by the rename and invisible to the
+  report whose entire job is to say what the rename left behind, and
+  `:module-test-edges` was in no list at all — not the report's, and not the
+  rename's, which is why a test-only module edge had been left naming the old
+  module by **every rename that ever ran**.
+- Two whole KINDS produced no row: a regex literal spelling the name, and a
+  string carrying `(ns <target>)`. Measured store-wide once they were declared:
+  **14 and 16 sites.**
+
+The load-bearing observation is what those two had in common with a kind that
+simply had zero instances: **nothing.** A kind slopp cannot see emits no row,
+and a kind this store happens to have none of emits no row. Until the kind is
+written down there is no observation that distinguishes them, and no report can
+be honest about its own coverage because it has no name for what it missed.
+
+**So: a vocabulary a check reports in is itself a population, and it needs the
+same totality treatment as any other.** `crossings/kinds` had already done this
+one layer out — every exit declares `:checked-by` and `:blind`, and a kind in
+neither list is a finding. `refs/mention-kinds` is that shape one layer in:
+each way a name can appear declares `:handling` (`:rewrite` / `:report` /
+`:blind`) and, where blind, WHAT is not covered. **`:blind` is a legitimate
+answer; an unstated one is not.**
+
+Two tells that this is worth reaching for, both cheap to check:
+
+1. **The vocabulary lives in prose.** A table in a docstring cannot be graded,
+   and drifts exactly as silently as a comment asserting parity (Core 2's
+   sharpening, same week). This one had drifted by two registers.
+2. **Two producers of the same vocabulary exist and neither is canonical.**
+   `store/ns-grained-registers` already carried the ns-grained registers as
+   DATA — for precisely this reason, after fifteen orphaned declarations in one
+   wave — and `occurrences-of` restated a different three beside it. The lesson
+   had been learned once, at one grain, and did not generalise because nothing
+   named the general thing.
+
+The registry earns its keep the moment it is written: flipping a row from
+`:blind` to `:report` turned its own totality test RED both times, naming the
+kind that was now declared and still unproduced. A vacuous row reads exactly
+like coverage, which is the whole class in one sentence.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
