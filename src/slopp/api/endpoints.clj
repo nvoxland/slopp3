@@ -202,3 +202,32 @@
   (if-let [d (:detail (:web/reads req))]
     {:status 200 :body d}
     {:status 404 :body {:error "no such module"}}))
+
+(defn ^{:web/method :get :web/path "/api/search" :web/auth :public
+        :web/request contracts/search-request
+        :web/response contracts/search-results
+        :web/reads {:results [:browse/search []]}}
+  search
+  "GET /api/search?q=&limit= — the door: everything whose name, docstring,
+  recorded why or source matches, ranked across all three grains at once.
+
+  Every other read here answers a question a reader already knows how to ask.
+  This is the one that finds the ADDRESS, which is why it is the entry that
+  decides whether the rest of the reader API has a way in at all — `/store`
+  opening on a module diagram with no way to ask a question was the finding
+  that drove the wave.
+
+  **Always 200, including for a blank query and for no matches.** The search
+  screen is reachable by URL, so a reader can arrive having asked nothing; the
+  honest answer to that is the empty state, and a 400 would put an error panel
+  in front of someone who did nothing wrong. No-match is 200 for the ordinary
+  reason. There is no 404 here at all — unlike `/api/module/:m`, this endpoint
+  has no subject that can fail to exist, only a question that can go
+  unanswered, and those are different things.
+
+  `:web/request` is declared for the same reason `form`'s is: without it the
+  generated client takes a params map nothing reads from, so `?q=` answers on
+  the wire and is unreachable through the typed client — which pushes a
+  consumer toward the hand-rolled fetch `direct-http` refuses."
+  [req]
+  {:status 200 :body (:results (:web/reads req))})

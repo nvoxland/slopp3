@@ -688,3 +688,140 @@ gaps    (gaps-by-ns st (:test-map @session))
               :callers-out-test (count (outside q test-ns?))
               :effectful?       (contains? eff q)
               :exported?        (boolean (modules/export-level store sym nm))}]))))
+
+(def ^:export search-limits
+  "`GET /api/search`'s row budget: the `:default` when a caller sends no
+  `limit`, and the `:max` a larger one is clamped to.
+
+  Data rather than two numbers spelled into a docstring, because slopp-ui's
+  screen says \"showing 20 of 340\" and that sentence goes false the moment a
+  silently-applied ceiling disagrees with the number the consumer thinks it
+  asked for. The endpoint clamps from here and the contract quotes from here.
+
+  Neither bound is a judgement about search quality — `:total` and `:totals`
+  are counted BEFORE the cut, so a reader is never told a smaller number than
+  matched."
+  {:default 50 :max 200})
+
+(defn ^:export search
+  "`GET /api/search` — everything in the store whose NAME, DOCSTRING, recorded
+  WHY or SOURCE contains `q`, ranked, sorted, and counted per kind.
+
+  The door to the reader API. Every other read here answers a question you
+  already know how to ask — this is the one that finds the address, and
+  without it `/store` opens on a module diagram with no way in.
+
+  **Rank is ONE scale across all three kinds**, not per-kind normalised, so a
+  consumer can render a single ranked list of typed rows and have it mean
+  something: an exactly-named module really does beat a form matched on a word
+  in its docstring. The ladder is name-exact 1.0, name-prefix 0.9,
+  name-substring 0.8, doc 0.5, why 0.4, source 0.2 — the field that earned the
+  rank is the field a reader would have searched for, in that order.
+
+  **`:matched` is not decoration.** A hit whose name says nothing about the
+  query reads as a bug unless the row can say the docstring is what matched.
+  Source is the escape hatch and is labelled as such, which is what lets it be
+  included at all: unlabelled, a source hit looks like a ranking failure.
+
+  **`:totals` counts per kind BEFORE the limit**, and that is the whole reason
+  it exists rather than being left to the consumer: a limited hit list cannot
+  know how many modules matched beyond the cut. `:total` is the same number
+  summed. Both are honest when `:hits` is shorter than either.
+
+  Sorted here, by rank then name. A consumer re-deriving the sort is a second
+  opinion on the one thing it asked this side to own, and it goes stale the
+  first time the ladder changes.
+
+  A blank or absent `q` is the EMPTY STATE — same shape, zeroes, no hits —
+  rather than an error: the screen is reachable by URL, and a reader who lands
+  on it without a query has not done anything wrong."
+  [store q limit]
+  (let [q*  (str/trim (str q))
+        lq  (str/lower-case q*)
+        n   (max 1 (min (:max search-limits) (or limit (:default search-limits))))
+        zero {:query q* :total 0 :totals {:modules 0 :namespaces 0 :forms 0} :hits []}]
+    (if (str/blank? q*)
+      zero
+      (let [sentence (fn [d] (when d
+                               (let [t (str/trim (first (str/split d #"(?<=\.)\s")))]
+                                 (when-not (str/blank? t) t))))
+            nm-rank  (fn [nm] (let [ln (str/lower-case (str nm))]
+                                (cond (= ln lq)                1.0
+                                      (str/starts-with? ln lq) 0.9
+                                      (str/includes? ln lq)    0.8)))
+            ;; a form is graded on its BARE name as well as its qualified one.
+            ;; Graded only on `ns/name`, an exact match is unreachable for
+            ;; EVERY form in the store — a reader typing "invoice" means the
+            ;; form called invoice — while the qualified spelling stays
+            ;; gradeable for the reader who pastes one.
+            grade    (fn [names doc why src]
+                       (let [in   (fn [s] (and s (str/includes? (str/lower-case s) lq)))
+                             best (some->> (keep nm-rank names) seq (apply max))]
+                         (cond
+                           best     [best "name"]
+                           (in doc) [0.5 "doc"]
+                           (in why) [0.4 "why"]
+                           (in src) [0.2 "source"]
+                           :else    nil)))
+            row      (fn [base nm doc why src]
+                       (let [names (if (coll? nm) nm [nm])]
+                         (when-let [[rank matched] (grade names doc why src)]
+                           (cond-> (assoc base :name (str (last names))
+                                          :matched matched :rank rank)
+                             (sentence doc) (assoc :doc (sentence doc))
+                             why            (assoc :why why)))))
+            nses     (sort (keys (:namespaces store)))
+            prompts  (store/prompt-by-form store)
+            ;; modules come from PRODUCTION namespaces only: `module-of` takes
+            ;; the first two segments, so a `-test` sibling would mint a module
+            ;; nothing declares and nobody can descend into
+            mods     (sort (distinct (for [ns-sym nses
+                                           :when  (not (str/ends-with? (str ns-sym) "-test"))]
+                                       (modules/module-of ns-sym))))
+            ns-doc   (fn [ns-sym]
+                       (some #(when (= (str (:name %)) (str ns-sym))
+                                (store/form-docstring (:node %)))
+                             (store/forms store ns-sym)))
+            hits     (concat
+                      (keep #(row {:kind "module"} % nil nil nil) mods)
+                      (keep #(row {:kind "namespace" :module (modules/module-of %)
+                                   :ns (str %)}
+                                  % (ns-doc %) nil nil)
+                            nses)
+                      (for [ns-sym nses
+                            e      (store/forms store ns-sym)
+                            ;; the ns form is already a namespace hit; listing
+                            ;; it again is one subject at two grains in one list
+                            :when  (and (:name e) (not= (str (:name e)) (str ns-sym)))
+                            :let   [sx  (store/form-sexpr (:node e))
+                                    ;; only a fn HAS arities. `fn-arglists`
+                                    ;; reads position 2+ of whatever it is
+                                    ;; handed and its contract is a `defn`
+                                    ;; sexpr, so `(def xs [1 2 3])` comes back
+                                    ;; claiming a one-arg signature. `:sig` had
+                                    ;; three producers and two shipped exactly
+                                    ;; this; guarding on the HEAD is what the
+                                    ;; other correct one does.
+                                    sig (when (and (seq? sx)
+                                                   (#{"defn" "defn-" "defmacro"}
+                                                    (str (first sx))))
+                                          (modules/fn-arglists sx))
+                                    r   (row (cond-> {:kind "form"
+                                                      :module (modules/module-of ns-sym)
+                                                      :ns (str ns-sym)
+                                                      :form-id (str (:id e))}
+                                               (seq sig) (assoc :sig (mapv pr-str sig)))
+                                             [(:name e) (str ns-sym "/" (:name e))]
+                                             (store/form-docstring (:node e))
+                                             (get prompts (:id e))
+                                             (n/string (:node e)))]
+                            :when  r]
+                        r))
+            sorted   (vec (sort-by (juxt (comp - :rank) :name) hits))]
+        {:query  q*
+         :total  (count sorted)
+         :totals (let [f (frequencies (map :kind sorted))]
+                   {:modules    (get f "module" 0)
+                    :namespaces (get f "namespace" 0)
+                    :forms      (get f "form" 0)})
+         :hits   (vec (take n sorted))}))))

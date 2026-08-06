@@ -276,8 +276,12 @@
 
     (testing "the document is versioned and lists the typed endpoints"
       (is (= 1 (:slopp/contract-version doc)))
+      ;; hand-kept ON PURPOSE: this is the control. Derived from the same
+      ;; metadata the endpoint list comes from, it would compare a derivation
+      ;; to itself and pass however wrong both were.
       (is (= #{"/api/change/:range" "/api/namespaces" "/api/source/:ns/:name" "/api/ns/:ns"
-      "/api/timeline" "/api/modules" "/api/module/:m" "/api/form/:id"}
+               "/api/timeline" "/api/modules" "/api/module/:m" "/api/form/:id"
+               "/api/search"}
              (set (keys by-path)))))
 
     (testing "the published schema IS the var the endpoint declares"
@@ -314,7 +318,7 @@
 
         (testing "the same wrappers local generation produces, by name"
           (is (= #{"namespaces" "ns-outline" "timeline" "change" "form" "source"
-                   "modules" "module"}
+                   "modules" "module" "search"}
                  (set (:wrappers out)))
               (pr-str out)))
 
@@ -716,3 +720,77 @@
           (pr-str (m/explain contracts/module-index mods)))
       (is (m/validate contracts/module-detail det)
           (pr-str (m/explain contracts/module-detail det))))))
+
+(deftest the-search-endpoint-answers-200-even-when-there-is-nothing-to-say
+  ;; The model half is pinned in slopp.api.model-test; this is the wire.
+  ;;
+  ;; The load-bearing case is the BLANK query. A search screen is reachable by
+  ;; URL, so a reader can arrive having asked nothing — and the honest answer
+  ;; to that is the empty state, not a 400 and an error panel in front of
+  ;; someone who did nothing wrong. Unlike /api/module/:m there is no 404 here
+  ;; at all: this endpoint has no subject that can fail to exist, only a
+  ;; question that can go unanswered.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'invoice.api
+                              (str "(ns invoice.api \"The API.\")\n\n"
+                                   "(defn send-it \"Ships it.\" [x] x)\n"))
+                (store/ingest 'inv.core
+                              (str "(ns inv.core \"Invoice core.\")\n\n"
+                                   "(defn invoice \"Makes one.\" [x] x)\n\n"
+                                   "(defn total \"Sums an invoice.\" [xs] xs)\n")))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        GET (fn [q] (web/handle! ctx {:request-method :get
+                                      :uri "/api/search"
+                                      :query-string q}))
+        ok? (fn [b] (is (m/validate contracts/search-results b)
+                        (pr-str (m/explain contracts/search-results b))))]
+    (testing "a real query answers, contract-shaped, sorted"
+      (let [r (GET "q=invoice")
+            b (:body r)]
+        (is (= 200 (:status r)))
+        (ok? b)
+        (is (= "invoice" (:query b)))
+        (is (pos? (:total b)) (pr-str b))
+        (is (= (:total b) (reduce + (vals (:totals b)))) (pr-str b))
+        (is (= (mapv :rank (:hits b)) (vec (reverse (sort (mapv :rank (:hits b))))))
+            "sorted by the producer, rendered in the order given")
+        (is (= "inv.core/invoice" (:name (first (:hits b))))
+            (str "an exact name match leads: " (pr-str (mapv :name (:hits b)))))))
+
+    (testing "a BLANK or absent query is the empty state, not an error"
+      (doseq [q [nil "" "q=" "q=%20%20"]]
+        (let [r (GET q)]
+          (is (= 200 (:status r)) (str "query-string " (pr-str q)))
+          (ok? (:body r))
+          (is (= 0 (:total (:body r))) (pr-str (:body r)))
+          (is (= [] (:hits (:body r))) (pr-str (:body r))))))
+
+    (testing "a query nothing matches is 200 too, and the same shape"
+      (let [r (GET "q=zzznope")]
+        (is (= 200 (:status r)))
+        (ok? (:body r))
+        (is (= 0 (:total (:body r))))))
+
+    (testing "?limit= cuts the ROWS and never the counts"
+      (let [full (:body (GET "q=invoice"))
+            one  (:body (GET "q=invoice&limit=1"))]
+        (ok? one)
+        (is (= 1 (count (:hits one))))
+        (is (= (:total full) (:total one))
+            "\"showing 1 of N\" must not be able to lie about N")
+        (is (= (:totals full) (:totals one)))))
+
+    (testing "a garbage limit falls back to the default rather than refusing"
+      ;; same stance as ?depth=banana on the form page: an unreadable row
+      ;; budget has an obvious right answer, so there is nothing to 400 about
+      (let [r (GET "q=invoice&limit=banana")]
+        (is (= 200 (:status r)))
+        (ok? (:body r))
+        (is (pos? (:total (:body r))))))
+
+    (testing "a limit past the ceiling is clamped, and :total stays honest"
+      (let [b (:body (GET "q=invoice&limit=99999"))]
+        (ok? b)
+        (is (<= (count (:hits b)) (:max model/search-limits)))
+        (is (= (:total b) (reduce + (vals (:totals b)))))))))

@@ -517,3 +517,103 @@
       (is (nil? (:graph (model/form-view sess (fid 'dp.top 'go) nil 1)))))
     (testing "the whole thing still survives a JSON round trip"
       (is (json-shaped? two) (pr-str two)))))
+
+(deftest search-ranks-across-kinds-and-names-the-field-that-matched
+  ;; The door to the reader API: `/store` opening on a module diagram with no
+  ;; way to ask a question was the finding that drove the wave.
+  ;;
+  ;; Three terms agreed with slopp-ui before either side built, and each is
+  ;; asserted here because each is a thing only the PRODUCER can know:
+  ;;
+  ;; - `:rank` is one scale ACROSS kinds. Their default layout is a single
+  ;;   ranked list of typed rows rather than three sections, and that is only
+  ;;   honest if a module at 0.9 really does beat a form at 0.5.
+  ;; - `:hits` arrive SORTED. A consumer re-deriving the sort is a second
+  ;;   opinion on the one thing it explicitly asked this side to own.
+  ;; - `:totals` is per-kind and counted BEFORE the limit, because a limited
+  ;;   hit list cannot know how many modules matched beyond the cut — the test
+  ;;   we agreed for what counts as data rather than presentation.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'invoice.api
+                             (str "(ns invoice.api \"The API.\")\n"
+                                  "(defn send-it \"Ships it.\" [x] x)\n"))
+               (store/ingest 'inv.core
+                             (str "(ns inv.core \"Invoice core.\")\n"
+                                  "(defn invoice \"Makes one.\" [x] x)\n"
+                                  "(defn total \"Sums an invoice.\" [xs] xs)\n"
+                                  "(defn unrelated \"Nothing to do with it.\" []\n"
+                                  "  (str \"invoice\"))\n"
+                                  "(def invoice-codes \"Known invoice codes.\" [1 2 3])\n")))
+        r  (model/search st "invoice" 50)
+        by (into {} (for [h (:hits r)] [[(:kind h) (:name h)] h]))]
+    (testing "the query comes back, so a cached render can say what it answered"
+      (is (= "invoice" (:query r))))
+
+    (testing "an exact NAME match outranks everything, and says so"
+      (let [h (by ["form" "inv.core/invoice"])]
+        (is (some? h) (pr-str (:hits r)))
+        (is (= 1.0 (:rank h)) (pr-str h))
+        (is (= "name" (:matched h)) (pr-str h))
+        (is (= "inv.core" (:ns h)) (pr-str h))
+        (is (= "inv.core" (:module h)) (pr-str h))
+        (is (some? (:form-id h)) "addressable, or the row cannot be followed")
+        (is (= ["[x]"] (:sig h)) (pr-str h))
+        (is (= "Makes one." (:doc h)) (pr-str h))))
+
+    (testing "a MODULE and a NAMESPACE match by name on the same scale"
+      (is (= 0.9 (:rank (by ["module" "invoice.api"]))) (pr-str (by ["module" "invoice.api"])))
+      (is (= 0.9 (:rank (by ["namespace" "invoice.api"]))) (pr-str (by ["namespace" "invoice.api"]))))
+
+    (testing "a DOC match ranks below any name match, case-insensitively"
+      ;; the ns docstring says \"Invoice core.\" and the query is lower-case
+      (is (= [0.5 "doc"] ((juxt :rank :matched) (by ["namespace" "inv.core"]))))
+      (is (= [0.5 "doc"] ((juxt :rank :matched) (by ["form" "inv.core/total"])))))
+
+    (testing "SOURCE is the escape hatch, ranks last, and is labelled"
+      ;; a hit whose name and doc say nothing about the query reads as a bug
+      ;; unless the row says which field earned it
+      (is (= [0.2 "source"] ((juxt :rank :matched) (by ["form" "inv.core/unrelated"])))))
+
+    (testing "a def has no arities, so it carries no :sig"
+      ;; `:sig` had three producers and two of them read a `def`'s VALUE as a
+      ;; parameter list. This was the fourth, and it shipped with the same bug
+      ;; — caught on the live listener rather than here, where a real registry
+      ;; came back advertising `["[{:blind nil,…"]` as its signature. Index 2 is
+      ;; a docstring in a `defn` and a VALUE in a `def`; neither mistake throws,
+      ;; it returns something plausible, which is why the class keeps surviving
+      ;; review.
+      (let [h (by ["form" "inv.core/invoice-codes"])]
+        (is (some? h) (pr-str (mapv :name (:hits r))))
+        (is (nil? (:sig h))
+            (str "a def's value is not an arglist: " (pr-str h)))
+        (is (= "Known invoice codes." (:doc h))
+            (str "and its docstring is still its docstring: " (pr-str h)))))
+
+    (testing "hits arrive sorted by rank, descending — the consumer renders in order"
+      (let [rs (mapv :rank (:hits r))]
+        (is (= rs (vec (reverse (sort rs)))) (pr-str rs))))
+
+    (testing ":totals is per KIND and counted before the limit"
+      (is (= (:total r) (count (:hits r))) "unlimited here, so they agree")
+      (is (= (:total r) (reduce + (vals (:totals r)))) (pr-str r))
+      (is (= 1 (get-in r [:totals :modules])) (pr-str (:totals r)))
+      (is (= 2 (get-in r [:totals :namespaces])) (pr-str (:totals r))))
+
+    (testing "the LIMIT cuts the rows and never the counts"
+      (let [lim (model/search st "invoice" 2)]
+        (is (= 2 (count (:hits lim))))
+        (is (= (:total r) (:total lim))
+            "showing 2 of N must not lie about N")
+        (is (= (:totals r) (:totals lim)))))
+
+    (testing "a blank query is the empty state, not an error"
+      ;; the search screen is reachable by URL; a reader landing on it with no
+      ;; query should get the empty state rather than an error panel
+      (doseq [q ["" "   " nil]]
+        (let [e (model/search st q 50)]
+          (is (= 0 (:total e)) (pr-str e))
+          (is (= [] (:hits e)) (pr-str e))
+          (is (= {:modules 0 :namespaces 0 :forms 0} (:totals e)) (pr-str e)))))
+
+    (testing "a query nothing matches is the same shape, not nil"
+      (is (= 0 (:total (model/search st "zzznope" 50)))))))

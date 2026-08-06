@@ -102,13 +102,22 @@
   / `ns`), because a pane laid out like source states things as fact, and a
   value drawn as though it were callable is a false one.
 
-  `:sig` comes from `modules/fn-arglists` — which knows a `def` has no arities
-  — rather than from 'the first vector in the body'. That heuristic reads
-  `(def geometry [1 2 3])` as a one-arg signature, and it is the same
-  wrong-index read `form-doc` above already had to be rescued from: index 2 is
-  a docstring in a `defn` and a VALUE in a `def`, and neither mistake throws.
-  They return something plausible, which is why the class keeps surviving
-  review.
+  `:sig` comes from `modules/fn-arglists`, and the `kind` guard beside the call
+  is load-bearing rather than tidy: `fn-arglists` reads position 2+ of whatever
+  it is handed, so `(def geometry [1 2 3])` comes back claiming a one-arg
+  signature. Its contract is a `defn` sexpr and the CALLER owes it that.
+
+  Stated precisely because the imprecise version cost something. This docstring
+  used to say fn-arglists 'knows a `def` has no arities'; it does not, the
+  guard below does. A later reader took the claim at face value, called
+  `fn-arglists` unguarded, and shipped `:sig`'s FOURTH producer with the bug
+  the other three had — caught on a live listener advertising a registry's
+  value as its signature.
+
+  It is the same wrong-index read `form-doc` above had to be rescued from:
+  index 2 is a docstring in a `defn` and a VALUE in a `def`, and neither
+  mistake throws. They return something plausible, which is why the class keeps
+  surviving review.
 
   nil rather than `[]` for a missing signature, since `[]` is a real
   zero-arity. `:private?` is always a boolean: absent and public would render
@@ -179,3 +188,25 @@
   other should not have to learn a second vocabulary."
   [{:keys [session]} m]
   (model/module-detail session m))
+
+(defn ^{:web/read :browse/search} search-read
+  "Read performer: everything matching `?q=`, ranked across modules,
+  namespaces and forms, cut to `?limit=`.
+
+  Declared over the WHOLE request rather than one segment, like `:ui/form`:
+  both parameters travel in the query string, and neither is optional to the
+  performer even though both are optional to the caller — a missing `q` is the
+  empty state and a missing `limit` is the declared default, and the model
+  answers each rather than the route.
+
+  `:browse/search` sits beside `:browse/module` and `:browse/modules`: it is
+  the same subject matter reached by asking rather than by descending, and a
+  reader following one to the other should not have to learn a second
+  vocabulary."
+  [{:keys [session]} {:keys [query-params]}]
+  ;; an unreadable limit falls back to the declared default rather than
+  ;; refusing: a row budget has an obvious right answer, the same stance
+  ;; `?depth=banana` takes one endpoint over
+  (let [limit (when (re-matches #"\d+" (str (:limit query-params)))
+                (parse-long (str (:limit query-params))))]
+    (model/search (:store @session) (:q query-params) limit)))

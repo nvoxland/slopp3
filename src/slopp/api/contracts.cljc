@@ -315,3 +315,80 @@
    [:modules [:sequential module-row]]
    [:layers [:sequential [:sequential :string]]]
    [:cycles [:sequential [:sequential :string]]]])
+
+(def search-request
+  "`GET /api/search` — what a caller SENDS: the query text and a row budget,
+  both as query parameters.
+
+  `:q` is `:optional`, and that is a statement about the SCREEN rather than a
+  courtesy. A search page is reachable by URL, so a reader can land on it
+  having asked nothing; the answer to that is the empty state, not a 400 and
+  an error panel. `search-results` comes back the same shape either way, with
+  zeroes.
+
+  `:limit` is optional because there is a declared default
+  (`model/search-limits`) and a declared ceiling. A caller that sends nothing
+  gets the default; one that asks for more than the ceiling is clamped to it,
+  and `:total` is counted before the cut either way, so \"showing 20 of 340\"
+  cannot be made false by a limit the caller did not choose."
+  [:map
+   [:q {:optional true} :string]
+   [:limit {:optional true} :int]])
+
+(def search-results
+  "`GET /api/search` — everything matching a query, ranked across all three
+  grains at once.
+
+  The DOOR. Every other read here answers a question a reader already knows
+  how to ask; this is the one that finds the address, and without it `/store`
+  opens on a module diagram with no way in.
+
+  **`:rank` is one scale across kinds, not per-kind normalised.** That is the
+  fact a consumer cannot derive and must be told, because it decides a layout:
+  one ranked list of typed rows is only honest if a module at 0.9 really does
+  beat a form at 0.5. The ladder is name-exact 1.0, name-prefix 0.9,
+  name-substring 0.8, doc 0.5, why 0.4, source 0.2.
+
+  **`:hits` arrive SORTED**, rank descending, and are meant to be rendered in
+  the order given. A consumer re-deriving the sort is a second opinion on the
+  one thing it asked this side to own, and it goes stale the first time the
+  ladder changes.
+
+  **`:matched` is data, not decoration.** A hit whose name says nothing about
+  the query reads as a bug unless the row can say the docstring is what
+  matched. It is also what lets `\"source\"` be included at all — unlabelled, a
+  source hit looks like a ranking failure rather than the escape hatch it is.
+
+  **`:totals` is per kind and counted BEFORE `:limit`**, which is the whole
+  reason it is here rather than left to the consumer: a limited hit list
+  cannot know how many modules matched beyond the cut. `:total` is that summed.
+  Named beside `:total` rather than folded into it so the two cannot read as a
+  typo for each other.
+
+  **No `:address`, and that is deliberate.** The rows carry the component
+  parts — `:kind`, `:name`, `:module`, `:ns`, `:form-id` — and the consumer
+  builds its own URL. Emitting `/store/module/<m>` here would put a
+  CONSUMER'S routing scheme in the producer: slopp would be asserting a fact
+  about somebody else's app, in their units, with nothing on either side able
+  to check it, and a route change over there would silently falsify strings
+  over here. It is the same error as naming a port for its consumer. One
+  producer of the scheme, and it is the side that owns the routes."
+  [:map
+   [:query :string]
+   [:total :int]
+   [:totals [:map
+             [:modules :int]
+             [:namespaces :int]
+             [:forms :int]]]
+   [:hits [:sequential
+           [:map
+            [:kind [:enum "module" "namespace" "form"]]
+            [:name :string]
+            [:module {:optional true} :string]
+            [:ns {:optional true} :string]
+            [:form-id {:optional true} :string]
+            [:sig {:optional true} [:sequential :string]]
+            [:doc {:optional true} :string]
+            [:why {:optional true} :string]
+            [:matched [:enum "name" "doc" "why" "source"]]
+            [:rank :double]]]]])
