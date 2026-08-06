@@ -68,3 +68,45 @@
           (str "accepted a cross-ns arity error in a cwd with no .clj-kondo — "
                "which is every user project: " (pr-str r)))
       (is (re-find #"invalid-arity" (:refuse r)) (pr-str r)))))
+
+(deftest a-red-first-test-may-name-an-arity-that-does-not-exist-yet
+  ;; Four instances across two stores: twice here on 2026-08-04 (adding a
+  ;; parameter to store.render/source-path and to build/deps-edn) and twice in
+  ;; slopp-ui, most recently views/hub-picker gaining a `now`.
+  ;;
+  ;; A test calling a var that does NOT EXIST is the red-first case and lands
+  ;; stubbed. A test calling an EXISTING var at a NEW arity is the SAME
+  ;; statement about the same not-yet-written code, and was refused. The
+  ;; workaround — land the arity ignoring its new argument, write the test,
+  ;; then implement — costs a write and leaves a signature that lies about
+  ;; what it does; an agent in a hurry skips the middle step and never sees
+  ;; red, which is the one outcome red-first exists to prevent.
+  ;;
+  ;; :invalid-arity already implies the var is KNOWN — an unknown one is
+  ;; :unresolved-var, which this same set stopped blocking for this same
+  ;; reason. So the only condition added is that the caller is a test.
+  (let [mk   (fn [ns-sym src] (store/ingest (store/empty-store) ns-sym src))
+        good "(ns %s)\n\n(defn f [x] x)\n\n(defn t [] (f 1))\n"
+        bad  "(ns %s)\n\n(defn f [x] x)\n\n(defn t [] (f 1 2))\n"
+        for-ns (fn [ns-sym]
+                 (let [b (mk ns-sym (format good (str ns-sym)))
+                       c (mk ns-sym (format bad (str ns-sym)))]
+                   (lintgate/lint-refusals
+                    b c [ns-sym] [(:id (store/form-named c ns-sym 't))])))]
+    (testing "from a -test namespace the write lands instead of being refused"
+      (let [r (for-ns 'lg.spec-test)]
+        (is (nil? (:refuse r)) (pr-str r))
+        (testing "and it SAYS so, naming the form that drove the new arity"
+          ;; silence would be worse than the refusal: the agent would believe
+          ;; the call was fine and read the ArityException as a bug
+          (is (= 1 (count (:red-first-arity r))) (pr-str r))
+          (is (= 'lg.spec-test/t (:form (first (:red-first-arity r)))) (pr-str r))
+          (is (re-find #"expects" (str (:message (first (:red-first-arity r)))))
+              (pr-str r)))))
+    (testing "the SAME source in a production namespace still refuses"
+      ;; the discriminating half — without it, a gate that had simply stopped
+      ;; refusing anything satisfies the assertions above
+      (let [r (for-ns 'lg.prod)]
+        (is (re-find #"in the form you are writing" (str (:refuse r))) (pr-str r))
+        (is (re-find #"invalid-arity" (str (:refuse r))) (pr-str r))
+        (is (nil? (:red-first-arity r)) (pr-str r))))))

@@ -67,7 +67,19 @@
                                         (symbol (str (:ns f))
                                                 (str (or (:name e) (:id e))))))))
                      news)
-        [own carried] ((juxt filter remove) #(contains? written (:form-id %)) located)]
+        [own carried] ((juxt filter remove) #(contains? written (:form-id %)) located)
+;; A test naming an ARITY that does not exist yet is the same statement
+        ;; as a test naming a VAR that does not exist, and `:unresolved-var`
+        ;; already left this set for exactly that reason. `:invalid-arity`
+        ;; IMPLIES the callee is known — an unknown one lints as
+        ;; `:unresolved-var` — so the only condition added here is that the
+        ;; caller is a test. Deferred, never silently allowed: the call still
+        ;; fails, as an ArityException at run time, which IS the red the test
+        ;; was written to see. Production keeps refusing, because there the
+        ;; same finding is a real ArityException in shipped code.
+        [defer own] ((juxt filter remove)
+                     #(and (= :invalid-arity (:type %)) (render/test-ns? (:ns %)))
+                     own)]
     (cond
       (seq own)
       {:refuse (str "lint ERROR in the form you are writing: "
@@ -90,6 +102,16 @@
                            " and its use, a loop and its recur). Widen the match"
                            " to the enclosing form, or edit_replace_form the"
                            " whole thing: two edits to ONE form is ONE edit.")))}
+
+      ;; reported, never silent — an agent told nothing would read the
+      ;; ArityException the test then throws as a BUG rather than as the red
+      ;; it asked for, which is the failure this defer would otherwise create
+      (seq defer)
+      (cond-> {:red-first-arity (vec (for [f defer]
+                                       {:form (:form f) :message (:message f)}))}
+        (seq carried)
+        (assoc :carried (vec (for [f carried]
+                               {:form (:form f) :type (:type f) :message (:message f)}))))
 
       (seq carried)
       {:carried (vec (for [f carried]

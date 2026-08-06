@@ -681,6 +681,18 @@ recompiled (session/after-write! session ns-sym)]
                                                     " (red-first); implement them to"
                                                     " go green."))
                 (:carried-errors r) (assoc :carried-errors (:carried-errors r))
+                (:red-first-arity r)
+                ;; as-> rather than assoc: a test can BOTH name a missing var
+                ;; and call a known one at a new arity, and a plain assoc would
+                ;; drop the stub note that the other clause just wrote
+                (as-> m (assoc m :red-first-arity (:red-first-arity r)
+                               :note (str (when (:note m) (str (:note m) " "))
+                                          "this calls an existing var at an arity"
+                                          " it does not have yet — the write landed"
+                                          " (red-first) and the call will throw"
+                                          " ArityException until you implement that"
+                                          " arity. That throw IS the red you asked"
+                                          " for, not a bug.")))
                 (seq advisories)    (assoc :advisories advisories)
                 recompiled          (merge recompiled))
               t0)))))))

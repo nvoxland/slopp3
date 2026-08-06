@@ -741,7 +741,7 @@ FINISH:  done {label} (tidies, lints, marks the unit boundary)
     ;; what a realias moved, and what it declined to
     :sites :lib :left-behind
     ;; what it cost and whether to believe it
-    :test :ms :untested :image-healed :red-first :carried-errors
+    :test :ms :untested :image-healed :red-first :red-first-arity :carried-errors
     :warnings :existing-warnings :advisories :drift :manual
     ;; a preview's whole point
     :dry-run :in-code :in-strings})

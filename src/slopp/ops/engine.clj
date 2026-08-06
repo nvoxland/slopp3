@@ -647,8 +647,8 @@
                                                        (:refuse lr))]
                                        {:err gate}
                                        (merge (hot-load-all! session (:store out)
-                                                             [(:form-id (:delta out))])
-                                              (select-keys lr [:carried])))))]
+                                                    [(:form-id (:delta out))])
+                                     (select-keys lr [:carried :red-first-arity])))))]
                     (if (:err load-res)
                       (edit/compile-error (:store out) (:err load-res)
                                           "form failed to compile: " ns-sym)
@@ -662,7 +662,17 @@
                               (assoc :red-first (or stubbed (:stubbed load-res)))
 
                               (or carried (:carried load-res))
-                              (assoc :carried-errors (or carried (:carried load-res))))
+                              (assoc :carried-errors (or carried (:carried load-res)))
+
+                              ;; NOT threaded through the retry like `stubbed`
+                              ;; and `carried` are: those two decide whether the
+                              ;; write is honest, this one is a note explaining
+                              ;; a red the agent is about to see anyway. A
+                              ;; CONTENDED write (attempt > 0, where the gate no
+                              ;; longer runs) drops it, and the cost is a missing
+                              ;; sentence rather than a missing verdict.
+                              (:red-first-arity load-res)
+                              (assoc :red-first-arity (:red-first-arity load-res)))
                             (do (refresh-cache! session)
                                 (recur (inc attempt) true
                                        (or healed? (boolean (:healed load-res)))
@@ -682,8 +692,8 @@
                                                (:refuse lr))]
                                {:err gate}
                                (merge (hot-load-all! session (:store out0)
-                                                     [(:form-id (:delta out0))])
-                                      (select-keys lr [:carried])))))]
+                                             [(:form-id (:delta out0))])
+                                      (select-keys lr [:carried :red-first-arity])))))]
             (if (:err load-res)
               (edit/compile-error (:store out0) (:err load-res)
                                   "form failed to compile: " ns-sym)
@@ -708,7 +718,11 @@
 
                       (and (nil? (:error @res)) (nil? (:conflict @res))
                            (:carried load-res))
-                      (assoc :carried-errors (:carried load-res))))))))))))
+                      (assoc :carried-errors (:carried load-res))
+
+                      (and (nil? (:error @res)) (nil? (:conflict @res))
+                           (:red-first-arity load-res))
+                      (assoc :red-first-arity (:red-first-arity load-res))))))))))))
 
 (def reload-signature-res
   "Failure texts that smell like hot-reload staleness rather than logic bugs."

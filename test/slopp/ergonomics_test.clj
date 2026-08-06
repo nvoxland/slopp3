@@ -651,3 +651,47 @@
                (ops/query-eval sess
                                "(:web/response (meta #'sc.core.api/heartbeat))"))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-spec-may-drive-an-arity-that-does-not-exist-yet
+  ;; The sibling of red-first-specs-land-as-red, and until now the only one of
+  ;; the two that was refused: there the VAR does not exist, here the var
+  ;; exists and the ARITY does not. Same statement about the same
+  ;; not-yet-written code. Four instances across two stores before the fix.
+  ;;
+  ;; This is the WIRING half — lintgate-test proves the gate defers, and this
+  ;; proves the note survives the ops layer, which is where :red-first itself
+  ;; was once lost between a correct engine and the agent.
+  ;;
+  ;; The subject sits in the TEST namespace deliberately. A cross-ns version
+  ;; was tried first and proved something else: in a fresh fixture store kondo
+  ;; has no cross-ns cache yet, so it never raises :invalid-arity, the write
+  ;; lands unrefused and the red arrives as a bare ArityException with nothing
+  ;; explaining it. That is a real shape — it is just not THIS one, and a
+  ;; fixture that cannot make the gate fire cannot test what the gate does.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'ra.core-test
+                   (str "(ns ra.core-test\n"
+                        "  (:require [clojure.test :refer [deftest is]]))\n"
+                        "(defn scale \"S.\" [x] x)\n"
+                        "(deftest scale-t (is (= 1 (scale 1))))\n"))
+      (testing "a spec calling an EXISTING var at a NEW arity lands as a real red"
+        (let [r (ops/add-form! sess 'ra.core-test
+                               "(deftest scaled-t (is (= 6 (scale 3 2))))"
+                               :prompt "red first, driving a second parameter")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (= 1 (count (:red-first-arity r))) (pr-str r))
+          (is (= 'ra.core-test/scaled-t (:form (first (:red-first-arity r))))
+              (pr-str (:red-first-arity r)))
+          (testing "and the note says the throw is the asked-for red, not a bug"
+            (is (re-find #"ArityException" (str (:note r))) (pr-str (:note r))))
+          (is (pos? (+ (:fail (:test r) 0) (:error (:test r) 0)))
+              "the red is a failing test, not a refusal")))
+      (testing "implementing the arity turns the same spec green"
+        (let [r (ops/edit-replace! sess 'ra.core-test 'scale
+                                   "(defn scale \"S.\" ([x] x) ([x n] (* x n)))"
+                                   :prompt "green")]
+          (is (nil? (:error r)) (pr-str r))
+          (is (nil? (:red-first-arity r)) (pr-str r))
+          (is (zero? (+ (:fail (:test r) 0) (:error (:test r) 0))) (pr-str (:test r)))))
+      (finally (ops/close! sess)))))
