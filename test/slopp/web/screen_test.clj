@@ -1011,3 +1011,66 @@
                                                :on {:click [:open]}} "this"]])]
       (is (str/includes? block  "aria-label=\"card\" inert slopp:on=\"click :open\""))
       (is (str/includes? inline "aria-label=\"card\" inert slopp:on=\"click :open\"")))))
+
+(deftest a-plain-html-FORM-is-a-control-because-a-browser-says-so
+  ;; slopp-ui, 2026-08-06. The door their search wave shipped is
+  ;; `<form method="get" action="…">` with a named input and a submit button —
+  ;; a form rather than an `:on` handler because navigating is an effect no
+  ;; state transition expresses, and because a form needs no bundle at all.
+  ;;
+  ;; The driver refused both halves, each with a well-written message that is
+  ;; wrong about this element:
+  ;;
+  ;;   fill  → "…has no :on-change and no :on {:input …}, so typing into it
+  ;;            can change nothing"
+  ;;   click → "2 elements say \"search\" and none of them is a control"
+  ;;
+  ;; The model of "control" was Replicant's — something carrying an `:on`
+  ;; handler — rather than HTML's. A GET form's value does not travel on
+  ;; INPUT; it travels on SUBMIT, and the submit button IS the control.
+  ;;
+  ;; It generalises past one app, which is why it is the framework's problem:
+  ;; any slopp app with a login, filter or create form has this hole, and each
+  ;; author would reach for an `:on` handler they do not need in order to
+  ;; become drivable — the driver teaching apps to be LESS script-free than
+  ;; they were.
+  (let [page {:state    (atom {})
+              :navigate (fn [st path] (assoc st :went path))
+              :view     (fn [_]
+                          [:form {:method "get" :action "/store/search"}
+                           [:input {:type "search" :name "q"
+                                    :placeholder "search this store"}]
+                           [:button {:type "submit"} "search"]])}
+        b    (screen/open! page)]
+    (testing "a NAMED field inside a form is fillable, handler or not"
+      ;; its value has nowhere to go until submit, which is not the same
+      ;; statement as "typing into it can change nothing"
+      (screen/fill! b "search this store" "kg zone"))
+
+    (testing "the submit button is a control, and submitting NAVIGATES"
+      (screen/click! b "search")
+      (is (= "/store/search?q=kg+zone" (:path @b))
+          (str "action + the named fields serialised by method — a browser's"
+               " own behaviour, needing no cooperation from the app: "
+               (pr-str (:path @b)))))
+
+    (testing "the field's own :value is the default when nothing was typed"
+      (let [c (screen/open!
+               {:state (atom {}) :navigate (fn [st p] (assoc st :went p))
+                :view (fn [_] [:form {:action "/f"}
+                               [:input {:name "kind" :value "form"}]
+                               [:button {:type "submit"} "go"]])})]
+        (screen/click! c "go")
+        (is (= "/f?kind=form" (:path @c)))))
+
+    (testing "a value with characters a URL cannot carry is encoded"
+      (let [d (screen/open!
+               {:state (atom {}) :navigate (fn [st p] (assoc st :went p))
+                :view (fn [_] [:form {:action "/f"}
+                               [:input {:name "q" :placeholder "q"}]
+                               [:button {:type "submit"} "go"]])})]
+        (screen/fill! d "q" "a&b=c")
+        (screen/click! d "go")
+        (is (= "/f?q=a%26b%3Dc" (:path @d))
+            (str "or the app receives a query string it did not send: "
+                 (pr-str (:path @d))))))))

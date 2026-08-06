@@ -236,9 +236,9 @@
 (defn locate
   "The one element `target` addresses, resolved exactly as a click resolves —
   visible TEXT, `:href`, or `:aria-label`; bubbling to the nearest ancestor
-  carrying a `:click` handler or an `:href`; hidden duplicates yielding to the
-  reachable control — or a THROW that says why not (nothing says it; more
-  than one distinct control answers).
+  carrying a `:click` handler, an `:href`, or being a form's SUBMIT control;
+  hidden duplicates yielding to the reachable control — or a THROW that says
+  why not (nothing says it; more than one distinct control answers).
 
   This is the ADDRESSING half of [[target-node]], shared so `:within` scoping
   speaks the same vocabulary as clicking: two addressing schemes for one
@@ -248,8 +248,27 @@
   is on the screen and can be looked at."
   [t target]
   (let [pairs      (node-paths t)
-        clickable? (fn [n] (and (vector? n)
-                                (or (handler n :click) (:href (attrs n)))))
+        ;; A form's SUBMIT control is clickable while carrying no handler and
+        ;; no href. The notion of \"control\" here was Replicant's — something
+        ;; with an `:on` — rather than HTML's, so the oldest working control on
+        ;; the web was invisible to it: slopp-ui's search button lost to its
+        ;; own input's placeholder, both saying \"search\", and the refusal
+        ;; said none of them was a control.
+        ;;
+        ;; A `<button>` with NO type is one too. That is HTML's default and
+        ;; the spelling most apps write, and requiring `:type \"submit\"` would
+        ;; make drivability a markup decision — the same reason a field is
+        ;; addressed by whichever of four attributes the author happened to use.
+        submit?    (fn [n ancestors]
+                     (let [ty (:type (attrs n))]
+                       (and (#{:button :input} (tag n))
+                            (or (nil? ty) (= "submit" ty))
+                            (boolean (some #(= :form (tag %)) ancestors)))))
+        clickable? (fn [n ancestors]
+                     (and (vector? n)
+                          (boolean (or (handler n :click)
+                                       (:href (attrs n))
+                                       (submit? n ancestors)))))
         hidden?    (fn [n] (let [a (attrs n)]
                              (or (contains? #{"true" true} (:aria-hidden a))
                                  (:inert a))))
@@ -259,7 +278,8 @@
                                  (= target (:aria-label a)))))
         named      (filter (comp named? first) pairs)
         resolved   (distinct (keep (fn [[n ancestors]]
-                                     (some #(when (clickable? %) %) (cons n ancestors)))
+                                     (some #(when (clickable? % ancestors) %)
+                                           (cons n ancestors)))
                                    named))
         ;; a hidden duplicate yields to the reachable control — but a hidden
         ;; SOLE match stays, because a mouse reaches what a screen reader
@@ -275,9 +295,6 @@
                            " Name an :href instead, or make the labels differ")
                       {:target target :matches (count resolved)}))
 
-      ;; found-but-unhandled: for ADDRESSING this is the answer, not a bug —
-      ;; a plain element can be looked at. The named element itself owns the
-      ;; scope when nothing above it claims a capability.
       ;; found-but-unhandled: for ADDRESSING this is an answer, not a bug —
       ;; a plain element can be looked at. But two plain elements saying the
       ;; same thing are still a guess; the first-pick this arm briefly held
@@ -295,8 +312,8 @@
       :else
       (throw (ex-info (str "nothing on this screen says " (pr-str target)
                            " — addressable here: "
-                           (pr-str (vec (sort (distinct (keep (fn [[n _]]
-                                                                (when (clickable? n)
+                           (pr-str (vec (sort (distinct (keep (fn [[n anc]]
+                                                                (when (clickable? n anc)
                                                                   (or (not-empty (text n))
                                                                       (:aria-label (attrs n))
                                                                       (:href (attrs n)))))
@@ -321,9 +338,21 @@
   and its sibling inside one button) are one click, not an ambiguity."
   [t target]
   (let [n (locate t target)
-        a (attrs n)]
+        a (attrs n)
+        ;; a form's SUBMIT control handles a click by submitting it — the same
+        ;; standing as an `:href` navigating, and a browser's own behaviour
+        ;; rather than the app's. Derived from the DOCUMENT rather than from
+        ;; the element, because the relationship that makes it a control is
+        ;; the form around it.
+        submit? (let [ty (:type a)]
+                  (and (#{:button :input} (tag n))
+                       (or (nil? ty) (= "submit" ty))
+                       (boolean (some (fn [[x anc]]
+                                        (and (= x n)
+                                             (some #(= :form (tag %)) anc)))
+                                      (node-paths t)))))]
     (cond
-      (not (or (handler n :click) (:href a)))
+      (not (or (handler n :click) (:href a) submit?))
       (throw (ex-info (str (pr-str target) " is on this screen but neither it nor"
                            " anything above it handles a click — no :on-click,"
                            " no :on {:click …}, no :href on the element or its"
@@ -436,6 +465,26 @@
   [node]
   (or (handler node :change) (handler node :input)))
 
+(defn form-of
+  "The `<form>` enclosing `el` within `root`, or nil.
+
+  The relationship that makes a plain HTML control a control. A field carrying
+  no handler is not inert — its value travels to its form's `action` when the
+  form is SUBMITTED — so the enclosing form is both what a fill remembers
+  against and what a submit serialises.
+
+  Matched STRUCTURALLY rather than by identity: [[kids]] expands component
+  vectors, so two calls to [[nodes]] over one document yield equal elements
+  that are not the same objects. Two genuinely identical forms on one screen
+  would be ambiguous, and that is already refused one level up — a name that
+  answers twice is a guess, whether the duplication is in the field or in the
+  form around it."
+  [root el]
+  (first (for [f     (nodes root)
+               :when (= :form (tag f))
+               :when (some #(= el %) (nodes f))]
+           f)))
+
 (defn field
   "The one input `name` addresses, or a THROW that says why not.
 
@@ -453,7 +502,14 @@
   [node name]
   (let [addressed? (fn [a] (some #{name} [(:placeholder a) (:name a) (:id a) (:aria-label a)]))
         named      (filter #(addressed? (attrs %)) (nodes node))
-        fillable   (filter input-handler named)]
+        ;; a NAMED field inside a `<form>` is fillable with no handler at all:
+        ;; its value does not travel on INPUT, it travels on SUBMIT. Refusing
+        ;; it said "typing into it can change nothing", which is a different
+        ;; statement and a false one — and it made the oldest working control
+        ;; on the web the only undrivable thing in an app.
+        fillable   (filter #(or (input-handler %)
+                                (and (:name (attrs %)) (form-of node %)))
+                           named)]
     (cond
       (= 1 (count fillable)) (first fillable)
 

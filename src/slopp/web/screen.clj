@@ -395,6 +395,52 @@
                          (= 1 (count (.getParameterTypes ^java.lang.reflect.Method %))))
                    (.getDeclaredMethods (class f))))))
 
+(defn- submit!
+  "Submit the form enclosing `node` — navigate to its `action` with the named
+  fields serialised. Returns the session, or nil when `node` is not a submit
+  control inside a form.
+
+  **A `<button>` with no `:type` IS a submit button.** That is HTML's default
+  and the spelling most apps actually write, so requiring `:type \"submit\"`
+  would make the framework's drivability a markup decision — the same reason
+  a field is addressed by whichever of four attributes the author happened to
+  use.
+
+  Field values come from what [[fill!]] remembered, falling back to the
+  element's own `:value` — which is what a browser submits for a field nobody
+  touched, and is the whole content of a hidden field.
+
+  Only a GET form is submitted. A POST carries its fields in a BODY, and a
+  navigation cannot; rather than dropping them silently it refuses and says
+  so, because a submit that reported success and sent nothing is the worst
+  answer available here."
+  [session node]
+  (let [a (hiccup/attrs node)
+        t (str/lower-case (str (:type a)))]
+    (when (and (#{:button :input} (hiccup/tag node))
+               (or (str/blank? t) (= "submit" t)))
+      (when-let [f (hiccup/form-of (tree session) node)]
+        (let [fa     (hiccup/attrs f)
+              method (str/lower-case (str (or (:method fa) "get")))
+              vals   (:form-values @session)
+              enc    #(java.net.URLEncoder/encode (str %) "UTF-8")
+              qs     (str/join
+                      "&"
+                      (for [el    (hiccup/nodes f)
+                            :let  [ea (hiccup/attrs el)]
+                            :when (:name ea)]
+                        (str (enc (:name ea)) "="
+                             (enc (or (get vals (:name ea)) (:value ea) "")))))
+              path   (or (:action fa) "")]
+          (when-not (= "get" method)
+            (throw (ex-info (str "this form is method " (pr-str method)
+                                 " — its fields travel in a BODY, and a headless"
+                                 " submit navigates, so they would be dropped."
+                                 " Drive the handler directly, or make the form"
+                                 " a GET if the action is really a read")
+                            {:method method :action path})))
+          (visit! session (if (seq qs) (str path "?" qs) path)))))))
+
 (defn click!
   "Click the element `target` names, running the app's own handler. Returns the
   session, so calls thread.
@@ -444,7 +490,13 @@
                                    " so nothing would run. Add"
                                    " :dispatch (fn [action value] …) to the page")
                               {:target target :handler v})))
-      (when (:href a) (visit! session (:href a))))
+      ;; no handler at all. An :href NAVIGATES; a submit control inside a form
+      ;; SUBMITS it. Both are the browser's own opinion rather than the
+      ;; framework's, and they have the same standing: following a link is what
+      ;; clicking one MEANS, and so is submitting a form.
+      (if (:href a)
+        (visit! session (:href a))
+        (submit! session node)))
     session))
 
 (defn text
@@ -534,7 +586,11 @@
                                    " so typing would change nothing. Add"
                                    " :dispatch (fn [action value] …) to the page")
                               {:field name :handler v})))
-      nil)
+      ;; no handler: a plain form field. Its value goes nowhere until the form
+      ;; is SUBMITTED, so it is remembered here — which is exactly where a
+      ;; browser keeps it, and why refusing this field said something false.
+      (swap! session assoc-in
+             [:form-values (or (:name (hiccup/attrs node)) name)] value))
     session))
 
 (defn drive!
