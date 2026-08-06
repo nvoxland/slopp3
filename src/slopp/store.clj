@@ -936,6 +936,55 @@
                  agent  (assoc :agent agent))]
     [(update (fields/fold store' delta) :deltas conj delta) delta]))
 
+(def name-keyed-registers
+  "Every register keyed by a NAME — the total account of where a namespace or
+  module name appears in the store OUTSIDE the code that spells it.
+
+  A name in code is a REFERENCE and the CST rewrite reaches it. A name in a
+  register is a DECLARATION ABOUT a name: no rewrite walks it, so it has to be
+  re-keyed by the verb that moves the name, and missing one is silent — the
+  declaration is left describing a namespace that no longer exists while the
+  code that moved goes ungated. This store accumulated fifteen orphans in one
+  wave of deletions that way.
+
+  The lesson was learned once, at NAMESPACE grain, and the fix was this map's
+  ancestor. It did not generalise: the two MODULE-grained registers were
+  re-keyed by a hand-written arm that named `:modules` and never
+  `:module-test-edges`, so which failure a rename produced depended on nothing
+  a reader could see — whether the edge happened to be test-only. A sixth
+  register joins by adding a row here, and
+  `a-rename-leaves-no-name-keyed-register-naming-the-old-name` derives its
+  population from the store value, so it grades the row whether or not anyone
+  remembers to grade it.
+
+  Per row: `:kind` is `:declaration` (a claim ABOUT a name) or `:primary` (the
+  index the name itself lives in); `:grain` is `:namespace` — deep namespaces
+  follow by prefix — or `:module`, the first two segments; `:in-values` marks
+  the registers that also name modules in their VALUES, so a re-key must walk
+  both sides; `:record` is the `record-*` fn where the register has one of the
+  namespace-grained shape, and `:rekeyed-by` says who owns the move where it
+  does not.
+
+  `:namespaces` is declared here rather than exempted by omission. It is the
+  primary index, not a claim about a name, and `ns-rename!` re-keys it
+  directly — but a row nobody wrote and a row deliberately handled elsewhere
+  look identical from outside, which is the conflation this registry exists to
+  refuse."
+  {:namespaces        {:kind :primary     :grain :namespace
+                       :rekeyed-by "ns-rename! directly — it IS the index"}
+   :module-tiers      {:kind :declaration :grain :namespace
+                       :record record-module-tier}
+   :module-platforms  {:kind :declaration :grain :namespace
+                       :record record-module-platform}
+   :module-roles      {:kind :declaration :grain :namespace
+                       :record record-module-role}
+   :modules           {:kind :declaration :grain :module :in-values true
+                       :edge-opts {}
+                       :rekeyed-by "rekey-module-registers, via record-module-edge"}
+   :module-test-edges {:kind :declaration :grain :module :in-values true
+                       :edge-opts {:test-only true}
+                       :rekeyed-by "rekey-module-registers, via record-module-edge"}})
+
 (def ns-grained-registers
   "The registers keyed by NAMESPACE rather than by form — field → the `record-*`
   fn that writes it. A declaration here describes a NAME, so it has to follow a
@@ -946,15 +995,21 @@
   hand-enumerated the set, two arms apiece, and the failure mode of missing one
   is SILENT: the declaration is left naming a namespace that no longer exists
   while the code that moved goes ungated, which is how slopp's own store
-  accumulated fifteen orphans in one wave of deletions. A fourth register joins
-  by adding a row.
+  accumulated fifteen orphans in one wave of deletions.
+
+  DERIVED from [[name-keyed-registers]], which is the total account across both
+  grains — a fourth ns-grained register joins by adding a row THERE. Restating
+  the set here is what let the two lists disagree: this one carried
+  `:module-roles` and `refs/occurrences-of`'s copy did not, so a role
+  declaration was re-keyed by the rename and invisible to the report that says
+  what the rename left behind.
 
   Every value takes `[store module value & {:keys [prompt agent action]}]` and
   returns `[store' delta]`, with `:action :remove` retiring the declaration —
   absent is not the same claim as the default."
-  {:module-tiers     record-module-tier
-   :module-platforms record-module-platform
-   :module-roles     record-module-role})
+  (into {} (for [[reg {:keys [grain record]}] name-keyed-registers
+                 :when (and (= :namespace grain) record)]
+             [reg record])))
 
 (defn record-module-edge
   "Declare (or retract) ONE module dependency edge — the CRDT grain of the
@@ -1597,3 +1652,47 @@
                 prompt (assoc :prompt prompt)
                 agent  (assoc :agent agent))]
     [(update (fields/fold store' delta) :deltas conj delta) delta]))
+
+(defn rekey-module-registers
+  "Re-key every MODULE-grained register from `old-mod` to `new-mod` → `store'`.
+
+  The manifest names modules on BOTH sides of an edge, so a module that renames
+  has to be rewritten as a KEY (its own outgoing edges) and as a VALUE
+  (everyone else's edges to it). [[name-keyed-registers]] is the population and
+  each row carries its own `:edge-opts`, so the TEST relation is one option
+  rather than one branch — which is exactly what it was, and why
+  `:module-test-edges` was left naming the old module by every rename that ever
+  ran while `:modules` followed correctly beside it.
+
+  A self-edge is dropped rather than recorded: after the substitution both
+  endpoints can be the same module, and a module never declares itself."
+  [store old-mod new-mod & {:keys [prompt agent]}]
+  (let [sub #(if (= old-mod %) new-mod %)]
+    (reduce
+     (fn [s0 [reg row]]
+       (let [edge (fn [st from to action]
+                    (first (apply record-module-edge st from to action
+                                  (mapcat identity (assoc (:edge-opts row)
+                                                          :prompt prompt
+                                                          :agent agent)))))]
+         (reduce
+          (fn [s [m deps]]
+            (cond
+              (= m old-mod)
+              (as-> s $
+                (reduce #(edge %1 m %2 :remove) $ (sort deps))
+                (reduce #(edge %1 new-mod %2 :add) $
+                        (sort (disj (into #{} (map sub) deps) new-mod))))
+
+              (contains? deps old-mod)
+              (as-> s $
+                (edge $ m old-mod :remove)
+                (if (= m new-mod) $ (edge $ m new-mod :add)))
+
+              :else s))
+          ;; rows come from the ORIGINAL store while `s` accumulates: the two
+          ;; registers are disjoint state, and re-reading a register mid-rewrite
+          ;; would walk edges this call had just written
+          s0 (get store reg))))
+     store
+     (filter #(= :module (:grain (val %))) name-keyed-registers))))

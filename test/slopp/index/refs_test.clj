@@ -4,7 +4,7 @@
   consume. Producers normalize here; consumers never re-integrate."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.index.refs :as refs]
-            [slopp.store :as store]))
+            [slopp.store :as store] [clojure.set :as set] [clojure.string :as str]))
 
 (deftest the-graph-sees-every-reference-kind
   (let [st (-> (store/empty-store)
@@ -324,3 +324,145 @@
       (is (seq (:register by)) (pr-str occ)))
     (testing "nothing is claimed for a namespace nobody mentions"
       (is (= [] (refs/occurrences-of st 'oc.absent))))))
+
+(deftest every-way-a-name-can-appear-is-DECLARED-and-every-DECLARATION-is-REAL
+  ;; `occurrences-of` carried this vocabulary as a TABLE IN ITS DOCSTRING —
+  ;; seven rows, accurate prose, and nothing that could grade it. Measured the
+  ;; day it became data: the `:register` row named three registers and the
+  ;; store had FIVE, so a `:module-roles` declaration was re-keyed by the
+  ;; rename and invisible to the report that exists to say what the rename left
+  ;; behind, and `:module-test-edges` was in neither.
+  ;;
+  ;; The rule copied from `crossings/kinds`, one layer in: a kind with no
+  ;; producer must SAY it has none. A kind slopp cannot see emits no row, so
+  ;; until it is written down, "nothing produces this" and "this store has none
+  ;; of these" are the same observation — the absence-of-check /
+  ;; absence-of-finding conflation moved up a level, out of a check's result
+  ;; and into the vocabulary the check reports in.
+  (let [st   (-> (store/empty-store)
+                 (store/ingest 'mk.helper "(ns mk.helper)\n(defn h \"H.\" [] 1)\n")
+                 (store/ingest 'mk.helper-test
+                               (str "(ns mk.helper-test (:require [mk.helper :as h]))\n"
+                                    "(defn t \"T.\" [] (h/h))\n"))
+                 (store/ingest 'mk.user
+                               (str "(ns mk.user (:require [mk.helper :as h]))\n"
+                                    "(defn u \"Calls mk.helper for real.\" [] (h/h))\n"
+                                    "(defn boot \"B.\" [] (require 'mk.helper) \"mk.helper\")\n"
+                                    "(defn cfg \"C.\" [] {:mk.helper/mode :fast})\n"
+                                    "(defn scan \"S.\" [s] (re-find #\"mk\\.helper\" s))\n"
+                                    "(defn seed \"Sd.\" [] \"(ns mk.helper)\\n(defn q [] 1)\\n\")\n"))
+                 (as-> s (first (store/record-module-tier s "mk.helper" :pure))))
+        seen (set (map :via (refs/occurrences-of st 'mk.helper)))
+        rows refs/mention-kinds
+        mine (filter #(= 'occurrences-of (:producer %)) rows)]
+    (testing "control: the fixture produced kinds at all"
+      ;; every assertion below is satisfied by an empty set, and a fixture that
+      ;; failed to build satisfies every absence assertion downstream of it
+      (is (< 3 (count seen)) (str "the fixture must plant most of the vocabulary: " seen)))
+
+    (testing "no VACUOUS row — every kind this producer claims, it produces"
+      (let [claimed (set (map :kind (remove #(= :blind (:handling %)) mine)))]
+        (is (= #{} (clojure.set/difference claimed seen))
+            (str "declared and never produced — a row that describes nothing"
+                 " reads exactly like coverage: " (clojure.set/difference claimed seen)))))
+
+    (testing "no UNDECLARED kind — every :via produced has a row"
+      (is (= #{} (clojure.set/difference seen (set (map :kind rows))))
+          (str "produced with no row, so nothing states what a verb does with"
+               " it: " (clojure.set/difference seen (set (map :kind rows))))))
+
+    (testing "a kind with no producer must SAY it is blind"
+      ;; the crossings rule, and the whole reason a registry beats a table: a
+      ;; blind spot is a legitimate answer and an unstated one is not
+      (doseq [r rows]
+        (is (contains? #{:rewrite :report :blind} (:handling r))
+            (str (:kind r) " must declare :handling: " (pr-str r)))
+        (is (not (clojure.string/blank? (str (:what r))))
+            (str (:kind r) " must say what the appearance IS: " (pr-str r)))
+        (when (nil? (:producer r))
+          (is (= :blind (:handling r))
+              (str (:kind r) " names no producer, so it is blind whether or"
+                   " not it says so: " (pr-str r))))
+        (when (= :blind (:handling r))
+          (is (not (clojure.string/blank? (str (:blind r))))
+              (str (:kind r) " is blind and must state what is NOT covered —"
+                   " that sentence is the only artifact a blind kind has: "
+                   (pr-str r))))))))
+
+(deftest a-regex-literal-spelling-the-name-is-an-OCCURRENCE
+  ;; The kind that was declared BLIND, being made producible. A pattern is
+  ;; data: no rename verb rewrites it, and a regex escapes its dots so even
+  ;; the text sweep misses the spelling. The form goes on compiling and goes
+  ;; on passing while searching for a string that can no longer occur — and
+  ;; the two outcomes are not equal. A presence assertion turns red; an
+  ;; ABSENCE assertion becomes permanently true, which is how a guard shipped
+  ;; green over an empty search twice in this restructure.
+  ;;
+  ;; `rules/stale-pattern-check` already finds a pattern naming a namespace
+  ;; that does not EXIST. That is the same defect one done later, and only
+  ;; when the old name goes unused: a rename that frees a name for reuse
+  ;; leaves a pattern matching the WRONG code, which no existence check can
+  ;; see. This reports it at the moment the rename creates it.
+  ;;
+  ;; Measured before it was written: over a fixture with a regex naming a live
+  ;; namespace, `occurrences-of` returned only the target's own `:ns-form` —
+  ;; not even a `:string` row for the pattern text, because a regex node's
+  ;; text is not a string token.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'rx.helper "(ns rx.helper)\n(defn h \"H.\" [] 1)\n")
+                (store/ingest 'rx.guard
+                              (str "(ns rx.guard)\n"
+                                   "(defn leaks \"Names it in a pattern.\" [s]\n"
+                                   "  (re-find #\"rx\\.helper\" s))\n")))
+        by  (group-by :via (refs/occurrences-of st 'rx.helper))]
+    (testing "the pattern is reported, with its text, so it can be judged"
+      (let [rs (:regex by)]
+        (is (seq rs) (str "a regex naming the target is an appearance: "
+                          (pr-str (refs/occurrences-of st 'rx.helper))))
+        (is (some #(= 'leaks (:form %)) rs) (pr-str rs))
+        (is (some #(re-find #"helper" (str (:text %))) rs)
+            (str "the pattern TEXT, because the judgement is whether it still"
+                 " matches what it was written to find: " (pr-str rs)))))
+    (testing "never rewritten — an escaped pattern is not a substitution"
+      (is (every? #(false? (:rewritable %)) (:regex by)) (pr-str (:regex by))))
+    (testing "and a pattern naming nothing in this store says nothing"
+      (is (empty? (:regex (group-by :via (refs/occurrences-of st 'rx.absent))))
+          "a name no pattern spells must not produce a row"))))
+
+(deftest source-text-inside-a-string-is-its-own-kind-of-appearance
+  ;; The second blind row, and the one with a shipped instance. `slopp.mcp-test`
+  ;; builds scratch stores as
+  ;;   (store/ingest st 'slopp.http-api.reads (str "(ns slopp.http-api.reads)\n\n" …))
+  ;; and a rename rewrote the quoted SYMBOL — correctly, it is a token — while
+  ;; the `(ns …)` inside the string one line below it stayed. The fixture then
+  ;; ingested source declaring one namespace under the name of another, and both
+  ;; tests stayed green because each asserts nil.
+  ;;
+  ;; A `:string` row was produced for it, so the appearance was never invisible.
+  ;; What was invisible is that the text is CODE — the same weight as the symbol
+  ;; beside it, and the only occurrence whose two halves are meant to agree. A
+  ;; reader told "1 occurrence in a token string" ranks that below a path.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'ss.helper "(ns ss.helper)\n(defn h \"H.\" [] 1)\n")
+                (store/ingest 'ss.fixture
+                              (str "(ns ss.fixture)\n"
+                                   "(defn build \"Ingests a scratch namespace.\" []\n"
+                                   "  [(quote ss.helper) \"(ns ss.helper)\\n(defn q [] 1)\\n\"])\n"
+                                   "(defn note \"Mentions ss.helper in prose.\" [] \"see ss.helper for why\")\n")))
+        by  (group-by :via (refs/occurrences-of st 'ss.helper))]
+    (testing "the source string is reported as SOURCE, not as an ordinary string"
+      (let [ss (:string-source by)]
+        (is (seq ss)
+            (str "a string whose text DECLARES the target is a different"
+                 " appearance from one that mentions it: " (pr-str by)))
+        (is (some #(= 'build (:form %)) ss) (pr-str ss))))
+    (testing "the quoted symbol beside it is still rewritable — that is the pair"
+      ;; the two halves of one fixture, three tokens apart, and only one moves
+      (is (some #(and (= 'build (:form %)) (true? (:rewritable %))) (:symbol by))
+          (pr-str (:symbol by))))
+    (testing "an ordinary prose mention is NOT promoted"
+      (is (some #(and (= 'note (:form %)) (true? (:prose %))) (:string by))
+          (str "only text that declares the namespace is source: " (pr-str (:string by)))))
+    (testing "and source text is never rewritten — it is reported to be judged"
+      (is (every? #(false? (:rewritable %)) (:string-source by))
+          (pr-str (:string-source by))))))

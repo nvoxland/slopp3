@@ -556,3 +556,66 @@
           (testing "and the note names the verb that fixes it, not just the fact"
             (is (re-find #"ns_realias" (str (:note r))) (pr-str (:note r))))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-rename-leaves-no-name-keyed-register-naming-the-old-name
+  ;; A register keyed by a NAME is the appearance no CST rewrite can reach: it
+  ;; is not code, so the changeset walks past it, and the declaration is left
+  ;; describing a namespace that no longer exists while the code that moved
+  ;; goes ungated. `store/ns-grained-registers` exists because that failure is
+  ;; SILENT — it cost fifteen orphans in one wave of deletions — but it covers
+  ;; only the three NAMESPACE-grained registers. The two MODULE-grained ones
+  ;; (`:modules`, `:module-test-edges`) are re-keyed by a hand-written arm in
+  ;; `ns-rename!` that names `:modules` and not `:module-test-edges`, so which
+  ;; failure you get depends on nothing a reader can see: whether the edge
+  ;; happened to be test-only.
+  ;;
+  ;; The population is DERIVED from the store value — every map with STRING
+  ;; keys is a name-keyed register, `:namespaces` being keyed by symbols — so a
+  ;; sixth register is covered by EXISTING rather than by being remembered
+  ;; here. Same reason the framework-leak guard derives its namespace list.
+  (let [scan (fn [st nm]
+               (into (sorted-map)
+                     (for [[reg v] st
+                           :when (and (map? v) (every? string? (keys v)))
+                           :let  [hits (concat (filter #{nm} (keys v))
+                                               (for [vs (vals v) :when (coll? vs)
+                                                     x  vs        :when (= nm x)]
+                                                 x))]
+                           :when (seq hits)]
+                       [reg (count hits)])))
+        sess (external/open!)]
+    (try
+      (ops/ingest! sess 'nkr.core "(ns nkr.core)\n(defn f \"F.\" [] 1)\n")
+      (ops/ingest! sess 'nkr.peer "(ns nkr.peer)\n(defn g \"G.\" [] 1)\n")
+      (ops/module-tier!     sess "nkr.core" :pure       :prompt "fixture")
+      (ops/module-platform! sess "nkr.core" :jvm        :prompt "fixture")
+      (ops/module-role!     sess "nkr.core" :instrument :prompt "fixture")
+      (ops/module-dep!      sess "nkr.core" "nkr.peer"  :prompt "fixture")
+      ;; BOTH directions of the test-only relation: the old name is a KEY in one
+      ;; and a VALUE in the other, and a re-key handling only keys is a
+      ;; different bug from one handling neither.
+      (ops/module-dep! sess "nkr.core" "nkr.peer" :test-only true :prompt "fixture")
+      (ops/module-dep! sess "nkr.peer" "nkr.core" :test-only true :prompt "fixture")
+      (let [before (scan (:store @sess) "nkr.core")]
+        ;; the control, and it is the whole reason this is not vacuous: over an
+        ;; empty population "nothing names the old name" is true by having
+        ;; checked nothing. A fixture that failed to declare satisfies every
+        ;; absence assertion downstream of it.
+        (testing "control: the fixture actually populated the registers"
+          (is (= 5 (count before))
+              (str "every name-keyed register must hold the old name BEFORE the"
+                   " rename, or the assertions below grade an empty set: "
+                   (pr-str before))))
+        (ops/ns-rename! sess 'nkr.core 'nkw.core :prompt "regroup")
+        (let [st (:store @sess)]
+          (testing "every register that named the old name now names the new one"
+            (is (= before (scan st "nkw.core"))
+                (str "the declarations must FOLLOW, at the same multiplicity —"
+                     " a register that merely dropped the row leaves the moved"
+                     " code ungated just as a stale one does. was: "
+                     (pr-str before) " now: " (pr-str (scan st "nkw.core")))))
+          (testing "and nothing anywhere still names the old one"
+            (is (= {} (scan st "nkr.core"))
+                (str "a declaration left naming a namespace that no longer"
+                     " exists: " (pr-str (scan st "nkr.core")))))))
+      (finally (ops/close! sess)))))

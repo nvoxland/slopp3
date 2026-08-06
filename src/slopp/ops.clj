@@ -2423,7 +2423,11 @@ recompiled (session/after-write! session ns-sym)]
                              tm))))
             ;; the manifest follows: module names are ns prefixes, so when the
             ;; LAST ns of a module renames away, its edges re-key (semantic
-            ;; :module-edge removes+adds — the journal shows the follow)
+            ;; :module-edge removes+adds — the journal shows the follow). BOTH
+            ;; module-grained registers, from the one list of them: this arm
+            ;; used to name :modules and nothing named :module-test-edges, so
+            ;; which failure a rename produced depended on whether the edge
+            ;; happened to be test-only
             (let [old-mod (edit.modules/module-of old)
                   new-mod (edit.modules/module-of new)
                   why     (str "manifest follows ns rename " old " → " new)]
@@ -2432,31 +2436,8 @@ recompiled (session/after-write! session ns-sym)]
                                    (keys (:namespaces (:store @session)))))
                 (session/commit-appended!
                  session
-                 (fn [base]
-                   (let [sub #(if (= old-mod %) new-mod %)]
-                     (reduce
-                      (fn [s [m deps]]
-                        (cond
-                          (= m old-mod)
-                          (as-> s $
-                            (reduce #(first (store/record-module-edge
-                                             %1 m %2 :remove :prompt why :agent agent))
-                                    $ (sort deps))
-                            (reduce #(first (store/record-module-edge
-                                             %1 new-mod %2 :add :prompt why :agent agent))
-                                    $ (sort (disj (into #{} (map sub) deps) new-mod))))
-
-                          (contains? deps old-mod)
-                          (as-> s $
-                            (first (store/record-module-edge
-                                    $ m old-mod :remove :prompt why :agent agent))
-                            (if (= m new-mod)
-                              $
-                              (first (store/record-module-edge
-                                      $ m new-mod :add :prompt why :agent agent))))
-
-                          :else s))
-                      base (or (:modules base) {}))))
+                 #(store/rekey-module-registers % old-mod new-mod
+                                                :prompt why :agent agent)
                  [])))
             ;; and so do the namespace-grained registers. A tier or platform describes
             ;; a NAME: orphaned, it both lists a namespace that no longer exists and
@@ -2553,6 +2534,14 @@ recompiled (session/after-write! session ns-sym)]
                                    (str " — " (count ss) " in TOKEN strings (a path, a"
                                         " main-ns, a require target: these BREAK, they do"
                                         " not merely read wrong)"))
+                                 (when-let [src (seq (:string-source left))]
+                                   (str "; " (count src) " string(s) carry SOURCE"
+                                        " declaring " old " — code rather than text, and"
+                                        " the quoted symbol beside each one WAS rewritten"
+                                        " (it is a token), so those two halves have come"
+                                        " apart: the fixture now ingests source declaring"
+                                        " one namespace under the name of another, and"
+                                        " stays green if it asserts nil"))
                                  (when (:test-sibling left)
                                    (str "; the -test sibling still carries the old name,"
                                         " which files its tests under the old module"))
@@ -2563,6 +2552,16 @@ recompiled (session/after-write! session ns-sym)]
                                         " second chance: a broken token string turns"
                                         " something red, while a keyword stays green and"
                                         " merely starts naming a namespace that is gone"))
+                                 (when-let [rx (seq (:regex left))]
+                                   (str "; " (count rx) " REGEX literal(s) spell it ("
+                                        (str/join ", " (sort (distinct (map :text rx))))
+                                        ") — a pattern is data, so no rewrite reaches it"
+                                        " and the escaped dots hide it from the text"
+                                        " sweep too. Rank these first: a PRESENCE"
+                                        " assertion built on one turns red, while an"
+                                        " ABSENCE assertion becomes permanently true and"
+                                        " guards nothing, which is how two guards in"
+                                        " this store shipped green over an empty search"))
                                  ". Judge each: rewriting is deliberately conservative"
                                  " here — a qualified keyword can be a wire or storage"
                                  " key something outside the store already holds — so"

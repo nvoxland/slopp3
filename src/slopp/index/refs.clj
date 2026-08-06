@@ -463,6 +463,122 @@
             {:from-form (:id e) :from-ns nsx :from-var (:name e)
              :kw kw :via via})))))
 
+(def mention-kinds
+  "Every way a NAME can APPEAR in this store, as data.
+
+  This is the `:via` vocabulary [[occurrences-of]] and its siblings tag rows
+  with, and the total account of what a re-addressing verb does with each. It
+  lived as a TABLE IN A DOCSTRING, which is the failure it exists to fix:
+  accurate prose that nothing could grade, and by the time it became data its
+  `:register` row named three registers against a store that had five.
+
+  `:handling` is the load-bearing field.
+
+  | value | means |
+  |---|---|
+  | `:rewrite` | a re-addressing verb CHANGES it, and the change is verified |
+  | `:report` | the verb SEES it, leaves it deliberately, and names it in `:left-behind` |
+  | `:blind` | nothing produces a row at all |
+
+  `:blind` (the field) states what the handling does NOT cover, and a kind
+  whose `:handling` is `:blind` must carry one — that sentence is the only
+  artifact a blind kind has. This is `crossings/kinds` one layer in, for the
+  same reason: registering a kind verifies nothing, it makes the appearance
+  ENUMERABLE. Until a kind is written down, \"nothing produces this\" and
+  \"this store has none of these\" are one observation, which is the
+  absence-of-check / absence-of-finding conflation moved up out of a check's
+  RESULT and into the vocabulary the check reports in.
+
+  `:producer` is the form that emits the row, and `nil` says outright that
+  none does. Rows produced elsewhere name their producer qualified — the
+  reference graph is not the only thing that answers this question, and a
+  registry that listed only its own namespace's answers would be the same
+  partial account in a new place."
+  [{:kind :ns-form :producer 'occurrences-of :handling :rewrite
+    :what "the target's OWN (ns …) declaration"
+    :blind nil}
+
+   {:kind :require :producer 'occurrences-of :handling :rewrite
+    :what "another namespace's require clause"
+    :blind "only the LIB symbol. The :as beside it is a different name that
+            follows nothing — that is the :alias kind, and it needs both the
+            old name and the new one to be judged at all"}
+
+   {:kind :symbol :producer 'occurrences-of :handling :rewrite
+    :what "a symbol token, INCLUDING a quoted one, which the CST rewrite
+           reaches like any other"
+    :blind "a symbol ASSEMBLED at runtime — (symbol (str base \".core\")) — is
+            not a token, so no pass can see it and no report can name it"}
+
+   {:kind :string :producer 'occurrences-of :handling :report
+    :what "the name inside a string literal. :prose splits the risk: a string
+           with whitespace is a docstring or message and a rename makes it
+           WRONG, one without is a path, a main-ns or a require target and a
+           rename BREAKS it"
+    :blind "the string is reported WHOLE and parsed only far enough to ask the
+            one question `:string-source` asks. Text carrying a qualified call
+            into the target, or a require of it, is code just as much and
+            arrives here reading like a path"}
+
+   {:kind :keyword :producer 'occurrences-of :handling :report
+    :what "a qualified keyword whose namespace segment is the target"
+    :blind "deliberately never rewritten: a qualified keyword can be a wire or
+            storage key something outside this store already holds, so each is
+            a judgement rather than a substitution. It is also the SILENT
+            member — a broken token string turns something red, while a stale
+            keyword stays green and merely starts naming a namespace that is
+            gone"}
+
+   {:kind :test-sibling :producer 'occurrences-of :handling :report
+    :what "the <target>-test namespace — a NAME by convention, not a reference"
+    :blind "renaming it is a second ns_rename and nothing sequences the two,
+            so between them the tests are filed under the old module"}
+
+   {:kind :register :producer 'occurrences-of :handling :rewrite
+    :what "a key, or a value, in one of store/name-keyed-registers — a
+           declaration ABOUT a name rather than a use of it"
+    :blind "the rewrite is by the RENAME (ns-grained-registers and
+            rekey-module-registers), not by the CST pass, so a row here after
+            a rename means a register did NOT follow. That is the safety net
+            and it is only as total as store/name-keyed-registers is"}
+
+   {:kind :alias :producer 'slopp.edit.refactor/stranded-aliases :handling :report
+    :what "a require :as spelled from the OLD name and now pointing at the new
+           one — the residue a rename leaves with no occurrence to find, since
+           the lib symbol beside it is exactly what the rename rewrote"
+    :blind "an ABBREVIATION (caps for …capabilities) is derived from nothing
+            readable, so this reports the aliases it can PROVE stale, not
+            every alias a rename made questionable"}
+
+   {:kind :regex :producer 'occurrences-of :handling :report
+    :what "a regex literal spelling the name with its dots escaped — a guard's
+           search PATTERN is data, and the population is real: 14 sites in this
+           store name a live slopp namespace inside one"
+    :blind "the walk is over NODES and a node's METADATA is not one of its
+            children, so a regex living in metadata is invisible here —
+            measured zero store-wide the day rules/stale-pattern-check declared
+            the same limit. A pattern ASSEMBLED at runtime from strings is a
+            literal to neither of them.
+
+            Reporting is the whole remedy and it is deliberately not a
+            rewrite: the pattern may be matching TEXT rather than code, and
+            substituting inside one silently changes what a guard searches
+            for"}
+
+   {:kind :string-source :producer 'occurrences-of :handling :report
+    :what "SOURCE TEXT inside a string literal — a fixture's (ns …) form, a
+           child JVM's program text — where the name is code the store never
+           parsed. The one occurrence whose two halves are meant to AGREE: the
+           quoted symbol beside it is a token and is rewritten, so the pair
+           comes apart and the fixture ingests source declaring one namespace
+           under the name of another"
+    :blind "detection is the `(ns <target>)` DECLARATION only. A string
+            carrying a qualified call into the target, or a require of it, is
+            code just as much and still arrives as an ordinary `:string` row.
+            Narrow on purpose: the declaration is the half that has actually
+            shipped broken, twice, and a looser test promotes every docstring
+            containing a parenthesis"}])
+
 (defn ^:export occurrences-of
   "Every place `target` (a namespace name) APPEARS, whatever form the
   appearance takes — the occurrence set a rename must answer to.
@@ -475,18 +591,19 @@
   answer, so each had a different blind spot and none reported what it left
   behind.
 
-  Rows are `{:ns :form :via :rewritable}` plus `:text`/`:prose` on strings and
-  `:text` on keywords. `:via` is the provenance and the whole value:
+  Rows are `{:ns :form :via :rewritable}`, plus `:text`/`:prose` on strings,
+  `:text` on keywords, and `:register`/`:key`/`:value` on register rows.
+  `:via` is the provenance and the whole value, and the vocabulary itself is
+  [[mention-kinds]] — DECLARED there, not restated here. This docstring
+  carried the table until 2026-08-06, and by then its `:register` row named
+  three registers against a store that had five, with nothing able to notice
+  because a table in prose grades nothing.
 
-  | `:via` | what it is | rewritable |
-  |---|---|---|
-  | `:ns-form` | the target's OWN `(ns …)` declaration | yes |
-  | `:require` | another namespace's require clause | yes |
-  | `:symbol` | a symbol token — INCLUDING a quoted one, which the CST rewrite reaches like any other | yes |
-  | `:string` | the name inside a string literal | **no** |
-  | `:keyword` | a qualified keyword whose namespace segment is the target | **no** |
-  | `:test-sibling` | the `<target>-test` namespace | no (it is a NAME, not a reference) |
-  | `:register` | a `:module-tiers` / `:module-platforms` / manifest key | no |
+  What that registry adds beyond the spelling: each kind says whether a verb
+  REWRITES it, REPORTS it, or is BLIND to it — and the two blind rows are the
+  point. A kind nothing produces emits no row here, so before they were
+  written down, `:regex` and `:string-source` were indistinguishable from
+  kinds this store simply had none of.
 
   `:prose` splits the string rows the way the risk splits: a string with
   whitespace is a docstring or message (a rename makes it WRONG), one without
@@ -525,10 +642,27 @@
                                             :else             :require)}]
 
                                (and (string? s) (str/includes? s t))
-                               [{:ns ns-sym :form form-name :via :string
-                                 :rewritable false
-                                 :text s
-                                 :prose (boolean (re-find #"\s" s))}]
+                               ;; a string whose text DECLARES the target is
+                               ;; CODE, and the one occurrence whose two halves
+                               ;; are meant to agree: the quoted symbol beside
+                               ;; it IS rewritten, so a fixture comes out
+                               ;; ingesting source that declares one namespace
+                               ;; under the name of another. `:prose` is
+                               ;; deliberately absent from that row — source is
+                               ;; neither prose nor a path, and grading it prose
+                               ;; says a rename merely makes it read wrong.
+                               (if (re-find (re-pattern
+                                             (str "\\(ns\\s+"
+                                                  (str/replace t "." "\\.")
+                                                  "[\\s)]"))
+                                            s)
+                                 [{:ns ns-sym :form form-name :via :string-source
+                                   :rewritable false
+                                   :text s}]
+                                 [{:ns ns-sym :form form-name :via :string
+                                   :rewritable false
+                                   :text s
+                                   :prose (boolean (re-find #"\s" s))}])
 
                                ;; both halves, matching the symbol branch: a
                                ;; qualified `:t/x` is the measured case, and a
@@ -540,6 +674,21 @@
                                [{:ns ns-sym :form form-name :via :keyword
                                  :rewritable false
                                  :text (str s)}]
+
+                               ;; a REGEX literal. rewrite-clj renders one as
+                               ;; `(re-pattern "…")`, and the dots are escaped
+                               ;; — which is why the prose sweep misses the
+                               ;; spelling as well. Same extraction as
+                               ;; `rules/stale-pattern-check`, deliberately: two
+                               ;; readers of one appearance that derive it
+                               ;; separately are two readers that can disagree.
+                               (and (seq? s) (= 're-pattern (first s))
+                                    (string? (second s))
+                                    (str/includes?
+                                     (str/replace (second s) "\\" "") t))
+                               [{:ns ns-sym :form form-name :via :regex
+                                 :rewritable false
+                                 :text (second s)}]
 
                                :else [])]
                     (into here
@@ -556,9 +705,21 @@
       (let [sibling (symbol (str t "-test"))]
         (when (contains? (:namespaces store) sibling)
           [{:ns sibling :via :test-sibling :rewritable false}]))
-      (for [[reg m] [[:module-tiers (:module-tiers store)]
-                     [:module-platforms (:module-platforms store)]
-                     [:modules (:modules store)]]
-            k (keys m)
+      ;; every DECLARATION register, from the one list of them. Hand-enumerated
+      ;; here it was three against a store of five, so a :module-roles or
+      ;; :module-test-edges row naming the target had nothing that could report
+      ;; it — and :module-test-edges also had nothing that re-keyed it.
+      (for [[reg row] store/name-keyed-registers
+            :when (= :declaration (:kind row))
+            k     (keys (get store reg))
             :when (under (str k))]
-        {:register reg :key (str k) :via :register :rewritable false})))))
+        {:register reg :key (str k) :via :register :rewritable false})
+      ;; the manifest names a module on BOTH sides of an edge, so a scan of
+      ;; keys alone reports half of it
+      (for [[reg row] store/name-keyed-registers
+            :when (and (= :declaration (:kind row)) (:in-values row))
+            [k vs] (get store reg)
+            v      vs
+            :when  (under (str v))]
+        {:register reg :key (str k) :value (str v)
+         :via :register :rewritable false})))))
