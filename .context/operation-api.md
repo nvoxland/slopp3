@@ -254,6 +254,21 @@ write time, instead of a fresh JVM catching it later.
   `refactor/move-plan` (unit-tested), atomic executor. Limits (refused or
   compile-gated): `:refer`'d moved names, java `:import`, shadowed-local
   mis-qualification.
+  **`:shadowed` is the one limit that is neither refused nor compile-gated**,
+  and it is the reason the two shadow directions are not one entry. A moved
+  form's refs INTO the target go BARE (the target gets no self-alias), so
+  `base/x` becomes `x` — and if that form binds a LOCAL named `x`, the result
+  is valid Clojure that calls the local. It compiles, the suite stays green,
+  and the behaviour changed. The mirror (qualify turning a bare stay-callee
+  into `from/x`) rewrites the binding vector too and therefore fails at
+  compile, which is why that one is a documented limit and this one is a
+  REPORT: `move-plan` returns `:shadowed` rows `{:form :was :now}` — always
+  present, empty or not — and `move-forms!` carries them plus a
+  `:shadowed-note` saying the code compiles. The detector is
+  `slopp.edit/local-name?`, the same one the D3 refusal uses, made public for
+  it. It has no scope tracking and over-matches by design, which bounds what
+  it may do: report, never refuse — under a refusal that over-match turns
+  from a spurious warning into a legitimate move blocked with no way through.
   **Every `:module-rows` entry is `{:from-ns :from-var :to :to-name}`** —
   the CALL, in both directions. The destination rows carried no callee
   until 2026-08-03 (only `moved→stay` rows did, spelled `:name`), and three

@@ -1578,6 +1578,41 @@ rather than from forms. Advisory, not red: a namespace is legitimately empty for
 the one write between `ns_create` and its first form, and a whole-store check
 that goes red on that is a check people stop running.
 
+### Sharpening (2026-08-06): a test's own DERIVATION of a production fact is a second source, and a SUBTREE is the usual proxy
+
+`slopp.webdev.screen-test` vendors the web framework into a scratch project so
+the screen tool can drive a real app. It has no jar, so `boot/framework-files`
+answers nil and the test builds the file map itself — and its comment says why
+it derives rather than hand-lists: *"a hand-kept file list goes stale the first
+time a namespace is added, which this store learned twice this week."*
+
+It went stale anyway, on exactly that schedule. The derivation was
+`slopp/web.clj` + every `.clj` under `slopp/web/`, so it encoded the same
+assumption the hand list had — **that the framework IS its subtree** — and the
+day `slopp.web.router` started calling `slopp.lang`, it vendored a router that
+cannot load. Production was right the whole time: `build.clj`'s slim file-set
+names `slopp/lang.cljc` explicitly, and `framework-files.edn` in the jar
+carries it. So the two derivations of one fact disagreed, and only the weaker
+one ran in a test.
+
+Core 9 exactly, with the proxy chosen for being easy to enumerate: a PATH
+PREFIX standing in for a membership rule. It also failed in the mode Core 9
+warns about — the report spoke in the real thing's voice. Five assertions went
+red saying the screen was blank; none of them said `slopp/lang.cljc` had not
+travelled.
+
+> A subtree is a proxy for a module whenever anything the module needs can
+> live outside it. If a test re-derives a production file set, follow the same
+> RULE production follows — for a vendored framework that means the requires,
+> not the directory — and assert a known out-of-proxy member, so the closure
+> failing is a named failure rather than a blank result.
+
+Fixed by following `[slopp.…` requires out of the subtree (`.cljc` before
+`.clj`), with `(is (contains? fw "slopp/lang.cljc"))` beside the existing
+`slopp/web/screen.clj` control. Watched red before it was believed: with the
+extension list cut to `[".clj"]` the new assertion fails FIRST and names the
+missing file, ahead of the five that can only report a blank screen.
+
 ### Sharpening (2026-08-06): an escape MARKER is a claim, and clearing the advisory is when it goes stale
 
 Core 2's parity-comment sharpening says a comment asserting a relation is a test
