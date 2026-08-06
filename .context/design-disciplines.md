@@ -1488,6 +1488,70 @@ not have one. A form with no name, a reference living in a config value, a node
 spliced rather than wrapped — each is a citizen of the subject that the
 addressing scheme cannot name, and therefore cannot count.
 
+### Sharpening (2026-08-06): a check's POPULATION is derived, so an item contributing nothing to it cannot be graded
+
+`slopp.web-rules-test` sat in the store as an `ns` form with nothing after it —
+a husk left when the R6 rules move carried its tests to `slopp.rules.web-test`.
+It survived two days and a green `full_check`, and the reason is sharper than
+"no rule covered it."
+
+**Every done-advisory is handed CHANGED FORM IDS.** `namespace-purpose` is
+namespace-grained, and it still derives its namespaces as
+`(keep #(store/ns-of-form-id st %) changed)`. `rules/sweep-store!` — the
+whole-store answer, built precisely so a violation older than a rule is still
+seen — builds its population the same way, `(mapcat store/forms)` over every
+namespace. A namespace with zero forms contributes zero ids to either. **It is
+not that the rules were quiet about it; it is that no rule written in that
+chassis could ever have reached it**, and the chassis is where the coverage
+claim lives.
+
+The exemption on top (`namespace-purpose` skips an empty namespace — a newborn
+one has nothing to describe) is real and correct, and it is the SECOND reason,
+which is what made the first one hard to see: there was an explanation for the
+silence that was true and did not go deep enough.
+
+Core 9's shape, one turn further out. Core 9 says a check computed over a proxy
+reports on the proxy in the real thing's voice. Here the proxy is the
+POPULATION rather than the measurement: "every form in the store" stands in for
+"everything in the store", and the gap between them is exactly one grain — the
+namespace that holds no forms. The generalisation worth carrying:
+
+> When a check's population is enumerated from the items it grades, ask what an
+> item with ZERO of those looks like. That item is not merely ungraded, it is
+> unreachable, and the check will report clean about it forever.
+
+Fixed by `slopp.read.modules/empty-namespaces` reported as `full_check`'s
+`:empty-namespaces` — namespace-grained, enumerated from `(:namespaces store)`
+rather than from forms. Advisory, not red: a namespace is legitimately empty for
+the one write between `ns_create` and its first form, and a whole-store check
+that goes red on that is a check people stop running.
+
+### Sharpening (2026-08-06): an escape MARKER is a claim, and clearing the advisory is when it goes stale
+
+Core 2's parity-comment sharpening says a comment asserting a relation is a test
+nothing runs. An escape marker is the same claim with the stakes raised: the
+tools DO read it, and obey it, without ever re-deriving whether it is still
+needed. `^:unused-ok` says "the unused rule would fire here and I accept it" —
+and the reference graph already knows whether that is true.
+
+The failure has a specific moment. Clearing the `marker-why` advisory means
+writing, for each bare marker, why the escape applies — and a pass whose whole
+job is "make the finding go away" answers the STATED question without ever
+asking the prior one. Measured while clearing all 17 on slopp's own store: of
+the 3 `^:unused-ok`, one was stale. `slopp.rename-test/src-of` had five callers;
+annotating it would have produced a well-written sentence explaining why a rule
+that cannot fire is permanently waived, indistinguishable from the sixteen true
+ones and strictly worse than the bare marker it replaced.
+
+The cheap discipline, now in the shipped skill: `query_depends {on "ns/name"}`
+prints `:callers` beside `:declared [:unused-ok]` — the claim and its evidence
+in one read. Callers present → DELETE the marker, do not annotate it.
+
+Derivable, and worth building if the population grows: for `^:unused-ok` and
+`^:entry-point` the marker asserts something the reference graph can already
+decide, so a discharged-marker check is a graph query, not a heuristic. One in
+three on a hand-curated population is the number to weigh it against.
+
 ## Core 10 — a refusal is read in FIX-IT mode, and design rationale is a different room
 
 **Root.** Named 2026-08-01 from the same cold read. slopp-ui hit

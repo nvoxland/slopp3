@@ -188,6 +188,15 @@ measurably bleed tokens.
    BASELINE (`key-typos`, `breaking-changes`, `assertions-never-red` …), and
    running one of those over every form reports nothing in the same shape as
    clean, so they say so instead of quietly padding the green.
+   **`:empty-namespaces` names HUSKS — and this is the only grain that can.**
+   A move that carries a namespace's whole contents elsewhere leaves an `ns`
+   form with nothing after it. Nothing else reports one: there is no form to
+   be dead, undocumented or uncovered, and every advisory is addressed by
+   changed FORM IDS (the whole-store rule sweep included), so a namespace with
+   zero forms is in no population any rule can reach. Advisory — it never
+   flips the status, because a namespace you just created is empty for one
+   write. `ns_delete` retires a genuine husk; adding a form is the other
+   honest answer.
    **`:crossings` is the one section a green does NOT cover.** Everything else
    full_check reports is an edge inside the store; this names the exits — a
    contract becoming JSON, form metadata becoming a route table, `.cljc` going
@@ -418,6 +427,18 @@ advisory. The exception is `^{:export "x.y.z"}`, whose string already means
 the subtree it widens to. **A marker slopp does not know waives nothing while
 reading exactly as though it does** — `^:unusedok` is not `^:unused-ok`, and
 nothing fails; `store_doctor` is what finds those.
+
+**Before you write the WHY, check that the escape still applies.** A marker
+is a CLAIM about the code around it, and claims go stale — the caller it was
+waived for arrives later, and nothing revisits the waiver.
+`query_depends {on "ns/name"}` settles it in one call: it prints `:callers`
+beside `:declared [:unused-ok]`, which is the claim and its evidence side by
+side. If there are callers, DELETE the marker; do not annotate it. Measured
+on slopp's own store while clearing this advisory: 3 `^:unused-ok`, one of
+them stale on a population somebody had curated by hand. Annotating that one
+would have bought a well-written sentence explaining why a rule that cannot
+fire is permanently waived — which reads exactly like the true ones, and is
+worse than the bare marker it replaced.
 
 **Tiers are not your problem:** `done` runs the WHOLE in-image suite plus
 the `^:external` tests your changes impact (in a separate JVM,
