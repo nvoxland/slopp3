@@ -218,7 +218,23 @@
                                           (subs (.getPath f)
                                                 (inc (count (.getPath web))))))))
                   (.exists (io/file root "slopp" "web.clj"))
-                  (conj "slopp/web.clj"))
+                  (conj "slopp/web.clj")
+
+                  ;; slopp.lang ships with the framework because it is part of
+                  ;; the SYNTAX, not a library beside it (D3.1): the dialect
+                  ;; denies reader conditionals and owes the author the
+                  ;; portable call instead, so slopp.web.* is allowed to
+                  ;; require it — and a user's app resolves that require
+                  ;; against this jar and nothing else.
+                  ;;
+                  ;; Named explicitly rather than swept: the scan above filters
+                  ;; on `.clj`, and this one is `.cljc` because it must compile
+                  ;; to JS for a client too. Pinned by
+                  ;; modules-test/the-slim-framework-jar-carries-the-syntax-it-lets-the-framework-use,
+                  ;; which is the only thing that can see both halves — this
+                  ;; file is outside the store.
+                  (.exists (io/file root "slopp" "lang.cljc"))
+                  (conj "slopp/lang.cljc"))
           f     (io/file class-dir "META-INF" "slopp" "framework-files.edn")]
       (io/make-parents f)
       (spit f (pr-str (vec (sort files))))
