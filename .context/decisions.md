@@ -40,6 +40,29 @@ the change here (same commit).
   `read-string`; extended with the resolvers 2026-07-16 and the metadata
   mutators `alter-meta!`/`reset-meta!` 2026-07-18 — both amendments below).
   Keep data dynamism; constrain metaprogramming dynamism.
+- **D3.1 (user, 2026-08-06) — the reader-conditional ban STANDS everywhere,
+  and the framework pays the cost that ban creates.** Revisited explicitly
+  rather than silently, on slopp-ui's ask: a `:cljc` namespace targets two
+  platforms, so the refusal's own advice — *write the one branch this store
+  targets* — has no answer there, and they paid ~35 lines of hand-rolled UTF-8
+  percent-decoding, compile-verified on the ClojureScript side only.
+
+  The ban stays because a branch nothing compiles is a branch no oracle
+  reaches. **What changes is whose problem the platform call is:** when an app
+  hits a limitation that would make it want a branch, SLOPP grows a helper
+  carrying that branch — or, better, a portable implementation with no branch
+  at all — and the app calls it. One implementation, verified once, instead of
+  the same bit math in every project.
+
+  Two obligations that come with it, both load-bearing. **Say so when you
+  refuse:** a refusal that names the ban and not the helper leaves the author
+  exactly where slopp-ui was. And **re-flag a helper that turns out to be
+  APP-SPECIFIC** rather than quietly absorbing one project's needs into the
+  framework — that is a decision to make with a real example in hand, not a
+  default. UTF-8 percent-decoding is the worked case of a genuinely shared one:
+  `slopp.web.router/query-params` already does it JVM-side, so the framework
+  needed the portable version anyway and only the client half was missing.
+
 - **D4 — User macros banned** (`defmacro` rejected). Built-in macros fine;
   runtime `macroexpand` remains the oracle for those.
 - **D5 — No purity rule; refresh-vs-restart on an owned process.** Refresh is
