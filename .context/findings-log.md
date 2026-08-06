@@ -1288,3 +1288,40 @@ Two rules that outlive the endpoint:
   way "measured, not assumed" was about PAST work. The habit is the cheap
   fix; machinery for two currently-careful agents is the case already
   declined, correctly.
+
+## 2026-08-06 — standing gate debt measured at zero, and the obvious re-derivation is wrong by 18
+
+Task #33 proposed a whole-store WRITE-GATE sweep, the gate-shaped twin of the
+advisory sweep (#27). Measured before building, and the numbers re-scoped it.
+
+- **`gate-check` over all 2,521 named forms: zero refusals, zero advisories.**
+  Not a clean-because-unasked zero — both opt-in gates are already ON in this
+  store (config `gates`: `require-boundary-schemas`, `require-namespaced-keys`),
+  so the strictest available configuration is the one that reported clean. The
+  friction that filed the task (an unrelated rename refused over `open!`'s
+  years-old missing `:throws`) had already been fixed.
+- **The same question asked the obvious way returns 18 findings, all false.**
+  Looping the 14 gate FNS directly over every form — which is what anyone
+  reaches for, and what I reached for first — reports 15 `tier-refusal` and 3
+  `web-endpoint-schema`, every one of them in a `-test` namespace.
+  `slopp.edit.gates/gate-check` filters them through per-store severity,
+  `:rule/applies-to :production` and the web opt-in; a hand-rolled loop knows
+  none of that.
+
+**The finding is the second bullet, not the first.** A debt list nobody needs
+is a feature to park; a canonical answer that is not exposed, next to a wrong
+re-derivation that is one `for` loop away, is Core 2's *what would make the
+wrong route unavailable* — the same shape `relocation-debt` was deliberately
+built to avoid by reading `store-violations` instead of simulating it.
+
+Recorded rather than built: zero instances here, and the user-facing case (a
+project enabling an opt-in gate over code that predates it — the thing the
+gate's own docstring calls "OFF by default so nothing retro-breaks") cannot be
+measured from a store where both are already on and clean.
+
+**Method note, and it is the reusable half:** the first number came from
+re-deriving a rule instead of calling it. The correction cost one query and
+changed the answer from "18 forms of standing debt" to "zero, and your
+measurement is the bug." Whenever a check exists, measure THROUGH it — a
+re-derivation that disagrees with the canonical route is not a measurement of
+the store, it is a measurement of the re-derivation.
