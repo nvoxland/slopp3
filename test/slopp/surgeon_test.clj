@@ -563,3 +563,35 @@
             (is (not= [[3]] after)
                 (str "the local now answers the call: " (pr-str after))))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-move-rewrites-a-defmethod-caller-and-the-dispatch-still-answers
+  ;; friction #18 as it was reported: a real move rewrote 2 of 4 callers and
+  ;; returned :ok. The two it missed were defmethod bodies. Nothing was red —
+  ;; the moved var stayed mapped in the live image through four more writes,
+  ;; and only a cold load in the external tier caught it, pointing at a test
+  ;; file rather than at the move.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'dmx.base
+                   (str "(ns dmx.base)\n\n"
+                        "(defmulti render \"R.\" :kind)\n\n"
+                        "(defn util \"U.\" [x] [:u x])\n"))
+      (ops/module-dep! sess "dmx.use" "dmx.base" :prompt "use dispatches on base")
+      (ops/ingest! sess 'dmx.use
+                   (str "(ns dmx.use (:require [dmx.base :as base]))\n\n"
+                        "(defmethod base/render :a [m] (base/util (:v m)))\n"))
+      (is (= [[:u 1]] (ops/query-eval sess "(dmx.base/render {:kind :a :v 1})"))
+          "the dispatch answers before the move — otherwise nothing below means anything")
+      (let [r (ops/move-forms! sess 'dmx.base '[util] 'dmx.moved :prompt "split")]
+        (is (nil? (:error r)) (pr-str r))
+        (is (= 1 (:rewrote r)) (pr-str r))
+        (is (empty? (:callers-unrewritten r))
+            (str "the population agrees with the count: "
+                 (pr-str (:callers-unrewritten r))))
+        (testing "the cold fact: the source names the new home and not the old"
+          (let [src (query/query-source sess 'dmx.use)]
+            (is (re-find #"dmx\.moved" src) src)
+            (is (not (re-find #"base/util" src)) src)))
+        (testing "and the live one: dispatching still reaches the moved fn"
+          (is (= [[:u 1]] (ops/query-eval sess "(dmx.base/render {:kind :a :v 1})")))))
+      (finally (ops/close! sess)))))

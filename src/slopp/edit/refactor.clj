@@ -137,28 +137,57 @@
             k))
         (n/children node))))
 
+(defn- quoted-loc?
+  "Is this zipper location inside a QUOTE — `'x` or `` `x ``?
+
+  A quoted symbol is a NAME being passed as DATA: a `store/late-ref` target,
+  a `requiring-resolve` argument, an `ns-unmap` name. The reader never
+  resolves it, so an alias is meaningless in one and a missing namespace is
+  fatal — and neither shows up at write time, because the form compiles and a
+  late-bound target only resolves at its first CALL."
+  [zl]
+  (loop [up (z/up zl)]
+    (cond (nil? up)                            false
+          (#{:quote :syntax-quote} (z/tag up)) true
+          :else                                (recur (z/up up)))))
+
 (defn rewrite-symbols
   "Zipper-walk `node`, replacing symbol tokens via `f` (sym → sym|nil).
   Returns the (possibly identical) node. z/root wraps its result in a
   :forms node — unwrapped here, or every changeset-rewritten form would
   lose its :name downstream (apply-changeset recomputes names via
   form-symbol, which rightly refuses :forms wrappers; found via Q14's
-  sweep when a consumer's rewritten ns decl broke image load order)."
-  [node f]
-  (loop [zl (z/of-node node)]
-    (let [zl (if (and (= :token (z/tag zl))
-                      (symbol? (z/sexpr zl)))
-               (if-let [s' (f (z/sexpr zl))]
-                 (z/replace zl s')
-                 zl)
-               zl)
-          nxt (z/next zl)]
-      (if (z/end? nxt)
-        (let [root (z/root zl)]
-          (if (= :forms (n/tag root))
-            (or (first (filter n/sexpr-able? (n/children root))) root)
-            root))
-        (recur nxt)))))
+  sweep when a consumer's rewritten ns decl broke image load order).
+
+  `opts` selects WHICH symbols the walk visits, `'…`/`` `… `` being the
+  axis: `{:skip-quoted true}` visits only unquoted ones, `{:only-quoted
+  true}` only quoted ones, and neither visits everything. Opt IN, because
+  the callers want different things about the same token — a RENAME
+  rewrites a quoted name to another fully-qualified name and is right to,
+  while a MOVE must dequalify the CALL and give the quoted name its new
+  home's full name instead, which is two passes with the same predicate.
+  See [[quoted-loc?]] for why getting it wrong shows up at neither write
+  time nor test time."
+  ([node f] (rewrite-symbols node f nil))
+  ([node f {:keys [skip-quoted only-quoted]}]
+   (loop [zl (z/of-node node)]
+     (let [visit? (and (= :token (z/tag zl))
+                       (symbol? (z/sexpr zl))
+                       (cond skip-quoted (not (quoted-loc? zl))
+                             only-quoted (quoted-loc? zl)
+                             :else       true))
+           zl (if visit?
+                (if-let [s' (f (z/sexpr zl))]
+                  (z/replace zl s')
+                  zl)
+                zl)
+           nxt (z/next zl)]
+       (if (z/end? nxt)
+         (let [root (z/root zl)]
+           (if (= :forms (n/tag root))
+             (or (first (filter n/sexpr-able? (n/children root))) root)
+             root))
+         (recur nxt))))))
 
 (defn ns-sym-mapper
   "Symbol rewriter old-ns → new-ns: the ns name itself, and any
@@ -917,7 +946,21 @@
   pure analysis over a store value; the executor applies it atomically.
   Returns {:error msg} with teaching for the impossible cases, else
   {:new-ns? :new-src|:append :to-require-adds :rewrites {fid {:ns :name :node
-  :src}} :require-adds {ns spec-str} :module-rows :removals :moved :shadowed}.
+  :src}} :require-adds {ns spec-str} :module-rows :removals :moved :shadowed :callers-unrewritten}.
+  A CALLER IS ADDRESSED BY FORM ID, never by name. A defmethod body defines
+  no var, so the store names the form nil and every reference row it produces
+  has `:from-var` nil — and a caller set keyed on that name silently dropped
+  those callers while the move reported :ok. `:callers-unrewritten` is the
+  population beside the answer: every form the reference graph says calls a
+  moved name that this pass did not change. Empty is the ordinary case and a
+  row is not always a bug, but `rewrote 2 of 4` can no longer read as success.
+  NO QUOTED SYMBOL IS EVER REWRITTEN TO AN ALIAS. An alias is the calling
+  namespace's private business while a quoted name is resolved by whoever
+  reads it later, so all three passes agree: a call takes the alias, a quoted
+  reference into the moved set takes to-ns's FULL name, and a quoted name
+  that would merely be dequalified or alias-qualified is left exactly as
+  written. Getting this wrong is invisible twice over — the form compiles,
+  and a late-bound carrier only resolves at its first CALL.
   `:shadowed` is ALWAYS present, empty or not — an empty vector says the
   dequalification was checked against the moved forms' locals and cleared,
   where an absent key would only say this version does not look.
@@ -958,12 +1001,24 @@
         ;; The callee is right here in the reference row.
         stay->moved-calls (set (keep #(when (and (= from-ns (:to-ns %))
                                                  (moved (:to-name %))
-                                                 (:from-var %)
                                                  (not (moved (:from-var %)))
                                                  (not= :declared (:via %)))
                                         [(:from-var %) (:to-name %)])
                                      srefs))
-        stay->moved (set (map first stay->moved-calls))
+        ;; NAMES, for the messages that want one — nil is dropped rather than
+        ;; sorted, since a nameless caller has no name to print.
+        stay->moved (set (keep first stay->moved-calls))
+        ;; ...and the same question by form ID, which is what the decisions
+        ;; use. `stay->moved` drives three of them — does from-ns need an
+        ;; alias back, which forms to rewrite, is this a two-way split — so
+        ;; before this a defmethod left behind in from-ns was absent from all
+        ;; three, and kept calling a name that had left the namespace.
+        stay->moved-forms (set (keep #(when (and (= from-ns (:to-ns %))
+                                                 (moved (:to-name %))
+                                                 (not (moved (:from-var %)))
+                                                 (not= :declared (:via %)))
+                                        (:from-form %))
+                                     srefs))
         moved->stay (set (keep #(when (and (= from-ns (:to-ns %))
                                            (not (moved (:to-name %)))
                                            (moved (:from-var %))
@@ -996,8 +1051,15 @@
       {:error (str to-ns " already defines " (vec collisions)
                    " — rename first or pick another home")}
 
-      (and (seq stay->moved) (seq moved->stay))
+      (and (seq stay->moved-forms) (seq moved->stay))
       {:error (str "two-way split: " (vec (sort stay->moved))
+                   ;; the nameless callers are counted rather than dropped: a
+                   ;; refusal that lists [] while refusing reads as a bug in
+                   ;; the refusal.
+                   (let [n (- (count stay->moved-forms) (count stay->moved))]
+                     (when (pos? n)
+                       (str " plus " n " nameless form(s) — a defmethod body"
+                            " defines no var")))
                    " (staying) call the moved set, while the moved set calls "
                    (vec (sort moved->stay)) " (staying) — a real cycle; move"
                    " one of those groups too, or split differently")}
@@ -1017,10 +1079,18 @@
 
       :else
       (let [;; external callers from THE graph — one assembly, not a per-ns sweep
+            ;; a caller is a ROW, not a NAME. A defmethod body defines no var, so
+            ;; the store names the form nil and :from-var is nil on every call
+            ;; it makes — and requiring it here dropped those callers from the
+            ;; require, the alias AND the rewrite, while the move reported
+            ;; :ok. The row carries :from-form for every caller whether or not
+            ;; the store can name it; :from-var stays in the PAIR because a
+            ;; module row wants the caller var when there is one, and
+            ;; module-violations already treats that as message detail rather
+            ;; than as the rule.
             ext-usages  (reduce (fn [m r]
                                   (if (and (= from-ns (:to-ns r))
                                            (moved (:to-name r))
-                                           (:from-var r)
                                            (not= from-ns (:from-ns r))
                                            (not= :declared (:via r)))
                                     (update m (:from-ns r)
@@ -1029,7 +1099,7 @@
                                     m))
                                 {} (refs/refs store))
             need-alias  (cond-> (set (keys ext-usages))
-                          (seq stay->moved) (conj from-ns))
+                          (seq stay->moved-forms) (conj from-ns))
             ;; the mirror of from-require-drops, on the CALLER side: a caller
             ;; rewritten to the new home may be left using NOTHING from
             ;; from-ns, and the stale require is worse than untidy — a :pure
@@ -1088,11 +1158,17 @@
             to-prefixes (into #{to-ns}
                               (keep #(when (= (:lib %) to-ns) (:alias %)))
                               from-specs)
+            ;; …but NOT a quoted one. `'to-ns/x` is already fully qualified and
+            ;; stays correct in its new home, while `'x` is a name
+            ;; `requiring-resolve` cannot take — and a late-bound carrier
+            ;; resolves at its first CALL, so the move, the compile gate and
+            ;; every test that does not exercise the path are all green.
             dequalify   (fn [node]
                           (rewrite-symbols node
                                            (fn [s] (when (and (some? (namespace s))
                                                               (to-prefixes (symbol (namespace s))))
-                                                     (symbol (name s))))))
+                                                     (symbol (name s))))
+                                           {:skip-quoted true}))
             ;; dequalify's blind spot, REPORTED rather than refused. `base/x`
             ;; goes bare, and if the moved form binds a LOCAL named `x` the
             ;; result is valid Clojure that calls the local — different
@@ -1120,7 +1196,8 @@
                             (rewrite-symbols node
                                              (fn [s] (when (and (nil? (namespace s))
                                                                 (moved->stay s))
-                                                       (symbol (str from-alias) (str s)))))
+                                                       (symbol (str from-alias) (str s))))
+                                             {:skip-quoted true})
                             node))
             moved-nodes (vec (for [e (store/forms store from-ns)
                                    :when (moved (:name e))]
@@ -1131,13 +1208,14 @@
                                      (under-meta #(export-mark % (:export opts)))))))
             ;; rewrites: from-ns stay forms (bare→alias) + external (alias→alias)
             from-alias* (get alias-of from-ns)
-            from-rw     (when (seq stay->moved)
+            from-rw     (when (seq stay->moved-forms)
                           (for [e (store/forms store from-ns)
-                                :when (and (:name e) (stay->moved (:name e)))
+                                :when (stay->moved-forms (:id e))
                                 :let [node' (rewrite-symbols
                                              (:node e)
                                              (fn [s] (when (and (nil? (namespace s)) (moved s))
-                                                       (symbol (str from-alias*) (str s)))))]
+                                                       (symbol (str from-alias*) (str s))))
+                                             {:skip-quoted true})]
                                 :when (not= (n/string node') (n/string (:node e)))]
                             [(:id e) {:ns from-ns :name (:name e) :node node'
                                       :src (n/string node')}]))
@@ -1146,17 +1224,41 @@
                                                    (keep #(when (= (:lib %) from-ns) (:alias %)))
                                                    (require-specs store nsx))
                                     a (get alias-of nsx)]
+                              ;; every form, INCLUDING the ones the store
+                              ;; cannot name. There was a `:when (:name e)`
+                              ;; here, and it was the second half of the
+                              ;; defmethod bug: a namespace could be reached
+                              ;; through its named callers and its nameless
+                              ;; one still walked past. The diff check below
+                              ;; is what decides whether a form is a caller —
+                              ;; a name never was.
                               e (store/forms store nsx)
-                              :when (:name e)
-                              :let [node' (rewrite-symbols
-                                           (:node e)
-                                           (fn [s]
-                                             (when (and (some? (namespace s))
-                                                        (prefixes (symbol (namespace s)))
-                                                        (moved (symbol (name s))))
-                                               (if (= nsx to-ns)
-                                                 (symbol (name s))
-                                                 (symbol (str a) (name s))))))]
+                              :let [node' (-> (:node e)
+                                        ;; a CALL takes the alias, and goes
+                                        ;; bare in the target itself, which
+                                        ;; has no self-alias
+                                        (rewrite-symbols
+                                         (fn [s]
+                                           (when (and (some? (namespace s))
+                                                      (prefixes (symbol (namespace s)))
+                                                      (moved (symbol (name s))))
+                                             (if (= nsx to-ns)
+                                               (symbol (name s))
+                                               (symbol (str a) (name s)))))
+                                         {:skip-quoted true})
+                                        ;; a QUOTED name is resolved by
+                                        ;; whoever reads it later, where this
+                                        ;; namespace's aliases mean nothing —
+                                        ;; so it takes the new home's FULL
+                                        ;; name, and stays qualified even
+                                        ;; inside the target
+                                        (rewrite-symbols
+                                         (fn [s]
+                                           (when (and (some? (namespace s))
+                                                      (prefixes (symbol (namespace s)))
+                                                      (moved (symbol (name s))))
+                                             (symbol (str to-ns) (name s))))
+                                         {:only-quoted true}))]
                               :when (not= (n/string node') (n/string (:node e)))]
                           [(:id e) {:ns nsx :name (:name e) :node node'
                                     :src (n/string node')}])
@@ -1166,6 +1268,29 @@
                                      :let [specs (require-specs store nsx)]
                                      :when (not-any? #(= (:lib %) to-ns) specs)]
                                  [nsx (str "[" to-ns " :as " (get alias-of nsx) "]")]))
+            ;; the POPULATION, so the answer can be read against it. One pass
+            ;; over the graph covers both directions — a stay-behind and an
+            ;; outside caller are the same fact about a different :from-ns —
+            ;; and it is keyed by FORM ID because that is the only address
+            ;; every caller has.
+            caller-rows (into {}
+                              (keep (fn [r]
+                                      (when (and (= from-ns (:to-ns r))
+                                                 (moved (:to-name r))
+                                                 (not (moved (:from-var r)))
+                                                 (not= :declared (:via r)))
+                                        [(:from-form r) {:ns (:from-ns r)
+                                                         :form (:from-var r)}])))
+                              (refs/refs store))
+            rewrites    (into {} (concat from-rw ext-rw))
+            ;; A gap is not always a bug — a quoted target is now left whole
+            ;; deliberately, and a :refer'd name refuses earlier — but an
+            ;; UNEXPLAINED one is precisely the "rewrote 2 of 4 callers and
+            ;; reported :ok" this verb shipped. A count with no population
+            ;; beside it cannot be read as anything but success.
+            unrewritten (vec (for [[id row] (sort-by key caller-rows)
+                                   :when (not (contains? rewrites id))]
+                               (assoc row :id id)))
             ;; every row is {:from-ns :from-var :to :to-name} — ONE shape, in both
             ;; directions. The destination rows used to omit :to-name while the
             ;; moved→stay rows spelled the same fact `:name`, so a consumer
@@ -1186,7 +1311,8 @@
                        " — their existing aliases collide; rename those first")}
           (cond-> {:new-ns? new-ns?
                    :moved (vec (sort moved))
-                   :rewrites (into {} (concat from-rw ext-rw))
+                   :rewrites rewrites
+                   :callers-unrewritten unrewritten
                    :require-adds require-adds
                    :module-rows module-rows
                    :removals (vec (sort moved))

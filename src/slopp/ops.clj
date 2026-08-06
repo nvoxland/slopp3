@@ -2117,8 +2117,11 @@ recompiled (session/after-write! session ns-sym)]
 (defn move-forms!
   "Move `form-names` from `from-ns` into `to-ns` — NEW or EXISTING — the
   general relocation refactor (clj-surgeon's :extract!, slopp-grade, v2).
-  Callers EVERYWHERE (production + tests) are rewritten to alias-qualified
-  calls and gain the require; the moved defs are publicized (module-grain
+  Callers EVERYWHERE (production + tests) are
+  rewritten to alias-qualified calls and gain the require — addressed by
+  FORM ID, because a defmethod body defines no var and a caller set keyed on
+  a name dropped those silently; `:callers-unrewritten` reports any the pass
+  did not change, so the count is readable against its population; the moved defs are publicized (module-grain
   visibility replaces var privacy); the target gets only the requires the
   moved code uses. Dependency direction is analyzed: stay→moved adds the
   require back to from-ns, moved→stay qualifies stay refs instead, a
@@ -2368,6 +2371,13 @@ recompiled (session/after-write! session ns-sym)]
                                  :group gid
                                  :test summary}
                           (seq edges) (assoc :edges-declared edges)
+                          ;; the population beside :rewrote. Every row is a
+                          ;; form the reference graph says calls a moved name
+                          ;; and this pass did not change — sometimes right (a
+                          ;; quoted target is left whole on purpose), never
+                          ;; something the count alone would have said.
+                          (seq (:callers-unrewritten plan))
+                          (assoc :callers-unrewritten (:callers-unrewritten plan))
                           ;; the one thing this move did that NOTHING
                           ;; downstream can catch: the compile gate is happy,
                           ;; the suite is green, and the call reaches a

@@ -671,3 +671,157 @@
       (is (re-find #"\(dead-ends ends\)" moved-src)
           (str "control must dequalify too: " moved-src))
       (is (empty? (:shadowed q))))))
+
+(deftest a-nameless-caller-is-rewritten-because-the-reference-row-has-a-form-id
+  ;; A defmethod body defines no var. The store names the form nil and every
+  ;; reference row it produces has :from-var nil — so a caller set keyed on
+  ;; that name drops it, and the move reports :ok having rewritten some of
+  ;; its callers. That is how 2 of 4 went missing on the move that found this.
+  ;;
+  ;; The row has carried :from-form the whole time. Two shapes, because they
+  ;; fail differently: dm.use has a named caller BESIDE the nameless one, so
+  ;; the namespace is reached and only the form is skipped; dm.only has
+  ;; nothing but the nameless one, so the namespace is never visited at all
+  ;; and does not even get the require.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'dm.core
+                             (str "(ns dm.core)\n\n"
+                                  "(defn util \"U.\" [x] x)\n\n"
+                                  "(defmulti render \"R.\" :kind)\n"))
+               (store/ingest 'dm.use
+                             (str "(ns dm.use (:require [dm.core :as core]))\n\n"
+                                  "(defmethod core/render :a [m] (core/util m))\n\n"
+                                  "(defn plain \"P.\" [m] (core/util m))\n"))
+               (store/ingest 'dm.only
+                             (str "(ns dm.only (:require [dm.core :as core]))\n\n"
+                                  "(defmethod core/render :b [m] (core/util m))\n")))
+        p  (refactor/move-plan st 'dm.core '[util] 'dm.moved {})
+        rw (vals (:rewrites p))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (testing "the nameless caller's namespace is a caller like any other"
+      (is (contains? (:require-adds p) 'dm.only)
+          (str "no require for a namespace whose only caller is nameless: "
+               (pr-str (:require-adds p)))))
+    (testing "every caller form is rewritten, named or not"
+      (is (= {'dm.only 1 'dm.use 2} (frequencies (map :ns rw)))
+          (str "callers rewritten: " (pr-str (map (juxt :ns :name) rw))))
+      (is (not-any? #(re-find #"core/util" (:src %)) rw)
+          (str "a caller still calling the old address: "
+               (pr-str (map :src rw)))))))
+
+(deftest a-nameless-stay-behind-caller-gets-the-require-back-and-the-rewrite
+  ;; The mirror of the external half, and it fails one step earlier: the
+  ;; stay->moved set is keyed on var NAMES, so a defmethod left behind in
+  ;; from-ns contributes nothing to it — from-ns is never even asked for an
+  ;; alias, and the moved var's only caller keeps calling a name that has
+  ;; left the namespace.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'sm.base "(ns sm.base)\n\n(defmulti render \"R.\" :kind)\n")
+               (store/ingest 'sm.core
+                             (str "(ns sm.core (:require [sm.base :as base]))\n\n"
+                                  "(defn util \"U.\" [x] x)\n\n"
+                                  "(defmethod base/render :a [m] (util m))\n")))
+        p  (refactor/move-plan st 'sm.core '[util] 'sm.helpers {})
+        rw (vals (:rewrites p))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (contains? (:require-adds p) 'sm.core)
+        (str "from-ns needs the require back for its nameless caller: "
+             (pr-str (:require-adds p))))
+    (is (= 1 (count rw))
+        (str "the defmethod IS the caller: " (pr-str (map (juxt :ns :name) rw))))
+    (is (re-find #"/util" (str (:src (first rw))))
+        (str "the bare call must become alias-qualified: "
+             (pr-str (:src (first rw)))))))
+
+(deftest a-two-way-split-is-refused-when-the-stay-side-caller-has-no-name
+  ;; `util` moves and calls `keeper`, which stays; the defmethod stays and
+  ;; calls `util`. That is a require cycle in both directions and the plan
+  ;; refuses it — but the check read the var-NAME set, so with the stay-side
+  ;; caller nameless it saw one direction, passed, and left the cold-load
+  ;; gate to find it later against a namespace that had not moved.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'tw.base "(ns tw.base)\n\n(defmulti render \"R.\" :kind)\n")
+               (store/ingest 'tw.core
+                             (str "(ns tw.core (:require [tw.base :as base]))\n\n"
+                                  "(defn keeper \"K.\" [x] x)\n\n"
+                                  "(defn util \"U.\" [x] (keeper x))\n\n"
+                                  "(defmethod base/render :a [m] (util m))\n")))
+        p  (refactor/move-plan st 'tw.core '[util] 'tw.helpers {})]
+    (is (re-find #"two-way split" (str (:error p))) (pr-str p))
+    (is (re-find #"nameless" (str (:error p)))
+        (str "and it must account for the caller it cannot name, or the"
+             " refusal lists nothing to act on: " (:error p)))))
+
+(deftest a-quoted-carrier-target-keeps-its-qualifier-through-a-move
+  ;; Refs INTO the target go bare, because the target ns gets no self-alias.
+  ;; That is right for a CALL and wrong for a QUOTED symbol, which is a name
+  ;; being passed as data: `(requiring-resolve 'ca.base/hook)` moved into
+  ;; ca.base became `(requiring-resolve 'hook)`, which cannot resolve.
+  ;;
+  ;; Nothing catches it. The form compiles, the moved code loads, and a
+  ;; late-bound carrier only resolves at its first CALL — so the write is
+  ;; green, the suite is green, and the failure arrives in some later session
+  ;; pointing at the carrier rather than at the move.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'ca.base "(ns ca.base)\n\n(defn hook \"H.\" [x] x)\n")
+               (store/ingest 'ca.mid
+                             (str "(ns ca.mid (:require [ca.base :as base]))\n\n"
+                                  "(defn call \"C.\" [x]\n"
+                                  "  [(base/hook x) ((requiring-resolve 'ca.base/hook) x)])\n")))
+        p   (refactor/move-plan st 'ca.mid '[call] 'ca.base {})
+        src (apply str (map str (:append p)))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"\(hook x\)" src)
+        (str "the CALL still goes bare — the target has no self-alias: " src))
+    (is (re-find #"'ca\.base/hook" src)
+        (str "and the quoted NAME survives whole, or requiring-resolve has"
+             " nothing to resolve: " src))))
+
+(deftest an-external-quoted-carrier-target-takes-the-new-full-name
+  ;; The mirror of the dequalify case, one namespace over, and it is the half
+  ;; with live sites: slopp.git holds `(store/late-ref
+  ;; 'slopp.git.client/fetch-remote!)` and slopp.ops holds one for
+  ;; slopp.kernel.boot. Moving either target rewrote the quoted symbol to the
+  ;; caller's ALIAS — a name `requiring-resolve` looks up in no namespace at
+  ;; all, since aliases are this namespace's private business and a quoted
+  ;; symbol is resolved by whoever reads it later.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cx.core "(ns cx.core)\n\n(defn util \"U.\" [x] x)\n")
+               (store/ingest 'cx.use
+                             (str "(ns cx.use (:require [cx.core :as core]))\n\n"
+                                  "(defn call \"C.\" [x]\n"
+                                  "  [(core/util x) ((requiring-resolve 'cx.core/util) x)])\n")))
+        p   (refactor/move-plan st 'cx.core '[util] 'cx.moved {})
+        src (str (:src (first (vals (:rewrites p)))))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"'cx\.moved/util" src)
+        (str "a quoted name takes the new home's FULL name: " src))
+    (is (not (re-find #"cx\.core" src))
+        (str "and nothing still names the old home: " src))
+    (is (re-find #"/util x\)" src)
+        (str "while the ordinary call still takes the alias: " src))))
+
+(deftest a-quoted-name-is-never-rewritten-to-an-alias
+  ;; The rule all three rewrite passes now share, and the reason it is one
+  ;; rule rather than three fixes: an alias is the CALLING namespace's
+  ;; private business, while a quoted symbol is resolved by whoever reads it
+  ;; later — so an alias inside one names nothing anywhere.
+  ;;
+  ;; This is the qualify direction: the moved form calls a stay-behind, so
+  ;; bare refs to it become `from-alias/x`. Correct for the call. For the
+  ;; quoted name beside it, it would produce a symbol that resolves in no
+  ;; namespace at all, and quoting is exactly what stops the compiler from
+  ;; ever noticing.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'qa.core
+                             (str "(ns qa.core)\n\n"
+                                  "(defn stayer \"S.\" [x] x)\n\n"
+                                  "(defn goer \"G.\" [x]\n"
+                                  "  [(stayer x) (list 'stayer)])\n")))
+        p   (refactor/move-plan st 'qa.core '[goer] 'qa.moved {})
+        src (str (:new-src p))]
+    (is (nil? (:error p)) (pr-str (:error p)))
+    (is (re-find #"/stayer x\)" src)
+        (str "the CALL is qualified back to the old home: " src))
+    (is (re-find #"\(list 'stayer\)" src)
+        (str "and the quoted symbol is left exactly as written: " src))))
