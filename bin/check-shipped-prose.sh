@@ -1,161 +1,81 @@
 #!/usr/bin/env bash
+# Shipped prose must not document a capability key the registry does not declare.
 #
-# Does the SHIPPED prose still name things we retired?
+# `query_capabilities` advertises what a project may set; docs/reference/config.md
+# tells a HUMAN the same thing, and nothing compared them. Measured 2026-08-06:
+# `web.auth.session.ttl-seconds` was declared, typed, defaulted to 86400 and
+# documented as "Browser session lifetime" -- and read by nothing.
+# `web.auth/config-from-values` falls through unchanged for it and no session
+# mechanism exists. Deleting the registry row left the docs row behind, and only
+# a hand grep found it.
 #
-# The guard that already exists for this class -- mcp-test's
-# `slopp-prose-never-names-a-tool-that-does-not-exist` -- scans STORE FORMS,
-# and the skills and docs are FILES. That gap is not theoretical: four bugs
-# went out through it in one day. The skill told agents to read
-# `session_brief`'s `:ui-hub` (a key that returns nil) and to set `dev.server`
-# (a capability `config_file` would refuse); slopp-review's URL template
-# double-appended `/p/<slug>`; the tools reference documented `ui.hub-port`
-# and `ui.port`. Every rename had rewritten the store and walked past the
-# files, and no test in the system could see any of it.
+# WHY A SCRIPT AND NOT A TEST. `docs/` is a repo file and a store test cannot
+# reach it. `slopp/main` carries the store's rendered source, so this reaches
+# both sides with git and grep -- which also means a broken store cannot make
+# the one lane aimed at what SHIPS unrunnable. The other direction (declared but
+# never READ) is a store question and lives in
+# `ops.selfcheck-test/no-capability-key-goes-unmentioned-by-production-code`.
 #
-# WHY A SCRIPT AND NOT A TEST. A store test cannot reach these files. The
-# external tier runs in the materialized build dir, which carries `src`,
-# `test` and the config projections and NOT `docs/` or `plugins/` -- measured,
-# not assumed. And the two halves live on different branches: `main` has the
-# prose, `slopp/main` has the store's rendered `vocabulary`. So this reaches
-# across, the same way the kernel-parity lane does.
+# ONE DIRECTION ONLY, deliberately. Declared-but-undocumented measured 7 of 18
+# (slopp.hub.port, the auth families, web.static.*). That is a docs backlog, not
+# drift, and asserting it would red the lane on day one for reasons that have
+# nothing to do with anything going stale.
 #
-# WHAT IT CHECKS. Exact retired spellings, declared in the store's
-# `vocabulary` config (`config_file {path "vocabulary" key <old> value <new>}`)
-# -- the machine-readable twin of `.context/naming-glossary.md`. Declaring the
-# rename is what gives this teeth, and it is the one step a rename must not
-# skip.
+# SOURCE AND ITS AGE, both printed. The registry comes off `slopp/main`, which
+# LAGS the store until the projection is published -- so a key deleted in the
+# store still reads as declared here and this lane goes green on prose that is
+# already stale. Lenient rather than wrong (in CI the deletion and the docs land
+# together), but someone running it locally right after a change deserves to
+# know which copy answered. $1 overrides the source, which is also what makes
+# this check's own failure path demonstrable without publishing.
 #
-# Deliberately NOT a forward check against the current registries. Measured
-# over this corpus: a retired FAMILY is invisible to any check against what
-# exists now (`http.*`, `ui.*` and `dev.*` are all simply gone), so the
-# forward direction would have caught none of the four. It also produced six
-# findings and all six were false -- tutorial examples like `invoice.total`
-# and `x.y.z`, a SQLite pragma, a GitHub Actions key.
-#
-# `docs/blog/posts/**` is EXCLUDED. The glossary already settles this: dated
-# records keep their original names, because a release post announcing a tool
-# that has since been removed is correct, not stale. Measured: every hit in
-# the blog was of exactly that kind.
-#
-# Usage: bin/check-shipped-prose.sh [vocabulary-file]
-set -uo pipefail
-cd "$(dirname "$0")/.." || exit 2
+# Usage: bin/check-shipped-prose.sh [capability-registry-file]
+set -euo pipefail
 
-VOCAB_SRC="${1:-}"
-if [ -z "$VOCAB_SRC" ]; then
-  VOCAB_SRC=/tmp/slopp-vocabulary.$$
-  git show slopp/main:vocabulary > "$VOCAB_SRC" 2>/dev/null \
-    || { echo "FAIL: cannot read vocabulary from slopp/main -- is the projection published?" >&2; exit 2; }
-  # SAY WHICH VOCABULARY, AND HOW OLD. This reads the PUBLISHED projection, not
-  # the live store, so it is only as current as the last commit_point. Phase 3
-  # hit exactly that: it answered "clean over 51 spellings" while the store held
-  # 54, and nothing in the output said the number was short. A verdict that
-  # depends on a snapshot has to name the snapshot.
-  VOCAB_LABEL="slopp/main:vocabulary @ $(git log -1 --format='%h %cs' slopp/main 2>/dev/null || echo '?')"
+if [ -n "${1:-}" ]; then
+  CAPS_SRC=$(cat "$1") || { echo "FAIL: cannot read capability registry from $1" >&2; exit 2; }
+  CAPS_LABEL="$1"
 else
-  VOCAB_LABEL="$VOCAB_SRC (explicit)"
+  CAPS_SRC=$(git show slopp/main:src/slopp/project/capabilities.clj 2>/dev/null) \
+    || { echo "FAIL: cannot read the capability registry from slopp/main -- is the projection published?" >&2; exit 2; }
+  CAPS_LABEL="slopp/main @ $(git log -1 --format='%h %cs' slopp/main 2>/dev/null || echo '?')"
 fi
 
-# `old: new` per line. Only the retired spellings matter here.
-#
-# DISTINCTIVE TERMS ONLY -- a retired spelling with no `.`, `-` or `_` in it is
-# skipped, and that is not laziness. The `vocabulary` config has two consumers
-# with different precision needs. The store-form rule
-# (slopp.api.rules/retired-vocabulary-check) matches KEYWORDS and demands an
-# ENUMERATION -- two retired members, or one beside its replacement -- because
-# a bare `:reads` is usually the still-valid `^:reads` MARKER, a live concept
-# sharing a name with the retired tier. Prose has no such structure to lean on.
-#
-# Measured: scanning every declared term matched `reads` and `effects` on 90+
-# lines of ordinary English ("the dispatcher fetches the declared reads",
-# "concentrate effects in a thin shell") across 20 files. Every one a false
-# positive. The 14 renames declared on 2026-08-02 all carry a separator and all
-# came back clean, so the filter costs nothing real and buys the whole check.
-#
-# The rule to keep: a term that reads as an English word cannot be scanned for
-# in prose. If you retire one, the prose half of the sweep stays manual.
-ALL_TERMS=$(sed -E 's/:.*$//' "$VOCAB_SRC" | grep -E '\S' | sort -u)
-RETIRED=$(echo "$ALL_TERMS" | grep -E '[._-]')
-SKIPPED=$(echo "$ALL_TERMS" | grep -Ev '[._-]')
-FILES=$(find plugins/slopp/skills docs -name '*.md' 2>/dev/null | grep -v '^docs/blog/' | sort)
+DECLARED=$(printf '%s' "$CAPS_SRC" | grep -oE '\{:key "[^"]+"' | sed -E 's/^\{:key "//; s/"$//' | sort -u)
+# scoped to the capabilities SECTION: config.md documents several config files,
+# and the store-settings table above it carries user.name/user.email, which are
+# git author identity and not capabilities at all. Owner segments (`web.`) live
+# in a nested table in the same section and end in a dot -- keys do not.
+DOCUMENTED=$(awk '/^## The capabilities file/{f=1;next} /^## /{f=0} f' docs/reference/config.md \
+             | grep -oE '^\| *`[a-zA-Z0-9._*-]+`' | tr -d '|` ' | grep -v '\.$' | sort -u)
 
-n_all=$(echo "$ALL_TERMS" | grep -c .)
-n_terms=$(echo "$RETIRED" | grep -c .)
-n_skip=$(echo "$SKIPPED" | grep -c .)
-n_files=$(echo "$FILES" | grep -c .)
+n_decl=$(echo "$DECLARED" | grep -c .)
+n_doc=$(echo "$DOCUMENTED" | grep -c .)
+echo "capabilities: $CAPS_LABEL -- $n_doc documented in the config reference, $n_decl declared"
+[ "$n_decl" -gt 0 ] || { echo "FAIL: no capability keys declared -- this check would pass vacuously" >&2; exit 2; }
+[ "$n_doc"  -gt 0 ] || { echo "FAIL: no documented capability keys found -- the section heading or table shape changed, and an empty scan reads exactly like a clean one" >&2; exit 2; }
 
-# POSITIVE CONTROL. Either population being empty makes every check below pass
-# by being empty on both sides -- which is how the store-form sibling of this
-# guard spent its entire life scanning nothing and reporting success.
-echo "vocabulary: $VOCAB_LABEL"
-echo "scanning $n_files shipped prose file(s) for $n_terms of $n_all declared spelling(s)"
-# NO SILENT CAPS. The non-distinctive terms are dropped for a good reason (see
-# above) and dropping them quietly is how `devserver` was declared, skipped and
-# reported clean in one breath -- a bounded check that does not say what it
-# bounded reads as a complete one.
-if [ "$n_skip" -gt 0 ]; then
-  echo "  not scanned ($n_skip, no . - or _ -- an English word cannot be grepped for in prose):" \
-       "$(echo "$SKIPPED" | tr '\n' ' ')"
-fi
-[ "$n_terms" -gt 0 ] || { echo "FAIL: no retired vocabulary declared -- this check would pass vacuously" >&2; exit 2; }
-[ "$n_files" -gt 0 ] || { echo "FAIL: no prose files found -- this check would pass vacuously" >&2; exit 2; }
+# the detector must fire on a key that is not declared AND stay silent on one
+# that is -- both halves, because "it can fail" without "it can pass" is how a
+# substring bug once reported every corrected line as a violation.
+probe_real=$(echo "$DECLARED" | head -1)
+[ -n "$(comm -23 <(printf 'slopp.nosuch.invented.key\n') <(echo "$DECLARED"))" ] \
+  || { echo "FAIL: the detector does not report an undeclared key" >&2; exit 2; }
+[ -z "$(comm -23 <(printf '%s\n' "$probe_real") <(echo "$DECLARED"))" ] \
+  || { echo "FAIL: the detector reports a DECLARED key ($probe_real) -- every documented capability would read as a violation" >&2; exit 2; }
 
-# MATCH AT A SEGMENT BOUNDARY, not as a substring.
-#
-# A rename whose NEW name CONTAINS the old one -- `auth.bearer.` ->
-# `web.auth.bearer.` -- makes an unanchored fixed-string scan report every
-# correctly-renamed line as a violation. Measured the first time one landed:
-# 17 findings, all 17 false, every one of them prose that had just been fixed.
-# A guard against stale names that fires hardest on the freshly-corrected ones
-# teaches you to stop reading it.
-#
-# So the term must start where a segment starts. `.` counts as a segment
-# character, so `web.auth.bearer.` no longer matches `auth.bearer.`, while a
-# real mention -- after a backtick, a quote, a space, a line start -- still
-# does. Same whole-segment rule rename_sweep uses, for the same reason.
-# escape by ALLOWLIST -- anything not alphanumeric/_/- gets a backslash. The
-# denylist version of this line was a bracket expression, and it broke on BSD
-# sed while looking correct; the negative probe below is what reported it.
-rx_escape() { printf '%s' "$1" | sed -E 's/[^A-Za-z0-9_-]/\\&/g'; }
-
-# the detector must fire on a known-bad line AND stay silent on a known-good
-# one. Only the first half existed, which is exactly how the substring bug got
-# in: "it can fail" was checked, "it can pass" was not.
-probe_dir=$(mktemp -d)
-first_pair=$(grep -E '^[^:]*[._-][^:]*:' "$VOCAB_SRC" | head -1)
-first_old=${first_pair%%:*}
-first_new=$(printf '%s' "${first_pair#*:}" | sed -E 's/^ +//')
-printf 'a line naming %s\n' "$first_old" > "$probe_dir/bad.md"
-printf 'a line naming %s\n' "$first_new" > "$probe_dir/good.md"
-first_rx="(^|[^A-Za-z0-9._-])$(rx_escape "$first_old")"
-grep -qE -- "$first_rx" "$probe_dir/bad.md" \
-  || { echo "FAIL: the detector does not fire on a known-bad line" >&2; exit 2; }
-grep -qE -- "$first_rx" "$probe_dir/good.md" \
-  && { echo "FAIL: the detector fires on the REPLACEMENT ($first_new) -- every corrected line would read as a violation" >&2; exit 2; }
-
-found=0
-while IFS= read -r term; do
-  [ -n "$term" ] || continue
-  if hits=$(grep -HnE -- "(^|[^A-Za-z0-9._-])$(rx_escape "$term")" $FILES 2>/dev/null); then
-    while IFS= read -r h; do
-      echo "  [$term] $h"
-      found=1
-    done <<< "$hits"
-  fi
-done <<< "$RETIRED"
-
-if [ "$found" -eq 1 ]; then
+STALE=$(comm -23 <(echo "$DOCUMENTED") <(echo "$DECLARED"))
+if [ -n "$STALE" ]; then
+  echo "$STALE" | sed 's/^/  [undeclared capability] docs\/reference\/config.md: /'
   cat >&2 <<'MSG'
 
-FAIL: shipped prose names a retired spelling.
+FAIL: the config reference documents a capability key the registry does not declare.
 
-These files SHIP -- the skills are the product, and an agent following them
-pays a failed call to find out. Two ways out, and they are not equivalent:
-
-  1. Fix the prose. Almost always this one.
-  2. If the mention is deliberately historical ("it used to be X"), move it to
-     a dated record under docs/blog/posts/, which this check excludes on
-     purpose. Live reference prose should not need the retired spelling at all.
+A user reads that table and sets the key. Nothing rejects it and nothing reads
+it, so the setting is inert and the silence looks like it worked -- strictly
+worse than an absent row, which would at least prompt a question. Either the
+key was deleted from the registry and the docs row was left behind (fix the
+docs), or it should exist (add the registry row).
 MSG
   exit 1
 fi

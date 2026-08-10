@@ -72,7 +72,6 @@ query_capabilities {}
 | `web.max-body-bytes` | `1048576` | Largest accepted request body. |
 | `web.auth.providers` | none | Enabled identity providers, comma-separated, tried in order. |
 | `web.auth.default-policy` | `:deny` | For an endpoint with no `:web/auth`, which only happens if `web-auth-refusal` is dialed down. |
-| `web.auth.session.ttl-seconds` | `86400` | Browser session lifetime. |
 
 !!! note "There is no `dev.server` setting"
 

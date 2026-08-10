@@ -34,18 +34,26 @@ conclusions, so the review reasons about findings, not source dumps.
    (`:cljs` — the JVM oracle cannot load it, so nothing could cover it), `:unused`
    (dead public surface), `:high-blast` (many callers), `:large`, `:lint`,
    `:undocumented` (public), `:effectful` (`!`). Clean forms drop out; `:top` rows
-   carry `:form/:risk/:flags/:callers/:covered`. `{ns "x.y"}` scopes it. Start at
-   the top of the risk ranking, not the top of a file.
+   carry `:form/:risk/:flags/:callers/:covered/:evidence`. `{ns "x.y"}` scopes it.
+   Start at the top of the risk ranking, not the top of a file.
 
-   **Sanity-check `:untested` before you report it.** `:covered` counts OBSERVED
-   calls, so two honest cases look identical to a genuine gap: a form exercised
-   only across a process boundary (an endpoint hit over a socket, a namespace
-   mounted by quoted symbol) and one whose tests simply have not run in this
-   session. `query_brief {ns name}` settles it — `:covered-by` is trace evidence,
-   `:reached-by … :via #{:static}` is a test that reaches it in the call graph.
-   Static reach with no trace is weak evidence, not zero. And run the tests: a
-   `full_check` populates the trace, whereas an untouched session may be reading
-   a stale snapshot.
+   **Read `:evidence` on the row, not just the flags.** A quiet row is not one
+   fact, it is four, and the row names which:
+
+   | `:evidence` | What it means | Worth reporting? |
+   |---|---|---|
+   | `:observed` | a test actually ran this form | no — this is the strong case |
+   | `:declared` | a `^{:covers}` marker names a path nothing can watch | no, but check the claim is still true |
+   | `:static` + `:hops` | some form in a test namespace reaches it in the call graph | **at 3+ hops, yes** — that is nearly free |
+   | `:off-platform` | the JVM oracle cannot load it at all | as an architecture finding, not a gap |
+   | `:none` | nothing reaches it | yes, if anything can |
+
+   The summary's `:evidence` is that split over the whole list, and it is the
+   first thing to read: a store where almost every row is `:static` has a suite
+   that reaches its code without exercising it, which no per-row reading adds up
+   to. Run the tests before you scan — nothing is `:observed` until a
+   `full_check` populates the trace, so an untouched session under-reports the
+   strong case rather than the weak one.
 2. **Reviewing a CHANGE → `report {since}`** composes milestones + changes + the
    asks + verification + alignment in one read; **`query_changes {from to}`** gives
    the net per-form diff (`:was`/`:now` + red/green arc) between two points
@@ -66,13 +74,17 @@ conclusions, so the review reasons about findings, not source dumps.
   drafts one from observed calls. Zero coverage on a `:high-blast` form is the
   first thing to flag.
 
-  **Say which KIND of uncovered it is**, because the remedy differs and only one
-  of them is the author's to fix: a gap a test would close; `:off-platform`
-  (`:cljs`, where the compiler is the only possible check — an architectural
-  cost, so the finding is "should this logic be `:cljc` instead?"); or covered
-  only over a socket, where the coverage is real and the trace cannot see it.
-  Reporting all three as "untested" produces a list whose top rows nobody can
-  act on, and a triage list people stop reading is worse than none.
+  **Say which KIND of uncovered it is** — the remedy differs and only one of
+  them is the author's to fix. You do not have to work this out: `:evidence`
+  on the row says it. `:none` is a gap a test would close. `:off-platform` is
+  `:cljs`, where the compiler is the only possible check — an architectural
+  cost, so the finding is "should this logic be `:cljc` instead?", never "add a
+  test". Coverage that happens only over a socket is real coverage the trace
+  cannot see, and the way to say so is a `^{:covers "ns/name — why"}` marker on
+  the test, which turns the row `:declared`; an undeclared socket path reads
+  `:none` and there is no way for a tool to tell it from a genuine gap.
+  Reporting all of these as "untested" produces a list whose top rows nobody
+  can act on, and a triage list people stop reading is worse than none.
 - **Architecture → `query_depends {modules true}`.** `:cycles` (should be empty
   — the gate refuses new ones; an ADOPTED cycle from an import surfaces here.
   Both `:layers` and `:cycles` read production edges only, so a `-test`

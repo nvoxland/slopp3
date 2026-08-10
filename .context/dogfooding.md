@@ -11,8 +11,8 @@ slim jar and nothing else. It talks to slopp projects over HTTP, generating a
 typed client from each one's published `/api/contracts`.
 
 That constraint is the whole instrument. The reviewer UI used to live in
-slopp's own store and reached straight into `slopp.api.query`,
-`slopp.edit.refs`, `slopp.store` — so building it exercised none of the path a
+slopp's own store and reached straight into `slopp.read.query`,
+`slopp.index.refs`, `slopp.store` — so building it exercised none of the path a
 real user walks, and every friction a real user would hit was invisible here.
 Within one session of the split it surfaced: a static mount that could not
 serve `compile_client`'s own output, a capability whose documented example was
@@ -21,7 +21,7 @@ months, and a published slim jar that declares malli schemas without shipping
 malli. None of those were findable from inside.
 
 **Every friction it surfaces is a real user's friction.** They go in
-`ideas/ui-split-frictions.md`, not in that project's repo — they are findings
+`ideas/logs/ui-split-frictions.md`, not in that project's repo — they are findings
 about slopp, and slopp-ui is the instrument that found them. Its own cosmetic
 backlog stays over there (`../slopp-ui/ideas/`).
 
@@ -412,7 +412,7 @@ structure to dodge an `^:export` marker. Move the cluster where it belongs and
 export the genuinely-public vars. That unblocks the 88% and makes the marker
 say something true. Now taught in the slopp SKILL.
 
-Proof done this run: the branch/line cluster → `slopp.api.branch` with
+Proof done this run: the branch/line cluster → `slopp.ops.branch` with
 `export: true`. `move-forms!` correctly pulled the **downward closure** (the
 cluster's private helpers came along unasked). slopp.api **102→95 forms,
 195→185KB**; branch tests green. The remaining clean clusters (measured,
@@ -510,7 +510,7 @@ and a disproven one sends the next agent to build the wrong thing.
   `export-mark` to every moved node. "Say it once" is already implemented — at
   the tool. I complained about work I never did.
 - **The arithmetic inverts on the motivating case.** A deep ns is MIXED.
-  Measured `slopp.api.branch`: 6 exported API vars + 6 helpers. An ns-level
+  Measured `slopp.ops.branch`: 6 exported API vars + 6 helpers. An ns-level
   `^:export` exports the helpers too, so it needs per-var opt-outs:
   **1 + 6 = 7 markers vs 6 today.** The feature makes its own motivating case
   worse. (The count only wins on a ns that is ~all public surface — none

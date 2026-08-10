@@ -47,10 +47,21 @@ repo: this one. That is the whole project failing at its own goal.
 
 ### `ideas/` is the backlog; `ideas/done/` is the record
 
-`ideas/*.md` holds what is still OPEN — frictions, proposals, wave logs.
+`ideas/` holds what is still OPEN — frictions, proposals, wave logs.
 It is a worklist, and a worklist that also carries its own history stops
 reading as a worklist: a log where nine of ten items are already fixed
 scans as nine items of work.
+
+**Read `ideas/README.md` first — it is the map.** Reorganized 2026-08-06
+around the five root-cause clusters in
+`ideas/five-mechanisms-that-exist-once.md`: `refusal/`, `observation/`,
+`projection/`, `correspondence/`, `addressing/`, each with a `GOAL.md`
+stating the goal, the mechanism slopp already built ONCE for that class, and
+its members. Everything else is `logs/` (the running wave logs — chronological
+and multi-cluster, which is where most cluster members physically live),
+`product/` (features and app-type design) and `research/` (parked or
+measurement-gated). `ideas/root-cause-fix-plan.md` stays the item-grain
+router.
 
 **`ideas/` is gitignored, deliberately and permanently.** It is a LOCAL
 worklist. Do not un-ignore it, do not `git add -f` under it, and do not
@@ -59,19 +70,26 @@ a tracked backlog, which is why this keeps getting raised as an accident.
 It isn't one.
 
 So: **when you finish an item, MOVE it — same filename, into
-`ideas/done/`.** Nothing is deleted; the record just stops competing with
-the backlog for attention.
+`ideas/done/`.** `done/` is FLAT: a file's cluster directory does not
+follow it there, only its name. Nothing is deleted; the record just stops
+competing with the backlog for attention.
 
 - **A whole file finished** → move the file to `ideas/done/`.
 - **Some items in a running log finished** (the usual case for the
-  `*-wave-frictions.md` logs) → move the finished items into
+  `ideas/logs/*-wave-frictions.md` logs) → move the finished items into
   `ideas/done/<same-name>.md`, creating it if needed, and leave the open
   ones behind under a short pointer line naming where the rest went. Both
-  halves say which half they are. `web-wave-frictions.md` and
-  `cljs-wave-frictions.md` are the worked examples.
+  halves say which half they are. `logs/web-wave-frictions.md` and
+  `logs/cljs-wave-frictions.md` are the worked examples.
 - **Move it when it's actually done** — verified green, not merely
   written. A resolved item carries what fixed it, so the record answers
   "was this ever addressed?" without a git archaeology dig.
+
+**Finish any backlog sweep with `bin/check-ideas-backlog.py`.** The rules above
+are necessary and have proved insufficient twice: a finished record hides as a
+bullet or a TABLE ROW where a heading scan reports clean, and moving a file
+silently breaks every inbound link to it. The script reads all three grains
+plus the links, and skips cleanly when `ideas/` is absent (a fresh clone).
 
 1. **Read the relevant doc before touching its subsystem.** They're short on
    purpose — skipping them costs more than reading them.
@@ -89,21 +107,15 @@ the backlog for attention.
    valid, so a careless sweep breaks correct guidance. The same sweep covers
    `docs/`, `DEV.md`, and this file.
 
-   **DECLARE the rename, and most of that sweep stops being manual.**
-   `config_file {path "vocabulary" key <old> value <new>}` is the
-   machine-readable twin of `.context/naming-glossary.md`, and two checks read
-   it: the `retired-vocabulary` done-advisory over store FORMS, and
-   `bin/check-shipped-prose.sh` (CI lane `shipped-prose`) over the skills and
-   `docs/`. Declaring is the step a rename must not skip — a rename that
-   rewrites the store and walks past the files is how four bugs shipped on
-   2026-08-02, including a skill telling agents to read a `session_brief` key
-   that returns nil.
-
-   Two limits, both measured, so you know what is still yours: a retired term
-   that reads as an ORDINARY ENGLISH WORD (`reads`, `effects`) is skipped by
-   the prose scan — it matched 90+ lines of legitimate prose — and
-   `docs/blog/posts/**` is excluded because a dated record correctly keeps its
-   original names.
+   **This sweep is YOURS — there is no mechanism behind it, deliberately.**
+   A rename that rewrites the store and walks past the files is how four bugs
+   shipped on 2026-08-02, including a skill telling agents to read a
+   `session_brief` key that returned nil. The machinery built in response —
+   a declared old→new table plus two checks reading it — was retired on
+   2026-08-06 once the restructure it existed for finished: it had become a
+   72-row hand-kept ledger for a conversion nobody was doing, and its own
+   documentation admitted nothing read the prose half. Rebuild something like
+   it if a rename of that scale happens again; do not carry it between times.
 
 ## Always-on rules
 
@@ -151,6 +163,20 @@ the backlog for attention.
   tier — and nothing forces it. Reach for it on a broad change, after
   deleting a caller, or before a commit you want to stand behind. No manual
   `test_run` ritual.
+- **The CODE never references `.context/` or `ideas/`.** Those are helper
+  directories for whoever is working ON slopp; they are not part of the
+  product. The store SHIPS — every form materializes into `src/` and is
+  jarred — so a docstring is read by people who have neither, and `ideas/` is
+  gitignored so its paths resolve for nobody at all. This covers concept
+  CITATIONS as well as paths: a bare "Core 2" leans on a file the reader does
+  not have exactly as `see .context/design-disciplines.md` does. **State the
+  reasoning inline** — if a point is worth citing it is worth one sentence.
+  Write the durable rule in `.context/` too when it generalizes; the routing is
+  both/and, phrased differently. Enforced by
+  `ops.selfcheck-test/no-form-cites-a-document-that-does-not-ship`, which was
+  written after every `ideas/` path in the store turned out to be ALREADY DEAD
+  — four docstrings pointing at files a directory reorganization had moved,
+  with nothing able to notice.
 - **Never credit Claude or any AI in commit messages or PRs.** No
   Co-Authored-By trailers, no "Generated with" footers.
 - **Dogfooding is a standing practice:** build real things through slopp
@@ -176,7 +202,6 @@ the backlog for attention.
 | `.context/verification.md` | `slopp.kernel.rt`, `slopp.image`, verification in `slopp.ops.engine` |
 | `.context/dialect.md` | `slopp.edit` dialect gate, `slopp.index` `!`-effects |
 | `.context/operation-api.md` | `slopp.ops`, `slopp.mcp`, `slopp.edit.refactor` |
-| `.context/naming-glossary.md` | reading any OLD record — old→new for renamed namespaces, keys and retired phrases |
 | `.context/dogfooding.md` | user tests, benchmark suite, findings backlog |
 | `.context/working-in-this-repo.md` | dev workflow, REPL, tests, commits |
 | `.context/writing-style.md` | `docs/`, the blog, release notes, README copy |

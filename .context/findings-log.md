@@ -26,7 +26,7 @@ findings against the live image), then fixed across eight milestones
   enforced by some consumers but read by others drifts silently — the ones that
   only READ a value (a keyword in a rank map, a filter set) are invisible to the
   gate that renamed it. This is the keyword-as-second-class-reference problem
-  (`ideas/keywords-are-second-class-references.md`) as a live incident.
+  (`ideas/correspondence/keywords-are-second-class-references.md`) as a live incident.
 - **The functional-core gate had reachable holes.** `:pure` admitted console IO
   (`println`), watch mutation (`add-watch`), a var-quote CALL `(#'f x)` (kondo
   sets no `:arity`, so it read as a data carrier), and a `(store/late-ref …)`
@@ -63,7 +63,7 @@ findings against the live image), then fixed across eight milestones
   machinery is exactly when the whole-store gate earns its cost.
 
 The friction of doing all this THROUGH slopp (where it slowed vs helped, and
-larger rethinks) is logged in `ideas/dogfooding-agent-frictions.md`.
+larger rethinks) is logged in `ideas/logs/dogfooding-agent-frictions.md`.
 
 ## F — user-test findings (status)
 
@@ -186,7 +186,7 @@ The demand rule worked as designed: instrument fired → deferred op built.
 P3 ✅ **No one-shot CLI for tool calls.** When the session's MCP server
 died, the fallback was hand-rolled JSON-RPC over `--snapshot` stdin with
 EDN payloads staged as files to survive shell quoting. Built:
-`slopp.boot --call <tool> [args]` (args = JSON, EDN, or `@file`) — sugar
+`slopp.kernel.boot --call <tool> [args]` (args = JSON, EDN, or `@file`) — sugar
 for `--main slopp.mcp/call-main!`; `mcp/call!` opens a durable
 turn-enforced session for ONE dispatch. P1/P2 were built through it.
 
@@ -618,7 +618,7 @@ arises via ADOPTION (module_dep's own cycle guard prevents declaring it
 fresh).
 
 The first deep-module split (2026-07-16): slopp.api's 8 pure history/status
-helpers moved to package-private `slopp.api.history` via `edit_extract_ns` —
+helpers moved to package-private `slopp.read.history` via `edit_extract_ns` —
 the first depth-3 namespace in slopp itself, proving the deep-module
 machinery on real code. Dogfooding surfaced and fixed, red-first:
 (1) hot-load-all!'s heal path boots from the COMMITTED store, so a
@@ -639,7 +639,7 @@ branch, build; verify/session LAST, via changesets) are a follow-on decision.
 
 The session-engine split (2026-07-17): slopp.api's pipeline substrate —
 image lifecycle + journal commit + verification, 27 forms — moved into
-package-private `slopp.api.session` via move-forms, live, with the server
+package-private `slopp.ops.engine` via move-forms, live, with the server
 executing the very pipeline being relocated (safe because a MOVE rewrites
 all addresses atomically and the server hot-reloads only after the
 consistent commit; contrast the D-series signature-change deadlock).
@@ -647,7 +647,7 @@ The two-way refusals DISCOVERED the layering: branch/deps plumbing
 couldn't move before the substrate they call. Deep packages now:
 history, testrun, session, deps, branch; the public verbs stay on
 slopp.api (the surface). Engine specs live with the engine
-(slopp.api.session-test); reap-idle-images! stayed a public verb so
+(slopp.ops.engine-test); reap-idle-images! stayed a public verb so
 branch specs stay honestly placed. move-forms hardening the campaign
 forced: de-qualify refs into the target, moved sets carry their own
 (declare ...), publicize/export under form-level meta wrappers, per-move
@@ -734,7 +734,7 @@ docstrings mention vars and tests hold quoted symbols as data, both
 legitimately inert. The gate blocks where a mention could BECOME a var;
 refusals teach the carriers (store/late-ref, #'var literals) and the
 ^:unsafe owned-obligation escape. Sanctioned resolver homes: late-ref
-itself and slopp.boot/-main (the OS boundary). Consequence: in gated
+itself and slopp.kernel.boot/-main (the OS boundary). Consequence: in gated
 store code, a string can no longer become a reference — strings are
 inert by construction, which is stronger than any string lint.
 
@@ -749,14 +749,14 @@ helpful for humans, hard for static analysis, cheap for an agent to give up
 (write the metadata inline for the same keystrokes). Unlike `declare` this
 lives in dialect-check, so it binds BOTH the edit path and the dialect-scan
 import path; the refusal teaches "write the metadata ON the form" and names
-the ^:unsafe escape (host/slopp.rt legitimately mutate metadata as
+the ^:unsafe escape (host/slopp.kernel.rt legitimately mutate metadata as
 instrumentation). with-meta/vary-meta return NEW values and are untouched —
 the cut is exactly the two in-place mutators. Zero usage in slopp's own
 store when added, so no adoption break. Orthogonal to the sandbox
 (pure-eval-refusal), which is a separate property and was not touched.
 
 THE reference graph (2026-07-16, user decision — single source of truth):
-slopp.edit.refs is the ONE place "who references what" lives. Producers
+slopp.index.refs is the ONE place "who references what" lives. Producers
 normalize in at the source (kondo statics + un-required qualified calls,
 carrier positions, marker declarations as edges from :external); consumers
 query refs/refs-to and never fuse sources privately — unused-report,
@@ -909,7 +909,7 @@ baseline); host-brief note precedence + delta counting.
 auth-bypass; runtime effect-declaration not enforced; error-body ex-data
 leak; unsalted git-projected password hashes + non-constant-time compares;
 mandatory-OIDC-audience gap; static reader traversal (latent, contained
-today by the single-segment router); `http.max-body-bytes` never enforced
+today by the single-segment router); `web.max-body-bytes` never enforced
 (DoS); proxy-header casing. See `.context/decisions.md` D-web hardening.
 
 **Non-finding recorded:** the registry data-defs read `:covered 0` in
@@ -1104,7 +1104,7 @@ merge had just created.
 - the topological sort never stalled (191/191 ordered), so its
   cycle-fallback-to-alphabetical never fired;
 - `platform-for` was `:jvm`, so `load-ns!`'s `:cljs` skip was not involved;
-- `slopp.api.branch`, `slopp.store`, `slopp.image` and `slopp.store.merge`
+- `slopp.ops.branch`, `slopp.store`, `slopp.image` and `slopp.store.merge`
   rendered BYTE-IDENTICAL on both lines, and the jar carried the interleaved
   pass — no vintage confound.
 
@@ -1212,8 +1212,8 @@ What recurred, for the pattern file more than the fix list:
   "slopp.web" prefix matched slopp.website (suppressing) and slopp.webhooks
   (spurious).
 - **A dissolved namespace was never declared in the vocabulary**
-  (slopp.web.browser), so its docstring kept telling apps to read
-  :slopp.web.browser/document — a key no code writes — and no guard could
+  (slopp.web.screen), so its docstring kept telling apps to read
+  :slopp.web.screen/document — a key no code writes — and no guard could
   fire. The declare-the-rename rule, violated by the author who wrote it up.
 
 Format v2 (D-screen-format-v2) came out of the review's escaping finding plus

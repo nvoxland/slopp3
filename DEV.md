@@ -265,6 +265,16 @@ Three workflows, all on the human-owned branch, all checking out `slopp/main`:
 GitHub only runs push-triggered workflows from the pushed ref's tree, so these
 run on `workflow_dispatch` and a schedule rather than per push.
 
+### Local checks (not CI, because their subject is not in the repo)
+
+- `bin/check-shipped-prose.sh` — shipped prose must not document a capability
+  key the registry does not declare. Has a CI lane; reads `slopp/main`.
+- `bin/check-ideas-backlog.py` — the `ideas/` worklist must not carry its own
+  history, and its links must resolve. **No CI lane, deliberately**: `ideas/`
+  is gitignored, so CI has nothing to look at. Exits 0 with a note when the
+  directory is absent, which is a fresh clone's normal state. Run it after any
+  backlog sweep; the reasoning is in its header.
+
 ## Commits
 
 - **Both ledgers, every milestone**: `commit_point` (green-gated store

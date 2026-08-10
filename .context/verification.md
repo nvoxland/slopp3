@@ -64,7 +64,7 @@ The oracle must never return a false verdict. Everything here serves that.
      Saying "would recurse" for the second group was false, and reasoning from
      it made the process boundary look more fundamental than it is — it sent
      one investigation toward an in-process image that solves nothing
-     (`ideas/the-image-is-too-heavy-a-unit.md`). What a session actually needs
+     (`ideas/observation/the-image-is-too-heavy-a-unit.md`). What a session actually needs
      is a clean NAMESPACE SPACE, which is why an image can be recycled rather
      than respawned.
    - **Two copies of `slopp.kernel.rt` exist** and each has its own consumer: the
@@ -307,7 +307,7 @@ The oracle must never return a false verdict. Everything here serves that.
    warming; `fresh-image!` swaps to it (<~3s vs ~6-8s cold boot) and starts
    the next spare. On for the MCP server. `close!` derefs and stops the
    spare — never leak child JVMs.
-   **Async image boot (2026-07-22).** `open! {:slopp.api/async-image? true}`
+   **Async image boot (2026-07-22).** `open! {:slopp.ops/async-image? true}`
    (on for the MCP server) returns as soon as the store VALUE is loaded and
    boots the image on a background daemon thread — `initialize` no longer
    waits on the N-namespace load, so a slow/contended startup can't race the
@@ -324,6 +324,30 @@ The oracle must never return a false verdict. Everything here serves that.
    a fully-loaded image on `open!` return, unchanged.
 5. **Provenance.** Every verification lands as a `:verify` delta with the
    summary (incl. `:failures`, `:staleness-detected`/`:fresh-confirmed`).
+   **There are TWO evidence citizens (2026-08-06), and the split is
+   deliberate.** A `:verify` delta is a claim a WRITE makes about the store —
+   `done`'s scope logic, milestone `:status` and the trace map all read it, so
+   widening it weakens what a verification MEANS. An **`:observe` delta**
+   (`store/record-observation`, registered in `store.fields/markers`) is the
+   narrower *these tests ran, in this tier, and this is what happened*.
+   `external-test-run!` appends one at the same convergence point where it
+   absorbs the trace, and for the same reason: this is the only tier that ever
+   executes an `^:external` test, so evidence missed here is missed forever.
+   **What it fixed:** `:assertions-never-red` — the vacuity guarantee, grounded
+   on 104 measured assertion-additions of which 82 were never observed red —
+   was UNCLEARABLE for an `^:external` test, and three gaps stacked to make it
+   so: `traced-run` drops them by design, the external tier appended no delta
+   at all, and its failure list is `:failing` (there `:failures` is a COUNT)
+   carrying the BARE name clojure.test prints in `FAIL in (name)`, while the
+   check compares `(str 'ns/name)`. So the remedy the advisory TEACHES was
+   performable and unrecordable for all 512 `^:external` deftests, and an
+   advisory nobody can discharge teaches agents to ignore advisories.
+   **`external/observation-of` is pure and separately tested for a specific
+   reason:** a GREEN run records `:failures []` and exercises none of the
+   qualification, so an end-to-end green proves nothing about the half that
+   decides whether the advisory can ever clear. Unresolvable or ambiguous names
+   stay BARE — the direction that makes the advisory fire again rather than
+   close silently.
    **What it COST, not only what it found (2026-07-24).** The summary carries
    `:ms`, so it persists through `:result` at all twelve `record-verification`
    call sites — one producer (`session/run-verification!` times itself), no
@@ -374,6 +398,23 @@ The oracle must never return a false verdict. Everything here serves that.
    Quiet is load-bearing: a clean `:live` host lags by up to one poll interval
    by design, so it warns about nothing — a finding on every done is a finding
    nobody reads.
+   **WHY it is suspect, not only that it is (2026-08-09, `ideas/projection/`
+   item 2).** A `:derived-stale` row said which form went behind and which
+   form it was behind, and neither is the question a reader has. It now
+   carries `:behind-edit {:delta :prompt}` — the most recent write to the
+   namespace holding the form it is behind — and `:behind` is QUALIFIED, since
+   that form is usually in a different namespace and the bare symbol cost a
+   grep every time. `orient/one-cause` renders it for BOTH readers, and is
+   withheld when the drifted rows disagree about the cause.
+   **The obvious attribution is wrong, and it took a measurement to see.** The
+   backlog asked for *"derived from `cheat-sheet`, which you edited"* — but
+   nobody edits `cheat-sheet`. A write reloads its WHOLE namespace, so the
+   form you are behind is routinely one nothing touched; what re-evaluated it
+   was a write to a SIBLING. Hence the namespace's last write, named in the
+   docstring as exactly that rather than as a proven cause: a reload triggered
+   by a transitive dependency is not attributed. Making it exact means
+   stamping each form with the store head it loaded at, which belongs with the
+   currency registry's own rework rather than with the report.
    **What it does NOT answer:** whether every var in the process is identical
    to the store. It answers whether the host knowingly failed to load
    something. A reload that succeeded while a long-lived closure kept the old

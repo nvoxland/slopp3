@@ -54,7 +54,7 @@ The check —
     effect-anchor set) trips this matcher — mark the form `^:unsafe` (as
     `banned-syms`/`effectful-leaves` do) or, cleaner, compare head names as
     STRINGS (`(= "defmacro" (str (first s)))`) so no banned symbol appears in
-    source. See `ideas/dogfooding-agent-frictions.md` P6.
+    source. See `ideas/logs/dogfooding-agent-frictions.md` P6.
 - **D7 — no hand-written `(declare …)`** (edit path only, `parse-form`): the
   pipeline OWNS form ordering and declares (auto-avoid-declare). A same-ns
   forward ref is resolved by reordering definitions above their callers, or —

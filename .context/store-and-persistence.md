@@ -103,6 +103,28 @@
 - `load-store` reconstructs the entire in-memory store (returns nil if empty).
   `api/open! {:dir ...}` loads it AND replays every namespace into a fresh
   image.
+- **The `ns` column holds ONE namespace, and it will not tell you otherwise**
+  (2026-08-08). It is written `(str (:ns d))` and read back `(symbol …)`, and
+  every consumer reads it as one namespace — `replay-delta`, `merge-logs`,
+  `query-outline`. Hand it a COLLECTION and nothing errors: the write
+  stringifies it and the read hands back a single symbol whose *name* is the
+  printed list, which prints bare and therefore looks exactly like the vector
+  you put in. `record-observation` did this for 27 runs, the largest a
+  2293-character symbol, and the defect was invisible until something tried to
+  ask which namespaces a run had covered.
+
+  A marker that is not about one namespace uses the **`*session*` sentinel** —
+  `:done`, `:commit` and `:turn-begin` all do — and puts its real subject in
+  the EDN payload, where structure survives. `:observe` now carries `:scope`
+  there. **`:verify` still puts its namespace list in `ns` and has the same
+  flattening**; nothing reads that list today and 7918 of them exist, so it is
+  a separate change rather than a fold-in.
+
+  The general shape, and the reason this went unnoticed: **a column typed for
+  one thing, handed many, does not fail — it stringifies.** The journal has no
+  schema over payload, so a marker op can put any shape in any field and get
+  *something* back. When you add a marker, decide what its `ns` is before you
+  decide what it carries.
 - **`db/open!` creates; `db/open! dir {:create? false}` returns nil instead**
   (D-serving-is-not-adoption). The MCP server is launched in whatever dir the
   editor has open, so a caller that merely ASKS whether a dir is slopp-managed
@@ -141,7 +163,7 @@
   it (`multiproc-test/incremental-sync-replays-the-suffix-exactly` is the
   guard). This used to also juggle whitespace — absorbing trailing trivia,
   preserving a trailing comment, choosing one newline or two — and got it
-  wrong: `slopp.api.session` alone carried 33 single-newline separators against
+  wrong: `slopp.ops.engine` alone carried 33 single-newline separators against
   11 blank-line ones, the dogfooding papercut where added forms jammed together
   (`ideas/git-bridge-friction.md` 1b). One rule in one place cost 345 bytes
   across the whole store and removed the class.

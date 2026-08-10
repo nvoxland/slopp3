@@ -36,10 +36,10 @@ section is the friction-specific summary.
 
 `ideas/` is the OPEN backlog (per AGENTS.md — a worklist, not a history).
 
-- **During a build wave** → the wave's running log, `ideas/<name>-wave-frictions.md`
+- **During a build wave** → the wave's running log, `ideas/logs/<name>-wave-frictions.md`
   (`web-wave-frictions.md` / `cljs-wave-frictions.md` are the worked examples).
 - **A standalone recurring friction** → its own file, or the general dogfooding
-  log `ideas/dogfooding-agent-frictions.md`.
+  log `ideas/logs/dogfooding-agent-frictions.md`.
 - **When it's RESOLVED (verified green, not merely written)** → move it to
   `ideas/done/<same-name>.md`, leaving a one-line pointer where the rest went.
   A log where nine of ten items are already fixed scans as nine items of work.

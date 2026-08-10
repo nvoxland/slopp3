@@ -65,6 +65,16 @@ Three modes:
 - `where: {key value}`: address the unique **map** containing those entries.
   Good for registry rows, where you know the content but not the exact text.
 
+`where` *addresses* a row -- it does not assert a value -- so both sides of an
+entry are compared by the spelling they answer to rather than by equality.
+`"stored-name"`, `":stored-name"` and `:stored-name` all reach a row stored as
+`{:key :stored-name ...}`, and keys work the same way, so a map with string
+keys is reachable from a tool call that keywordizes everything it carries.
+That combination is the point: registry rows are usually keyed by keywords, and
+JSON has none. When nothing matches, the answer names the values that key does
+take -- `:key takes :schema-drift, :key-typos, ...` -- so a wrong value reads
+as a wrong value rather than as a missing row.
+
 Writes are optimistic: compose a match from the brief or a slice and send it. A
 missed or ambiguous match returns the form's current source in `:source-now`,
 so you correct from the error rather than re-reading first.

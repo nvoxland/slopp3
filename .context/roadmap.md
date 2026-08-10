@@ -56,7 +56,7 @@ one form's life as a per-version LINE-diff story). All read-only over the
 journal slopp already records — the "semantic×history combination nobody has
 shipped" (DESIGN.md §5). Remaining wisps (lower priority): whole-namespace
 render-at-delta (lossy; forms are exact), and cost/token accounting per
-delta (`ideas/todo.md`).
+delta (`ideas/research/todo.md`).
 
 ## 6. Phase-4: multi-agent / branch / merge
 The deferred CRDT half (C4/C5): concurrent sessions as peers, branch/merge
@@ -433,8 +433,8 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
       `^:unsafe` or the whole ingest is rejected (nothing commits, image
       untouched). `ingest!` now also returns `:warnings`. Both paths share one
       gate; the store is internally consistent (any in-store host form is
-      `^:unsafe`, hence editable). Found by dogfooding `slopp.rt` import; log in
-      `ideas/self-host-log.md`.
+      `^:unsafe`, hence editable). Found by dogfooding `slopp.kernel.rt` import; log in
+      `ideas/logs/self-host-log.md`.
   - **M4 shipped:** `slopp.index.deps` — a dep's own jars (classpath diff) →
     clj-kondo API surface (namespaces + var arities/docs/macro flags),
     memoized per `coord@version` (process memo + durable `dep_surface`
@@ -451,7 +451,7 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
       `:dep-ns`); the `effectful-vars` anchor treats a call as pure when
       `:dep-pure` contains the var OR its namespace. No store/delta/merge change
       — `:dep-pure` already carries arbitrary symbols; the MCP arg went
-      `var` → `target`. (Surfaced in `ideas/self-host-log.md` Attempt 2.)
+      `var` → `target`. (Surfaced in `ideas/logs/self-host-log.md` Attempt 2.)
     - **D6 follow-up (self-host finding): `^:reads` per-form `!`-name override.**
       Loading slopp's own `db`/`index` flagged ~11 read-wrappers (`load-store`,
       `data-version`, `analyze`, …) — they read through an effectful-by-default
@@ -466,7 +466,7 @@ historical, `.context/` is authoritative); MCP request-level concurrency.
       making D6 statically distinguish reads from writes — it can't, and this
       keeps honest labeling with an explicit human assertion. Orthogonal to
       `^:unsafe` (dialect only); a form may carry both. (Community norms
-      confirmed this direction; `ideas/self-host-log.md` Attempt 3.)
+      confirmed this direction; `ideas/logs/self-host-log.md` Attempt 3.)
     - **D6 follow-up 2 (full self-host, warning-clean pass):** `effect-violations`
       now flags only ONE direction — computed-effectful-but-not-`!`-named — and
       exempts `-main` (effectful entry point, never banged, like `deftest`) and
@@ -568,7 +568,7 @@ folded into the store value at open.
 
 Second, independent lever: **the handshake does not need the store at all** —
 only tool calls do. `initialize` could return immediately with the store value
-loading in the background (the pattern `:slopp.api/async-image?` already uses
+loading in the background (the pattern `:slopp.ops/async-image?` already uses
 for the image), so connect never races the client timeout. 23s was landing
 uncomfortably close to Claude Code's 30s default; `MCP_TIMEOUT` is now set in
 this repo, but a fresh install has no such protection.
@@ -611,8 +611,8 @@ refuses a `:web/path` endpoint missing `:web/response` (every endpoint) or
 `:web/request` (`:post`/`:put`/`:patch` body methods) — milestones d11968/d11981.
 Part 2: `generate_client` — a stored, edit-protected, inspectable `:cljs`
 namespace of typed fetch wrappers; the `^:generated` marker's triple duty; the
-`:cljc`-placement check; the explicit-regeneration `stale-client` advisory; the
-`inline-schema-dup` DRY advisory. Only part 3 (the dogfood) remains.
+`:cljc`-placement check; the explicit-regeneration `web-stale-client` advisory; the
+`web-inline-schema-dup` DRY advisory. Only part 3 (the dogfood) remains.
 
 **PART 2 = the generated typed client — ✅ SHIPPED (2026-07-23).**
 1. **Delivery: DECIDED — a stored, generated, edit-PROTECTED `.cljs` namespace**

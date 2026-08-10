@@ -6,9 +6,9 @@ disciplines that dissolve them, and the wrong directions that keep getting
 re-walked. When a new friction appears, find its core here before writing a
 fix — most fixes that only address the instance leave the class open.
 
-Raw material: `ideas/the-patterns-behind-every-failure.md`,
+Raw material: `ideas/correspondence/the-patterns-behind-every-failure.md`,
 `ideas/compensating-behaviors-are-slopp-bugs.md`,
-`ideas/dogfooding-agent-frictions.md`, and the wave logs. Prioritized fixes:
+`ideas/logs/dogfooding-agent-frictions.md`, and the wave logs. Prioritized fixes:
 `ideas/root-cause-fix-plan.md`.
 
 ## The generator: one asymmetry
@@ -72,7 +72,7 @@ three of them among the worst defects recorded:
   namespace, and reported green — the tracer walks `ns-interns` over what it is
   handed, that throws on a namespace the image cannot hold, and the exception
   came back as text where a summary was expected
-  (`ideas/ui-split-frictions.md` item 24).
+  (`ideas/logs/ui-split-frictions.md` item 24).
 - `slopp-prose-never-names-a-tool-that-does-not-exist` scanned an empty store
   for its entire life, passing on a population of zero.
 - `done`'s `:test-status :none` conflating "nothing was testable" with "no news"
@@ -120,7 +120,7 @@ forms call this" (where excluding declared refs is correct) and "is anything
 expected to reference this at all" (where it is not). **So: when you add a member
 to an exclusion list, check whether the thing you are excluding is already data
 in something you just filtered.** Full analysis and the fix:
-`ideas/one-derivation-two-questions.md`. Prior art for how bad this gets:
+`ideas/correspondence/one-derivation-two-questions.md`. Prior art for how bad this gets:
 `marker-registry`'s docstring counts seven places that kept their own hardcoded
 marker list before it existed.
 
@@ -399,14 +399,14 @@ order of the R6 catalog work rather than being noticed afterwards.
 
 The guard asks *is a rule implemented under an app type's namespace named for
 that type?* Run against the real catalog it named three of four violations.
-The two it could not see — `spa-consequences` and `stale-client` — were
+The two it could not see — `web-spa-consequences` and `web-stale-client` — were
 web-only checks sitting in the GENERIC `slopp.rules`, so they had no app type
 to disagree with their name. **A rule with no owner is indistinguishable from
 a rule that is correctly generic**, and the guard reported accordingly.
 
 The hand audit that preceded it had the mirror-image blind spot, which is the
 part worth keeping: it found those two by READING NAMES, and missed
-`generated-ns` (owned by its defining namespace) and `inline-schema-dup`
+`generated-ns` (owned by its defining namespace) and `web-inline-schema-dup`
 (owned by what it traverses) — the two where ownership is a fact about the
 code rather than the name. Two methods, disjoint blind spots, neither able to
 find all four, and the audit's 2-of-4 shipped as the recorded count.
@@ -432,7 +432,7 @@ one spelling and trimmed by another's LENGTH.
 ```clj
 (re-matches #"http\.static\..+" (str k))            ; matched the OLD key
 (subs (str k) (count "web.static."))                ; trimmed by the NEW one
-(str/starts-with? k "auth.bearer.tokens.")          ; matched the prefix
+(str/starts-with? k "web.auth.bearer.tokens.")          ; matched the prefix
 (subs k 19)                                         ; trimmed by a number
 ```
 
@@ -601,6 +601,38 @@ The registry earns its keep the moment it is written: flipping a row from
 kind that was now declared and still unproduced. A vacuous row reads exactly
 like coverage, which is the whole class in one sentence.
 
+#### Second instance (2026-08-08), and it came with its own tell
+
+`review_scan` reported coverage in a vocabulary of exactly one word. The
+ABSENCE of `:untested` on a row stood for four different facts: a test observed
+the form, a `^{:covers}` marker claims a path nothing can watch, some form in a
+test namespace reaches it through a chain of calls, or the JVM oracle cannot
+load it at all. Measured on this store, the third is nearly free — **1120 of
+1285 production forms** are covered that way, **297 of them at three hops or
+more**, where `test → ops → edit → store` marks the store form covered. A
+reviewer reading a quiet row could not tell which they had, and that difference
+is the entire question they came to ask.
+
+**The tell was in the shipped skill, not in the code.** `slopp-review/SKILL.md`
+carried a paragraph beginning *"Say which KIND of uncovered it is"* — three
+kinds enumerated in prose, with the reader instructed to distinguish them by
+hand via a second tool. So the missing vocabulary was not merely absent; it had
+been NOTICED, written down accurately, and paid for with a standing instruction
+to derive it per review.
+
+> **A skill that tells the reader to work something out is a vocabulary gap with
+> a workaround attached.** The prose is the design document for the key that
+> should exist; the instruction is the receipt for what its absence costs, once
+> per reader, forever.
+
+This is `ideas/compensating-behaviors-are-slopp-bugs.md` arriving from the
+authoring side rather than the using side — the habit was written into the
+product instead of invented per session, which makes it easier to find and
+much easier to mistake for guidance. Fixed by `:evidence` on every row
+(`:observed` / `:declared` / `:static` + `:hops` / `:off-platform` / `:none`),
+spelled in `refs/covered-by`'s existing words rather than a second set, with
+the same split in the summary. The skill paragraph now points at the key.
+
 ## Core 2 — one relationship is first-class; the rest rot
 
 **Root.** THE reference graph (`slopp.index.refs`) is the crown jewel —
@@ -618,7 +650,7 @@ was not reached for.
 never a private re-integration. And the load-bearing sequencing rule, measured:
 **fix the ANALYSIS before restricting the LANGUAGE.** Three of five proposed
 dialect restrictions died once the analysis saw better
-(`ideas/dialect-candidates-human-conveniences-that-hurt-agents.md`) — a gate
+(`ideas/research/dialect-candidates-human-conveniences-that-hurt-agents.md`) — a gate
 flipped on a graph that cannot see half its subject produces exactly the
 confident wrong answers Core 1 warns about. The general form:
 **"Any relationship the system lets you express, it must be able to see."**
@@ -790,6 +822,99 @@ of it was `:cljc` and tested. One of those untested writes carried a
 read-compute-swap race that a human clicker would never hit and a programmatic
 driver hits first.
 
+### The decision procedure (2026-08-06) — four mechanisms, and choosing between them was never written down
+
+Core 2's discipline says *"a new relationship kind is a new PRODUCER into the
+one graph."* That is right where it applies and it does not apply to most of
+them, which is why the same defect kept being re-solved. Measured: **seven
+distinct encodings** of "these two must agree" accumulated in this store — a
+rule over the reference graph, an `^:external` test via `built-store`, an
+in-image test over var metadata, one test per member, prose asserting the
+invariant, a naming convention plus a guard, and declared config. They have
+converted into each other repeatedly, which is the tell that they are one thing.
+
+**The binding question is whether both ends are STORE ENTITIES** — a namespace,
+a var, a keyword, a module. `query_depends` already answers relations where they
+are; checked against the open backlog, **every unsolved pair has at least one end
+that is not** (a string literal in a dispatch, a set of names in a `def`,
+generated program text, English prose, a source SHAPE, file bytes).
+
+| both ends store entities? | what is needed | mechanism | precedent |
+|---|---|---|---|
+| **yes** | a rename must rewrite it | **a new producer into `index.refs`** | qualified keywords — 21 keys / 163 sites, and four readers inherited it free |
+| **yes** | a totality claim | **a rule over the graph** | `unused-public` — with escape markers, measured 1-in-3 stale |
+| **no** | a totality claim | **a completeness test** — named seam + derivation | `catalog-covers-every-registered-rule` and the ten like it |
+| **no**, and one end is expensive to re-derive | currency | **STAMP it** | `kernel.boot/jar-head` → `META-INF/slopp/head.edn` |
+
+The last row is the one that is easy to get wrong, and it has a one-line test:
+**you cannot rebuild the jar to check the jar.** If re-deriving a side is
+expensive or the side lives outside this process, stop trying to compare it and
+make the artifact carry its origin instead. That is the difference between the
+`correspondence/` and `projection/` backlog clusters, which are one root cause
+on two axes — synchronic (compare) and provenance (stamp). A third axis,
+GENERATIONAL (two versions of one form), already has a good carrier in the delta
+log; `breaking-changes`, `key-typos`, `assertions-never-red` and
+`stranded-aliases` live there and mostly work.
+
+**Two rules ride with the table.**
+
+*There are exactly TWO seams, and a check should name which it uses.*
+`slopp.ops.external/built-store` reads the store by ingesting the materialized
+project (and REFUSES on a source-less directory — vacuity has to be loud); var
+metadata reads the image. Both are built. Checks are currently discoverable only
+by grepping `built-store`, which finds eight of eleven and misses the founding
+instance, because nothing names the seam.
+
+*The tell is not enumeration — it is WHERE THE POPULATION LIVES.* From slopp-ui,
+with a counterexample from their own store one file apart: a guard that ITERATES
+`views/lenses` grew by itself when a lens was added; its neighbour with
+`["/store/gaps"]` written out went red on an unrelated change. Both "enumerate."
+Only one is the defect.
+
+> **A guard whose population is written in a different place from the population
+> it is guarding.** Where the population is derivable, deriving it costs one
+> line and the guard grows by itself.
+
+This matters because it also rules out the plausible-looking fix: a DECLARED
+list that still lives apart from what it describes is the same defect wearing a
+registry costume. Before declaring a correspondence, ask whether the describing
+fact can simply live ON the thing it describes — `read-only-tools` is a property
+of a tool sitting in a set three hundred lines away, and `rule-catalog`'s
+`:severity` column was exactly this and got collapsed rather than checked.
+**Collapse first; declare only what a boundary genuinely forces apart.**
+
+Why boundaries force them apart, which is why this will keep happening: in every
+instance, one side is what the system DOES and the other is a description
+something else consumes — and **the consumer structurally cannot see the doer**.
+The MCP client cannot see `call-tool!`'s dispatch. A child JVM receives only
+text. The permission system never sees the handler. An agent reads a rendered
+screen, not `emit`'s branches. The second copy is a boundary crossing in data
+form — Core 6 arriving as a DATA problem rather than a testing one — so the pairs
+are generated by the architecture, not by carelessness.
+
+Full working record, the eleven measured checks, and the phased plan:
+`ideas/making-relationships-first-class.md` and `ideas/correspondence/GOAL.md`.
+
+### A REUSED name is the one thing a spelling-keyed table can never resolve
+
+A rename table is keyed by spelling, so it can say `A -> B` or it can describe
+today's `A` — never both. Phase 2 created exactly that: `slopp.api` meant the
+322-form operation drawer until 2026-08-03 and means the external API after it,
+so "look it up" would send a reader from a correct old record to the wrong
+current module.
+
+**When a name is REUSED, its past-tense mentions must be disambiguated IN
+PLACE** — a parenthetical ("the module then called `slopp.api`, today's
+`slopp.ops`"), never a rewrite. That is the one case where a dated record gets
+edited, and nothing detects it: every stale mention spells a name that
+currently exists, so no existence check can ever fire. Three were found by
+hand in `architecture.md` when the name came free.
+
+The general shape, which outlives the table it was learned from: **a lookup
+keyed by a name cannot express that the name changed MEANING** — only that it
+changed spelling. Reuse is the case that needs prose, and it needs it at the
+site.
+
 ## Core 3 — self-hosting is a distorting lens
 
 **Root.** Dogfooding is the standing practice, so the loudest pains an agent
@@ -877,12 +1002,12 @@ shipped. **A class fix marked closed is worse than one left open**, because the
 verdict.
 
 Full derivation, 5-whys and measurements: `ideas/done/the-non-form-citizens.md`;
-this wave's clustering in `ideas/ui-split-frictions.md` § "The wave's structural
+this wave's clustering in `ideas/logs/ui-split-frictions.md` § "The wave's structural
 finding".
 
 ## Core 6 — verification stops at the boundary, and every crossing is hand-built
 
-**Root.** Derived from the SPA wave (16 frictions, `ideas/spa-wave-frictions.md`).
+**Root.** Derived from the SPA wave (16 frictions, `ideas/logs/spa-wave-frictions.md`).
 Sort them by *where the value was when it went wrong* and all but one land in
 the same place: at a **crossing**, where something leaves the world slopp
 verifies.
@@ -950,7 +1075,7 @@ there" — for every deleted form, not just routes. `reload-ns!` now unmaps what
 departed. Routes only made it visible, because a stale route shadows the SPA
 catch-all.)*
 
-**The chassis, 2026-07-25 — `slopp.api.crossings`.** The base cause named a
+**The chassis, 2026-07-25 — `slopp.index.crossings`.** The base cause named a
 missing REPRESENTATION, so that is what got built: a registry of exit KINDS —
 what leaves, to where, `:checked-by`, `:blind` — plus the markers slopp owns
 that deliberately stay inside, derived over the store, with `full_check`
@@ -1065,13 +1190,13 @@ second copy.
   **D-rule-grain**.
 - **Every gate slopp enforces on a write should be readable as a REPORT over
   existing code.** The gates are predicates already; for a modernization/review
-  pass the report is the whole job. (`ideas/modernization-sweep-friction.md`
+  pass the report is the whole job. (`ideas/logs/modernization-sweep-friction.md`
   I2/I3.)
 - **Prevention > detection.** `query_vocabulary` (stop key-invention at write
   time) beat the after-the-fact near-dup advisory. For every detection gate ask:
   what is the write-time prevention surface?
 - **Verification checks REALITY, not intent** — the committed store, a cold
-  load — not what an op claims it did. (`ideas/postcondition-reality-checks.md`.)
+  load — not what an op claims it did. (`ideas/correspondence/postcondition-reality-checks.md`.)
 - **A refactor moves NODES, never round-trips through `sexpr`** (which models
   neither metadata, comments, nor reader tags — lossy in ways that compile
   fine). Dropped `^Repository` hints → reflection; earned twice.
@@ -1088,7 +1213,7 @@ second copy.
   judged the DECLARED manifest, so `slopp.store.db-test`'s require of
   `slopp.api` made every merge into main warn of a cycle production didn't
   have — and advise a retraction that would have broken that test. The
-  question was answerable, just not there: it moved up to `slopp.api.branch`,
+  question was answerable, just not there: it moved up to `slopp.ops.branch`,
   which can derive the production graph. **The tell is a check that lands in
   a low layer because the DATA happened to be in hand there**, rather than
   because the layer understands the question. (Core 9.)
@@ -1300,8 +1425,8 @@ If answering takes more than a moment, the reader will not answer it at all.
   end and reverted at zero measured gain (172s vs 183s, inside load noise). At 4
   shards the cores are saturated, so a background boot has no idle CPU to hide in
   — it steals cycles from the running test. Only schemes that REDUCE work pay
-  (`full_check {affected true}`, `spot-run!`). → `ideas/full-check-is-slow.md`,
-  `ideas/verdict-cache.md`. **Measure first; prefer work-reducing over
+  (`full_check {affected true}`, `spot-run!`). → `ideas/observation/full-check-is-slow.md`,
+  `ideas/observation/verdict-cache.md`. **Measure first; prefer work-reducing over
   work-rescheduling.**
 - **Restricting the language before fixing the analysis.** See Core 2. The
   restriction that looks necessary usually stops being necessary once the blind
@@ -1369,6 +1494,41 @@ ergonomics of the interface. Here: edit a form, repair a namespace.
 before anyone asked what defmethod had in common with a derived `def`. A second
 special case for a third instance of one class is the moment to stop and name
 the class — the first one is a fix, the second is evidence.
+
+### Sharpening (2026-08-09): the grain gap shows up in ATTRIBUTION too, and there it names an innocent form
+
+Core 8 says: edit a form, repair a namespace. The reporting corollary went
+unstated and is where the next instance landed.
+
+The `:derived-stale` row is the store's most frequent diagnostic, and its whole
+job is to say what went behind. It named a FORM. But the image's unit is the
+namespace, so the thing that re-evaluated a captured value is a namespace
+reload — triggered, in the measured case every time, by a write to a **sibling
+form nobody was thinking about**. `slopp.mcp/env-handlers!` captures
+`slopp.mcp.tools/cheat-sheet`; you stale it by editing `edit-tools`.
+
+So the backlog's proposed message — *"derived from `cheat-sheet`, which you
+edited at d22128"* — would have named a form nobody edited at a delta that does
+not exist for it. It reads perfectly and it is false, and the falseness is
+Core 8's grain gap: **a form-grained attribution across a namespace-grained
+event is wrong by construction, not by accident.**
+
+**Discipline.** Core 8's rule — let the semantics of the operation pick the
+grain — applies to what a report ATTRIBUTES, not only to what an operation
+repairs. Ask what unit the EVENT had, not what unit the finding has. Here the
+finding is a form and the event is a reload, so the cause is the namespace's
+last write, and the docstring says that rather than claiming causation.
+
+**And a meta-lesson, on its second instance the same day.** Both items worked
+this session arrived with a remedy already written in the backlog, and both
+remedies were wrong in the same way: they took the surface at face value.
+`addressing/` asked for an eloquent near-miss message for a call that should
+have MATCHED; this one asked for an attribution to a form that is never
+edited. **A filed remedy is a hypothesis, and the entry that files it is
+usually written by someone mid-friction who had no reason to check the
+premise.** Re-measure the premise before building the fix — it costs one query
+and it is the difference between closing an item and shipping a confident
+falsehood.
 
 ## Core 9 — a check computed over a PROXY reports on the proxy, in the real thing's voice
 
@@ -1513,7 +1673,7 @@ slopp-ui's formulation, after we each hit it the same week:
 | Instance | Subject | What the reach excluded |
 |---|---|---|
 | `rename_sweep` over store forms | every form | forms with `:name nil` — 3 of them, invisible to a name-addressed pass. It reported "15 forms", green, and left a docstring with four stale mentions |
-| `X-Slopp-Main` in the jar manifest | every reference to `slopp.boot` | a config VALUE that names code. No reference-tracking models it, so a full green preceded a jar that would not start |
+| `X-Slopp-Main` in the jar manifest | every reference to `slopp.kernel.boot` | a config VALUE that names code. No reference-tracking models it, so a full green preceded a jar that would not start |
 | slopp-ui's `tree-seq vector?` | the rendered hiccup | anything spliced as a bare seq |
 | slopp-ui's `tree-seq coll?` | the rendered TEXT | nothing — it reached too FAR, into attribute maps, so a text assertion passed on an `href` |
 | slopp-ui's `{:total 0}` | a 248-form store | all of it, from a guessed arity. Caught only because the count was in the result |
@@ -1577,6 +1737,43 @@ Fixed by `slopp.read.modules/empty-namespaces` reported as `full_check`'s
 rather than from forms. Advisory, not red: a namespace is legitimately empty for
 the one write between `ns_create` and its first form, and a whole-store check
 that goes red on that is a check people stop running.
+
+### Sharpening (2026-08-08): the caller's SCOPE is a proxy too, and it narrows the population silently
+
+`review_scan` takes an optional `:ns`. Inside it, one `let` computes several
+populations, and the difference between them had never been stated: `blast`,
+`adj` and declared coverage were all whole-store — each carrying a comment
+saying so, because caller counts that change with how widely you asked are not
+caller counts — while the STATIC COVERAGE SEED still enumerated the scoped
+`nses`. So `{ns "x"}` seeded coverage from a single namespace. Unless that
+namespace was itself a `-test`, nothing seeded it at all, and every form in it
+came back `:untested`.
+
+Measured before the fix: `{ns "slopp.index.refs"}` reported **18 forms
+`:untested`** that the whole-store scan reported covered — `covered-by` among
+them, a form with two dedicated tests. The whole-store scan reported **zero**.
+
+Two things make this worse than an ordinary off-by-one:
+
+1. **The narrow ask is the confident one.** A reviewer passes `:ns` when they
+   have already decided where to look, so the wrong answer arrives exactly when
+   they are least likely to cross-check it against anything.
+2. **Both answers look like answers.** Neither run errors, neither is empty,
+   and the two are never seen side by side — which is why the earlier fixes to
+   `blast` and `unused` (same function, same hazard, comments still in place)
+   did not carry to the population two bindings below them.
+
+The generalisation, a sibling of the population sharpening above:
+
+> **A scope argument narrows every population it touches, and only some of them
+> are ABOUT the scope.** "Which forms do I show" is; "does a test reach this
+> form" is not. When a read takes a scope, sort its intermediate populations
+> into those two piles explicitly — a fact about the store that is computed
+> from a slice of the store reports on the slice, in the store's voice.
+
+The cheap check is a test that asks the SAME question both ways and asserts the
+answers are equal, with a value-shaped assertion on each side so two empty
+answers cannot agree: `review-test/coverage-is-a-WHOLE-STORE-question-however-narrowly-you-asked`.
 
 ### Sharpening (2026-08-06): a test's own DERIVATION of a production fact is a second source, and a SUBTREE is the usual proxy
 
@@ -1721,3 +1918,113 @@ assertion written here — "the note contains `restart`" — went green immediat
 against the exact sentence being fixed, because *"restart the server"* contains
 the word. An assertion about a REPORT's wording is an absence-shaped measurement
 wearing a presence costume (Core 1); watch it fail before believing it.
+
+#### Sharpening (2026-08-09): a remedy has a PRECONDITION, and the actor cannot see it
+
+Fourth instance, and the first where the actor was right, the remedy was right,
+and it still could not be performed.
+
+Having fixed a rendering regression and rebuilt the jar, the handoff message
+said **"revert your workaround"** — flatly, as an available action. It was not
+available: the consumer runs a DIFFERENT jar, and the restart that would give
+them the fix belongs to a third party. They checked before acting, found the
+defect still live in their process, and held the workaround. Reverting on the
+instruction would have reddened their store, which is the one thing a workaround
+exists to prevent.
+
+The sentence named the right actor and the right action. What it omitted was the
+STATE the action depends on — and that state is one the writer cannot observe
+and the reader can:
+
+> **A remedy that depends on a precondition must name the precondition, because
+> the writer is not the one who can check it.** "Revert X" is a fix clause;
+> "revert X once you are on d25770" is a fix clause the reader can evaluate.
+
+The general shape, which is why this belongs here rather than in a coordination
+note: **SHIPPED and RUNNABLE-THERE are two facts, and an instruction phrased in
+the present tense collapses them.** It happened twice in two days across the
+same boundary, once in each direction — the consumer read a live API change as
+having needed a restart, and this side wrote a jarred fix as though it were
+already running. Neither party can see the other's copy, which is
+`ideas/projection/`'s subject arriving in prose rather than in code: a derived
+copy, and a claim about it that does not say which copy.
+
+### Sharpening (2026-08-06): a refusal has as many BRANCHES as the mistake has shapes
+
+Found by sweeping the backlog rather than by hitting anything: three
+independent refusals, in two functions, each improved on one branch of a
+`cond` and left untouched on its sibling — and in every case the untouched
+branch is the one the filed complaint actually lands in.
+
+| refusal | the branch that TEACHES | the branch that does not |
+|---|---|---|
+| `edit.refactor/keyed-replace-plan` | ambiguous match → *"2 maps"*, the store's state | **no match** → *"no map containing {…}"*, the caller's own input echoed — **fixed 2026-08-09**, see below |
+| `edit/dialect-check`, denylist arm | four sub-cases (`defmacro`, local-name, the resolve family, `alter-meta!`) name the fix, three of them naming `^:unsafe` | **the `cond` has no `:else`** — `load-string`, `eval`, and every future denylist member get the bare *"denylisted symbol used — X"* |
+| `edit/dialect-check`, tagged-literal arm | `#?`/`#?@` recognised by SHAPE, with a comment stating that naming the expansion's synthetic head is *"the one thing this gate must not do"* | **every other tag** — `#js` matches the same expansion two characters later, falls through, and is blamed on `read-string` |
+
+**The discipline.** Core 10 is stated per-message; this is the per-FUNCTION
+version. A refusal is not one string, it is a dispatch over the ways the caller
+can be wrong, and fixing the arm you personally hit leaves the others reading
+exactly as the bug did. Before calling a refusal fixed, enumerate its arms and
+ask which of them still restates the caller's input.
+
+**Two structural tells, both cheap:**
+
+- **A `cond` with no `:else` in a message builder.** The default is not "no
+  advice needed", it is "advice for every case nobody has met yet" — which
+  includes every future member of the set the rule guards. Where the teaching
+  set is hand-listed and the REFUSED set is a registry, the two drift by
+  construction (Core 2: one relationship first-class, the rest rot).
+- **A test asserting on two branches where only one assertion names something
+  the caller did not already know.** `subform-plan-test/keyed-matches-address-maps-by-content`
+  is the worked example: it checks `#"2 maps"` and `#"no map containing"` side
+  by side, and both pass, and only the first is a finding. The second asserts
+  that the message contains the caller's input — which it always will.
+
+**Why this needed a sweep to see.** Each of the three was filed as its own
+friction, in a different log, months apart, and each reads as a one-off message
+complaint. The pattern is only visible with the population in front of you —
+the same reason `edit_subform`'s cluster went uncounted across four files, and
+the reason `mention-kinds` exists.
+
+### Sharpening (2026-08-09): the third tell is CHEAPEST — a message you can compose without reading the store has not looked at it
+
+The row above got fixed, and closing it produced a tell better than the two
+listed with it. Both of those require you to already suspect the function: one
+asks you to notice a missing `:else`, the other to read a test's two assertions
+side by side and judge which one names something new. This one is a property of
+the message and needs no suspicion at all:
+
+> **Could you write this refusal without the store in front of you?** If yes,
+> it is reporting on the CALLER. The store was loaded, walked, and asked — and
+> the answer threw away everything it learned except "not found".
+
+`"no map containing {:key \"stored-name\"} in done-advisories"` is composable
+from the arguments alone. `"…— :key takes :schema-drift, :key-typos,
+:breaking-changes, …"` is not; you have to have looked. The sibling arm passes
+the same test for the same reason — *"2 maps contain …"* requires a count.
+
+**And the fix was smaller than the analysis.** The `where` walk already had
+every map in the form in hand in order to filter them; the no-hit arm was
+discarding that collection and reporting on its own emptiness. So the
+information the message needed was not merely available, it was **already
+computed and in scope** — which is the usual case, and the reason this class
+is cheap to close once seen. The one-line version, for a review pass: *a
+refusal's arms should each consume something the successful path also
+consumed.*
+
+**The two `dialect-check` rows remain open**, and they are the harder half —
+there the teaching set is hand-listed against a registry, so closing them is
+Core 2 work rather than a message edit.
+
+**Addressing was the other half of this one, and it is the deeper bug.**
+`where`'s no-hit arm was loud partly because `where` could not address the
+rows people were reaching for at all: registry rows are keyed by keyword
+VALUES and the wire has no keyword, so the most common address in the system
+was inexpressible, and the refusal for it echoed the caller's input. Two
+defects compound into one dead end — you get your own string back for a row
+that is right there. Settled as `D-where-addresses` in `decisions.md`: a
+`where` entry is compared by the spelling each side ANSWERS TO, keys included.
+The general form is worth carrying past this instance: **when a mechanism's
+job is to NAME something, `=` is a proxy for it** (Core 9), and the proxy's
+failure is silent in exactly the direction that reads as absence.

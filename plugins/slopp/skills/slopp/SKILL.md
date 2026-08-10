@@ -111,6 +111,16 @@ measurably bleed tokens.
    wrong code. Restart the server (or fix the reload failure named in
    `:failed`) and re-run before believing a green. It is absent unless there
    is something to doubt, so when you see it, act on it.
+   **`:oracle-drift` says WHY, and the `restart` tool clears that half.** A
+   `:derived-stale` row is a form holding a value it captured from another
+   form that has since been re-evaluated — the class a source comparison
+   cannot see, since both sources are current. It names `:behind` (the
+   qualified form it fell behind) and `:behind-edit {:delta :prompt}`, and the
+   note says the edit outright when every row agrees on one. **Expect
+   `:behind` to be a form you never touched**: a write reloads its WHOLE
+   namespace, so what stales you is usually a SIBLING of the form you are
+   behind, which is why the edit is the useful half and the form alone sends
+   you looking at innocent code.
    **`:host :jar` says which ARTIFACT is answering** — `{:head <delta>
    :behind N}`, the store head the running jar was BUILT from and how many
    code deltas have landed since. `:host` otherwise reports the process's
@@ -125,6 +135,12 @@ measurably bleed tokens.
    is no remedy at all for a stale artifact — a running JVM holds the classes
    it loaded at boot. A jar `:behind` by hundreds needs a rebuild and a
    PROCESS restart, and the tool named `restart` will look like it should work.
+   **And when you tell someone ELSE the fix landed, name the artifact it landed
+   in.** "Shipped" and "running where you are" are two facts, and an instruction
+   in the present tense — *revert your workaround* — collapses them: you cannot
+   see their jar, and they can. Write the precondition into the sentence
+   (*"once you are on d25770"*) so the reader can evaluate it, or they act on a
+   fix they do not have.
    **`:ms` says what verification cost.** Every write's `:test`, every `done`,
    every `full_check` and every external run reports its own wall time, and
    the number persists on the delta — so "where is my time going?" is a query
@@ -227,6 +243,7 @@ measurably bleed tokens.
 | New form | `edit_add_form` (`before` anchors placement) |
 | Change a whole form | `edit_replace_form` |
 | Small change INSIDE a big form | `edit_subform {ns form match source}` — match ONE subform or ONE pair; a missed match returns `:source-now` (correct + resend); `text: true` for strings/docstrings; `where: {key value}` addresses the unique MAP containing those entries (registry rows — no exact text needed) |
+| Edit ONE ROW of a registry | `edit_subform {where: {key value}}` — **`where` ADDRESSES a row, it does not assert a value.** Both sides match on the spelling they answer to, so `{"key": "stored-name"}`, `":stored-name"` and `:stored-name` all reach a row stored as `{:key :stored-name …}`, and a string-keyed map is reachable too. This matters because registry rows are keyed by KEYWORDS and JSON has none — before it, the single most common thing `where` exists for was the one thing a caller could not express. A miss names the values that key DOES take (`:key takes :schema-drift, :key-typos, …`), so a wrong value says so instead of reading as a missing row |
 | Put existing code INSIDE something new (a `let`, a `when`, a `try`) | `edit_subform {match <a COMPLETE form>, wrap: true, source "(let [n 1] $1)"}` — `$1` is the matched form, so what was there NESTS inside your template. Without it the only expressible edit is restating the whole enclosing form, since a match that opens a delimiter it doesn't close is refused. Same `$n` templating `change_signature` uses; a template with no `$1` is refused rather than deleting the match |
 | Change a form's NAME METADATA (`^:export`, `^{:malli/schema …}`) | `edit_subform {text: true}` matching the `defn` head — `"^:live-handle open!"` → the new metadata. Structural matching can't address the head on its own, so without this you resend the whole form to change one marker |
 | Edit a form that has NO NAME (`defmethod`, `use-fixtures`) | `edit_subform {form "<form-id>"}` — **the id addresses a form wherever the name does**, and some forms genuinely have no name: a `defmethod` has a dispatch value, `use-fixtures` defines nothing. Ids come from `query_search` hits (`:form` is the id when there is no name) and from any finding that names one. `edit_replace_form` takes a name, so the id route is `edit_subform` |
@@ -638,6 +655,57 @@ rename landed". Empty meant two things at once: *nothing is set*, and *the tool
 cannot see what is set* — and it was the second. The fix is one more command:
 count the population first (`| grep -c ':key'`), because a non-zero count is
 what makes the zero from the real filter mean anything.
+
+### When you write a list that must agree with something else
+
+This is the most common way a green check comes to mean nothing, and there are
+exactly four right answers. Picking by feel is how a codebase ends up with the
+same defect solved seven different ways.
+
+**First ask: are BOTH ends things slopp can address** — a namespace, a var, a
+keyword, a module? `query_depends {on X}` answers relations between those, so if
+both ends qualify you are on the easy path.
+
+| both ends addressable? | what you need | do this |
+|---|---|---|
+| **yes** | a rename must rewrite it | nothing — the reference graph already carries it. `rename_sweep` / `ns_rename` move it, and `:left-behind` reports what they could not |
+| **yes** | *every A must have a B* | a test over `query_depends` / a store read. `done` already does this for dead public surface |
+| **no** — one end is a string literal, a set of names, generated text, prose, or a source shape | *every A must have a B* | a **completeness test** — derive both sides and take the set difference, naming the members |
+| **no**, and one end is expensive to rebuild (a jar, an image, a deployed artifact) | *is this current?* | **stamp it** — the artifact carries which store head produced it |
+
+**The last row is the one people get wrong.** The test is one sentence: *you
+cannot rebuild the jar to check the jar.* If re-deriving a side is expensive, or
+that side lives outside this process, stop trying to compare and make the
+artifact carry its origin instead. slopp does this for its own jar
+(`META-INF/slopp/head.edn`), and `build` gives your artifacts the same seam.
+
+**For the third row, `slopp.ops.external/built-store` is the seam.** It
+reconstructs a store value from a materialized project, so an `^:external` test
+can ask whole-store questions. It **refuses** on a directory with no source
+rather than returning an empty store — because a guard scanning nothing is
+indistinguishable from a guard finding nothing wrong, and that distinction is
+the whole point of the check.
+
+**Before you write any of them, ask whether the second list should exist.** If
+the describing fact can live ON the thing it describes, move it there and delete
+the list — a collapse always beats a check. A set of names sitting three hundred
+lines from the things it names is the shape to look for. Only a real boundary
+justifies the copy: a protocol, a subprocess, a rendering, prose for a human.
+Those consumers cannot see the original, which is *why* the second copy exists
+and why it has to be checked rather than removed.
+
+**And the tell is not "a guard that enumerates" — it is a guard whose population
+is written somewhere other than where the population lives.** A guard that
+iterates the real registry grows by itself when you add a member. A guard that
+restates the members goes stale in one direction and red for no reason in the
+other. Where the population is derivable, deriving it costs one line:
+
+```clj
+;; grows by itself
+(doseq [t (vals my.app/handlers)] (is (registered? t)))
+;; goes stale silently — and looks identical in a diff
+(doseq [t [:create :update :delete]] (is (registered? t)))
+```
 
 The general form is worth memorizing, because it costs one line and it catches
 a class you cannot otherwise see: **an empty result standing in for a verified
@@ -1283,6 +1351,25 @@ before the request leaves. Rules of the road:
   one the server validates); `generate_client` SKIPS an endpoint whose schema
   isn't shippable and reports it in `:problems`. A `web-inline-schema-dup` advisory
   nudges a shape shared across endpoints toward a named `.cljc` var.
+- **Declare the entries, or the validator is off.** A field typed `[:sequential
+  :map]` accepts any map, so the generated client's response validation — the
+  thing built to catch drift — passes over it forever. Measured in the wild: a
+  `:diff` moved from `[String]` to `[[String String]]` and nothing noticed for
+  weeks. Name the entries (`[:map [:kind :string] [:text :string]]`), or declare
+  `:any` if the shape genuinely is not settled — `:any` at least says so, where a
+  bare `:map` looks like a type and admits everything. `web-unconstrained-contract`
+  (whole-store, advisory) lists them, and it is the PRIOR question to the one
+  below: prose does not make a field real.
+- **Put each field's prose ON the field.** A type says what SHAPE a value has and
+  never what it MEANS — `:total :int` does not tell a caller the number counts
+  hits BEFORE the limit is applied. Malli entry properties are open and travel
+  with the schema, so `[:total {:doc "hits before the limit is applied"} :int]`
+  reaches every consumer of the published contract; a docstring on the schema var
+  does not, because a docstring is not a value. The `web-undocumented-contract`
+  advisory (whole-store, never blocking) lists the fields that say nothing.
+  `:description` is accepted as malli's JSON-Schema spelling. **Build a long one
+  with `(str …)`** — unlike a docstring this is a value, so a multi-line literal
+  ships its own source indentation to everyone who renders it.
 - **Serving under a path prefix: `set-base!`.** Every wrapper's path is
   root-absolute (`/api/orders`), so behind a reverse proxy that mounts the app
   at `/app/…` they all resolve at the PROXY and the page does nothing. The
@@ -1306,11 +1393,19 @@ that. Neither store reads the other.
 
 - **Producer: serve `slopp.web.contract/contract-document`.** It takes your
   served namespace list and returns `{:slopp/contract-version 1 :endpoints […]}`
-  — method, path, name, and the request/response schemas as VALUES. Serve it as
-  EDN with `:web/raw true` and `Content-Type: application/edn`; mark the
-  endpoint `^{:web/client false}` (describing the wrappers doesn't need a
-  wrapper). It ships in the `slopp-web` slim jar, so any app can publish, not
-  just one whose code lives in a store.
+  — method, path, name, the handler's QUALIFIED symbol, its docstring, and the
+  request/response schemas as VALUES. Serve it as EDN with `:web/raw true` and
+  `Content-Type: application/edn`; mark the endpoint `^{:web/client false}`
+  (describing the wrappers doesn't need a wrapper). It ships in the `slopp-web`
+  slim jar, so any app can publish, not just one whose code lives in a store.
+- **Your handler's docstring IS the endpoint's public description.** It travels
+  in `:doc`, de-indented and whole — there is deliberately no second `:web/summary`
+  field, because one fact with two homes can disagree. Write it for the CALLER:
+  open with what the endpoint is for, and keep implementation notes out of it,
+  because everyone generating a client reads it. `:handler` is there because
+  `:name` alone does not resolve — on a real surface a third of endpoint names
+  match more than one form, so a consumer linking by simple name points at the
+  wrong one and looks right doing it.
 - **Consumer: `generate_client {from "http://host/api/contracts"}`.** Writes
   TWO namespaces — a `:cljc` contracts ns of the published schemas, and the
   usual `:cljs` client pointing at it. Both `^:generated`; regenerate, never

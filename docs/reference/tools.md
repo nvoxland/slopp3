@@ -126,7 +126,7 @@ url and it uses none of this. What follows is for YOUR app behind YOUR proxy.
 | `query_depends {on}` | The generic dependency question -- a namespace, a var, or a `:keyword`. `direction` flips between dependents and dependencies. |
 | `query_depends {modules true}` | The module manifest, topological layers, cycles, unused edges, standing debt. Add `on` for one module's surface. |
 | `query_vocabulary` | The store's domain keywords, most-used first. Browse before coining a new one. |
-| `review_scan` | Whole-codebase review triage, risk-ranked: untested, unused, effectful, high-blast, large, lint-flagged, undocumented. |
+| `review_scan` | Whole-codebase review triage, risk-ranked: untested, unused, effectful, high-blast, large, lint-flagged, undocumented. Each row's `:evidence` says what kind of coverage stands behind it -- observed, declared, static (with hop distance), off-platform, or none. |
 | `query_rules` | The enforcement catalog: every rule, its grain, its effective severity, how to discharge it. |
 | `query_rule_telemetry` | Fire rates and discharge patterns per rule, plus escape-marker density. |
 | `query_capabilities` | Every capability setting: type, default, effective value, what's set -- plus `:orphaned`, stored keys this build no longer recognises. Writes to the `capabilities` config validate against this registry. |
@@ -156,8 +156,17 @@ namespace list:
 ```clojure
 {:slopp/contract-version 1
  :endpoints [{:method :get :path "/api/timeline" :name timeline
+              :handler slopp.api.endpoints/timeline
+              :doc "GET /api/timeline -- milestones newest first, plus the working set."
               :request nil :response [:map [:milestones …]]}]}
 ```
+
+`:doc` is the handler's own docstring, de-indented and whole -- so a handler
+docstring is the endpoint's public description, and there is deliberately no
+second summary field beside it to disagree with. `:handler` is the qualified
+symbol, because `:name` alone does not resolve: on a real surface a third of
+endpoint names match more than one form, and a consumer linking by simple name
+points at the wrong one while looking right.
 
 as EDN (`:web/raw true`, `Content-Type: application/edn`), on an endpoint marked
 `^{:web/client false}` — describing the wrappers needs no wrapper. It lives in
@@ -219,7 +228,7 @@ Three things worth knowing:
 | `ns_add_require` / `ns_remove_require` | One require clause. Never hand-edit an `ns` form. |
 | `edit_add_form {ns source}` | Add a top-level form. `before` anchors placement. |
 | `edit_replace_form {ns name source}` | Replace a whole form. |
-| `edit_subform {ns form source}` | A change inside a big form, by `match`, `text: true`, or `where: {key value}`. |
+| `edit_subform {ns form source}` | A change inside a big form, by `match`, `text: true`, or `where: {key value}`. `where` addresses a row by the spelling each side answers to, so `"stored-name"` reaches `:stored-name`; a miss names the values that key does take. |
 | `edit_delete_form {ns name}` | Delete a form (with `ns-unmap`). Refuses while anything still calls it, naming the callers; to remove a caller and its callee together, delete in reverse dependency order — callers first, callee last. |
 | `edit_move {ns name before}` | Reorder within a namespace. |
 | `edit_comment {ns name text}` | Set (or clear) the comment block rendered above a form. The comment is owned by the form, so it travels with it. |

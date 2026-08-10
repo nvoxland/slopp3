@@ -155,15 +155,15 @@ all. What remains here is the API and its read performers — a project serves
 `/api/*` and no HTML — and the module was renamed `slopp.ui` → `slopp.review`
 to say so, since a module named for a UI it no longer contains is exactly the
 kind of claim a reader trusts. That rename overshot: `review` is what
-`slopp.api.review` (review_scan, risk triage) already meant, so one word named
-two unrelated things across two modules. It became **`slopp.http-api`** on
+`slopp.ops.review` (review_scan, risk triage) already meant, so one word named
+two unrelated things across two modules. It became **`slopp.api`** on
 2026-08-01 — not the UI, the API *for* it, which is what the first rename was
 reaching for — and **`slopp.api`** on 2026-08-03, once phase 1b emptied that
 name. `http-api` was only ever a placeholder for an occupied name: HTTP is how
 this API is REACHED, not what it is, and naming a piece for its transport
 repeats the error of naming it for its consumer. A gate says the framework may not call into the
 core; a separate process that cannot even load it says so louder, and it found
-four real bugs in the first session (`ideas/ui-split-frictions.md`).
+four real bugs in the first session (`ideas/logs/ui-split-frictions.md`).
 
 The cost accepted: ~80 namespace→namespace edges that were enforced when these
 were separate modules (`db → store`, `render → store`) are now intra-component
@@ -205,6 +205,27 @@ and unchecked. Layering *within* a component is no longer a gate.
 | `slopp.git.client` | CLIENT face (deep): push the projection to a normal external remote / fetch a remote's objects; credentials; 30s transport timeouts |
 | `slopp.sync` | git bridge orchestration (the store side, so IT depends on `slopp.ops`): `push!` store→remote (saves `git-remote` meta; refused while conflicts stand), `clone!` remote→FILELESS store (verified dependency-ordered ingest, deps manifest restored, `git-base-sha` recorded), `pull!` 3-way form-granular absorb (remote wins where we're clean; both-touched → off-log `quarantine` conflict; ends with a `:git-sha` chain marker); CLI `-main clone|push|pull` |
 | `slopp.lab` | the instruments a HUMAN runs (R5), never the system: `lab.benchmark` (scripted sample-app wire-cost meter), `lab.evalseed` (seeds eval-round template codebases), `lab.mine` (demand mining over provenance journals), plus reference-query-cost on the root. None has a caller or a test, and that is the shared property rather than rot. **Declared `module_role :instrument` (2026-08-04)**, which is what makes R5's second clause real: it materializes under `instruments/`, not `src/`, so the jar excludes it, and it is off the layer map |
+
+## Naming rules (R3/R4/R6)
+
+**R3 — name a piece for what it IS, never for who consumes it or what it
+currently contains.** Both change. That is what stranded `ui.port` (named for
+a consumer that moved) and what would have stranded `view` (named for what the
+endpoints happened to be that week).
+
+**R4 — phrases retired by R3, and what to say instead.** These name things
+that still exist; the PHRASE is what went.
+
+| Retired | Say instead |
+|---|---|
+| "the dev server" | keeping a web project live in development — the mechanism is web tooling's, and it is `live` there |
+| "the app server" | the web project's own server, on `web.port` |
+| "the reviewer UI" / "reviewer API" | the external API (`slopp.api.*`) and its consumers. A viewing UI is ONE consumer, not the surface's identity |
+| "the UI hub" | "a hub" / "the hub". A hub is a ROLE — one process per machine holding a registry fed by heartbeats. Rendering pages is what today's only hub happens to do with that registry, not what a hub is |
+
+**R6 — an app TYPE never owns a generic name.** Support for an app type lives
+in a module named for that type, and the pattern must be replicable for type #2
+without renaming type #1. See `slopp.webdev` in the layer map above.
 
 ## Cross-cutting gotchas
 
@@ -361,7 +382,7 @@ and unchecked. Layering *within* a component is no longer a gate.
   written down twice; they are now declared test-only and the store has **no
   declared-manifest cycles at all**, which makes gating on that possible for
   the first time. `ns_rename`'s manifest re-key still does no cycle check —
-  the remaining half of `ideas/restructure-wave-frictions.md` #20.
+  the remaining half of `ideas/logs/restructure-wave-frictions.md` #20.
 
   **A test-only edge is re-keyed by NOTHING, which is its own hazard.** When a
   rename empties a module, `ns_rename` relocates the PRODUCTION manifest entry
@@ -373,7 +394,7 @@ and unchecked. Layering *within* a component is no longer a gate.
   ahead of the reuse.
 
   Phase 2 then measured the same gap with the dead entries cleared, and the
-  answer was worse: `slopp.http-api`'s six production deps, its purity tiers,
+  answer was worse: `slopp.api`'s six production deps, its purity tiers,
   its `:cljc` platform register and `slopp.mcp`'s consumer edge ALL followed
   the rename to `slopp.api`, and its two test-only edges (`→ slopp.ops`,
   `→ slopp.webdev`) did not. Not dead this time — *needed*, by tests that had

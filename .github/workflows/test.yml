@@ -54,19 +54,20 @@ jobs:
   # human grep that happened for an unrelated reason.
   #
   # This is the inverse of kernel-parity's reach: main holds the prose,
-  # slopp/main holds the store's rendered `vocabulary`. Declaring a rename
-  # there is what gives this teeth, and it is the step a rename must not skip.
+  # slopp/main holds the store's rendered source. Comparing the two is what
+  # catches a doc that documents something the code no longer declares.
   shipped-prose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0   # slopp/main must be reachable — it holds the vocabulary
-      # No JVM: the prose is files and the vocabulary is a rendered config, so
-      # this is git and grep. It also means a broken store cannot make this
+          fetch-depth: 0   # slopp/main must be reachable — it holds the
+                           # rendered capability registry
+      # No JVM: the prose is files and the registry is rendered on the branch,
+      # so this is git and grep. It also means a broken store cannot make this
       # lane unrunnable, which matters for the one check aimed at what ships.
-      - name: Shipped prose names nothing we retired
+      - name: Shipped prose documents no undeclared capability
         run: bin/check-shipped-prose.sh
 
   # The kernel (slopp.kernel.rt, slopp.kernel.boot) exists TWICE and both copies are live:

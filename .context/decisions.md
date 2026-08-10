@@ -26,11 +26,11 @@ the change here (same commit).
   rejected but this is safe), and generative. Malli coupling accepted because
   malli schemas are plain EDN data — they round-trip through the form store like
   any value. Full rationale + roadmap: D9 +
-  `ideas/agent-native-best-practice-gates.md`. **SHIPPED 2026-07-17, both
+  `ideas/research/agent-native-best-practice-gates.md`. **SHIPPED 2026-07-17, both
   channels** (see `.context/dialect.md` § Schema oracle-check): a written `:=>`
   `:malli/schema` (on the defn name) is generatively oracle-checked against its
   live impl at `done!` — drift is a red `:schema-drift` finding, never a silent
-  lie (`slopp.api.schema`); and an opt-in per-form write gate
+  lie (`slopp.rules.schema`); and an opt-in per-form write gate
   (`edit.modules/schema-refusal`, off by default) can REQUIRE that schema on a
   module-external map-arg fn. Verify shipped before require, so a required schema
   is always one the oracle checks. Schemas stay optional to write, verified once
@@ -101,7 +101,7 @@ the change here (same commit).
   (`dialect-scan`) keep their declares, and the pipeline's own inserts (raw
   parser, via `edit/declare-node`) don't trip the gate they enforce. Unlike
   D3/D4 this isn't an analysis defeater — it's the first prune of a human
-  convenience the pipeline can fully own (`ideas/dialect-prunes-human-conveniences.md`).
+  convenience the pipeline can fully own (`ideas/research/dialect-prunes-human-conveniences.md`).
   Mechanics: `.context/verification.md` S1b + `.context/dialect.md`.
 
 ## C — storage core
@@ -134,7 +134,7 @@ the change here (same commit).
   direct linking), and an executable `build-native.sh`. The compile itself
   stays an explicit user-run step — slopp never shells out to GraalVM. The
   launcher's `gen-class` is host-generated scaffolding, NOT authored store
-  code, so it sits outside the D3 gate (same standing as `slopp.rt`'s
+  code, so it sits outside the D3 gate (same standing as `slopp.kernel.rt`'s
   instrumentation). The dialect is what makes the target reliable: D3/D4's
   bans (eval, read-string, gen-class, user macros) are exactly native-image's
   closed-world assumptions. Launcher arg passing is arity-aware via the
@@ -155,10 +155,10 @@ names other docs cite still resolve there.
 ## F/T/S-E/R/X-N/B — user-test & eval findings — MOVED
 
 See `.context/findings-log.md`.
-## R — run-from-store (`slopp.boot`)
+## R — run-from-store (`slopp.kernel.boot`)
 
 R1 ✅ **A store's program runs directly from `store.db`, no exported source.**
-`slopp.boot` reads every ns's byte-exact source via raw next.jdbc
+`slopp.kernel.boot` reads every ns's byte-exact source via raw next.jdbc
 (`SELECT ns, source FROM elements ORDER BY ns, pos` — the same bytes
 `render-ns` emits), computes dependency order by parsing each ns form's
 internal requires (a self-contained mirror of `store/ns-dependency-order` —
@@ -218,7 +218,7 @@ stays byte-moving (no `slopp.api` dep); `slopp.sync` owns the store side
 the last commit_point, not un-milestone'd live state. Auth: token param or
 SLOPP_GIT_TOKEN/GIT_TOKEN env. Verified end-to-end by slopp itself: push →
 plain `git clone` (normal 6-commit repo) → `slopp.sync` clone (30 nses,
-zero `.clj` files) → `slopp.boot` boots and serves it.
+zero `.clj` files) → `slopp.kernel.boot` boots and serves it.
 
 G4 ✅ **Pull is a 3-way merge at FORM granularity; conflicts quarantine
 off-log.** `sync/pull!` fetches, takes git `merge-base(ours, tip)`, and
@@ -247,7 +247,7 @@ system nses AND all 51 test nses — lives in `.slopp/store.db`; on disk remain
 only the boot kernel (`src/slopp/boot.clj`, `src/slopp/rt.clj`),
 `deps.edn` (slopp-the-tool's coordinates), docs, and benchmarks. Development
 goes exclusively through slopp's MCP tools; the file↔store drift class is
-gone by construction. The server runs `slopp.boot --live` so committed edits
+gone by construction. The server runs `slopp.kernel.boot --live` so committed edits
 hot-reload into the running host.
 
 T2 ✅ **Third test tier: `^:isolated` (tag on the deftest name).** Tests that
@@ -326,7 +326,7 @@ an agent to ever reach for it. `api/fix-declares!` stays as the internal
 cleanup. Friction found + logged: the edit tools' INLINE `:test` summary
 reported a green that SILENTLY omitted the `^:isolated` test just written
 (the isolated run was red). [Corrected 2026-07-16: I first recorded this as
-"ran it in-image and false-greened" — wrong. `slopp.rt/traced-run` has
+"ran it in-image and false-greened" — wrong. `slopp.kernel.rt/traced-run` has
 dropped `^:isolated` unconditionally since d980; they never ran in-image. The
 bug was the SILENT skip, not the execution. See `.context/verification.md` §7.]
 
@@ -402,8 +402,8 @@ with the `fix_declares` tool removed, hygiene is LAZY (done sweeps only the
 episode's changed namespaces) — 2 legitimate legacy declares (slopp.render,
 slopp.repl, zero phantoms) persist until those nses are next touched.
 
-R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.boot` +
-`slopp.rt` + the dep coordinates are part of slopp's distribution (bundled in
+R3 ✅ **Not slopp-special — the kernel is slopp-the-tool.** `slopp.kernel.boot` +
+`slopp.kernel.rt` + the dep coordinates are part of slopp's distribution (bundled in
 the jar when packaged), NOT per-project source; `rt` is the runtime slopp
 injects into every owned image it spawns. So ANY store runs from its db with
 zero project source files; slopp running itself is just the self-host
@@ -463,7 +463,7 @@ PERMANENT published repo for now (`git-remote` meta points there).
 ## R4/E4 — release pipeline + trivia/string addressability
 
 R4 ✅ **v0.1.0 shipped.** The release artifact is the UBERJAR
-(`java -jar slopp.jar -m slopp.boot <dir> …`, :main clojure.main — nothing
+(`java -jar slopp.jar -m slopp.kernel.boot <dir> …`, :main clojure.main — nothing
 AOT'd, the store loader keeps runtime load-string; needs Java + the Clojure
 CLI for owned images). Built by `build.clj` (kernel-side + on the files
 manifest so the tag-triggered release workflow can build from a checkout),
@@ -656,7 +656,7 @@ proven module-gate template: every hard gate ships (a) an escape marker
 state from reality so enabling it never retro-breaks working code — the bootstrap
 catch-22), and (c) a teaching refusal that names the exact next tool call. Scope
 is the FULL checkable menu; the sequenced roadmap is
-`ideas/agent-native-best-practice-gates.md`.
+`ideas/research/agent-native-best-practice-gates.md`.
 
 **Why:**
 - **slopp already enforces much of "the Clojure way" mechanically** — the dialect
@@ -682,14 +682,14 @@ verb/tool, `edit.modules/tier-refusal`, hard-refuse across add/replace/group; se
 `.context/dialect.md` § Purity tiers — `:pure` also forbids NON-DETERMINISM
 (`rand`/`slurp`, `index/nondeterministic-vars`) so it means referential
 transparency, not just mutation-freedom); **(2) schema-at-boundary** — the generative
-oracle-check (`slopp.api.schema` → `done!`'s `:schema-drift`) plus the opt-in
+oracle-check (`slopp.rules.schema` → `done!`'s `:schema-drift`) plus the opt-in
 `edit.modules/schema-refusal` require-gate (see D2 and `.context/dialect.md` §
 Schema oracle-check); **(3) key hygiene** — a DERIVED attribute inventory
-(`slopp.api.attrs/keyword-inventory`) + a near-duplicate-key advisory
+(`slopp.rules.keywords/keyword-inventory`) + a near-duplicate-key advisory
 (`near-duplicate-keys` → `done!`'s `:key-typos`), the program's FIRST done-time /
 advisory-grade rule (the per-form write gates are hard-refuse; this is a heuristic
 that never flips status). See § Attribute inventory below and `.context/dialect.md`;
-**(4) contract-breakage advisory** (`slopp.api.breakage` → `done!`'s
+**(4) contract-breakage advisory** (`slopp.rules.breakage` → `done!`'s
 `:breaking-changes`) — a module-external fn whose fixed-arity surface NARROWS vs
 the last-done baseline is flagged (Spec-ulation: growth is safe, breakage must be
 visible to the external callers a slice can't see). Advisory, v1 = arity narrowing. The rule-registry chassis has its FIRST SEED (2026-07-17):
@@ -698,7 +698,7 @@ as VARS so hot-reload is picked up, and the four write sites now call ONE
 `gate-refusal` dispatch. The seed's thesis is **confirmed**: `schema-refusal`
 joined as a ONE-LINE addition (`[#'module-refusal #'tier-refusal
 #'schema-refusal]`) — a second new gate, one edit, not four. The registry now
-spans a **SECOND GRAIN** (2026-07-17): `slopp.api.rules/done-advisories`, an
+spans a **SECOND GRAIN** (2026-07-17): `slopp.rules/done-advisories`, an
 ordered `{:key :severity :check}` registry for the DONE-time findings
 (schema-drift, key-typos, breaking-changes) — `done!` collapsed three hand-wired
 advisory bindings + clauses + a status term into one `run-done-advisories!` loop,
@@ -712,7 +712,7 @@ EFFECTIVE severity for status, so a project dials `key-typos` up to `:error` or
 `schema-drift` down to `:advisory`. This is what lets a project turn off a gate it
 can't live with instead of fighting a wall — and unblocks the opinionated gates
 (require-namespaced, hard-refuse-breakage) by making them tunable. **UNIFIED
-CATALOG + `query_rules` SHIPPED 2026-07-17**: `slopp.api.rules/rule-catalog` is
+CATALOG + `query_rules` SHIPPED 2026-07-17**: `slopp.rules/rule-catalog` is
 one declarative `{:rule :grain :severity :escape :teach}` catalog of every rule
 across both grains; `query_rules` projects it with each rule's effective per-store
 severity (the queryable "what's enforced here, at what grade, how to discharge"
@@ -728,7 +728,7 @@ effects while a call / bare alias / higher-order value-arg still does; dropped t
 `^:reads` workarounds); and two more done-advisories
 (`:ambient-state` — a global `(def _ (atom …))`; `:bare-throw` — a boundary fn
 throwing a constructed non-`ex-info` exception). Nine rules now ride the two
-registries. **Rule telemetry** (`slopp.api.telemetry/rule-telemetry` →
+registries. **Rule telemetry** (`slopp.read.telemetry/rule-telemetry` →
 `query_rule_telemetry`) makes the severity dial measurable: read-only over the
 delta log, per-rule fire-rate + discharge (`:discharged` vs `:persisted`) +
 escape-marker density + dials — the demand signal the plan wanted, with no new
@@ -792,7 +792,7 @@ dep.** Full finding: `ideas/inherent-deps-and-the-self-host-classpath.md`.
 
 **Decision:** the server/boot JVM states what it carries instead of pretending
 the manifest can override it. `build.clj` writes the basis that produced the
-uberjar to `META-INF/slopp/bundled-libs.edn`, `slopp.boot/ensure-bundled-libs!`
+uberjar to `META-INF/slopp/bundled-libs.edn`, `slopp.kernel.boot/ensure-bundled-libs!`
 seeds it into the runtime basis at startup, and `deps_add` reports
 `:host-override {lib {:declared :in-force}}` when the store declares a different
 version of something the host already has.
@@ -834,7 +834,7 @@ because nobody thinks to check it.
 
 ## Attribute inventory — a DERIVED index, not folded state (2026-07-17, user-guided)
 
-**Decision:** the domain-keyword/attribute inventory (`slopp.api.attrs/keyword-inventory`,
+**Decision:** the domain-keyword/attribute inventory (`slopp.rules.keywords/keyword-inventory`,
 `{namespaced-kw -> #{form-ids}}`) that backs the key-hygiene gate (D9 §(3)) is a
 **derived view** — a pure function of the stored forms, recomputed when needed —
 NOT a folded, persisted store field.
@@ -1037,7 +1037,7 @@ per HTML, and nowhere else. There is no residue to shave because the question
 is no longer being approximated.
 
 This is the same failure as the withdrawn `:positional-form-access` advisory
-(4–5 false positives out of 5, `ideas/the-patterns-behind-every-failure.md`
+(4–5 false positives out of 5, `ideas/correspondence/the-patterns-behind-every-failure.md`
 Pattern 1), whose recorded lesson — *"positional access is not the real
 predicate"* — is this decision generalized. Twice is a class.
 
@@ -1082,8 +1082,8 @@ published CLI entry point.
 
 **Exempt, and each for a stated reason — a published interface is not
 taxonomy's to spend.**
-- `slopp.boot` / `slopp.rt` — the on-disk kernel AND the published entry point
-  (`clojure -M -m slopp.boot`, `java -jar slopp.jar`) appearing in `deps.edn`,
+- `slopp.kernel.boot` / `slopp.kernel.rt` — the on-disk kernel AND the published entry point
+  (`clojure -M -m slopp.kernel.boot`, `java -jar slopp.jar`) appearing in `deps.edn`,
   `build.clj`, `README.md`, `DEV.md`, the docs site and a shipped release blog
   post. They sit outside the component map, which `.context/architecture.md`
   already frames as the honest place for "slopp-the-tool, not project source."
@@ -1111,7 +1111,7 @@ GREEN with both violations resident because the functional-core gate fires on
 WRITE, over the forms a write touches. Declaring the three deep namespaces
 explicitly (`slopp.store.db`/`.mine` `:external`, `.merge` `:pure`) fixed this
 store. **The class is open**: a tier acquired by inheritance is never verified
-against the population it newly governs. See `ideas/ui-wave-frictions.md` #11.
+against the population it newly governs. See `ideas/logs/ui-wave-frictions.md` #11.
 
 **Consequence for wave-scale renames generally.** A namespace name lives in
 strings as often as in symbols — generated `deps.edn` main-ns, `(ns …)` source
@@ -1132,7 +1132,7 @@ write pipeline already lives this (a failed gate refuses; `:status` names which
 tier ran; `:red-first`/`:carried-errors` mark interim states). The analysis
 layer did not, and that is where this project's characteristic failure lives: of
 ~20 recorded failures, roughly two threw — the rest returned a confident,
-well-formed, WRONG answer (`ideas/the-patterns-behind-every-failure.md`
+well-formed, WRONG answer (`ideas/correspondence/the-patterns-behind-every-failure.md`
 Pattern 4).
 
 **Why it is decision-grade, not hygiene.** The write gates earn justified trust,
@@ -1479,9 +1479,9 @@ implementations DOWN first, and only then ask the facade question.
 
 ### Extracted so far
 
-- **`slopp.api.query`** (`:pure`) — 33 forms: the 25 pure query operations
+- **`slopp.read.query`** (`:pure`) — 33 forms: the 25 pure query operations
   plus every pure helper they use.
-- **`slopp.api.review`** (`:pure`) — `review-scan`, 122 lines of analysis.
+- **`slopp.ops.review`** (`:pure`) — `review-scan`, 122 lines of analysis.
 
 `slopp.api`: 105 → 71 forms.
 
@@ -1517,7 +1517,7 @@ should the **9 external** forms (`open!`, `done!`, `commit-point!`, `build!`,
 **Do not infer this one.** Decide it, then execute.
 
 **RESOLVED 2026-07-20 (user decision: push the external usage out).** All
-ten IO forms now live in `slopp.api.external`. The stated payoff did NOT
+ten IO forms now live in `slopp.ops.external`. The stated payoff did NOT
 materialise, and the measurement is the useful part: `cleanup` reports
 `slopp.api` still `{:tier :external, :supports :effects}`, with 50 of its
 62 remaining forms blocking `:internal`. The IO was never those ten forms —
@@ -1577,8 +1577,8 @@ than deleted, and now guards the concern that was actually load-bearing:
 neither pass may recompute for the same source.
 
 Layering went **9 → 5**. The remaining five are genuine judgement calls, not
-artifacts: `slopp.api.review` really uses `lint`, `.orient` really uses
-`slopp.db`, `.query`/`.telemetry` really use `slopp.api.rules`.
+artifacts: `slopp.ops.review` really uses `lint`, `.orient` really uses
+`slopp.db`, `.query`/`.telemetry` really use `slopp.rules`.
 
 **Corollary, and it caught four namespaces here:** a stale require is not
 cosmetic. A namespace inherits the TIER of everything it requires, so a
@@ -1638,7 +1638,7 @@ The deferral in `ideas/deferred-framework-and-http.md` is lifted; the design
 center is a THIRD-PARTY developer building an arbitrary web app through slopp
 (slopp's own endpoints are the dogfood, never the design driver). Settled, to
 be built in waves on the `web` store branch (plan of record: the approved
-web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
+web-applications plan; frictions log: `ideas/logs/web-wave-frictions.md`):
 
 - **Capability registry (wave 0, SHIPPED 2026-07-22).** A store declares what
   kind of application it is in a `capabilities` config file riding the
@@ -1653,7 +1653,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   silently does nothing is the nil-pun failure the registry exists to kill)
   and type-failing values, with teaching. `app.main`/`app.name` persist the
   app manifest — `build!` falls back to them, so the entry point is store
-  state, not a tool argument. `http.enabled` (default false) is the master
+  state, not a tool argument. `web.enabled` (default false) is the master
   opt-in every web rule will be gated on: a store that never opts in is
   untouched (the purity-tier adoption lesson).
 - **An endpoint is a `defn` with `:web/*` metadata** (method, path, auth,
@@ -1663,13 +1663,13 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   **Wave 1 SHIPPED 2026-07-22:** the `:web/*` markers are declared edges in
   the reference graph (`declared-refs` — `:web-endpoint`/`:web-effect`/
   `:web-read`, so endpoints and performers never trip the unused gate);
-  `query_routes` (via `slopp.api.web`, `:pure`) reports the surface from the
+  `query_routes` (via `slopp.rules.web`, `:pure`) reports the surface from the
   SAME shared derivations (`edit.modules/web-endpoint-rows`/`web-performers`)
   the four new write gates check — `web-auth-refusal` (default-deny),
   `web-route-collision`, `web-undeclared-effect`, `web-unsafe-get` (a safe
   method may neither declare effect kinds nor reach a mutation) — registered
   in `per-form-write-gates`, cataloged, severity-dialable, and all inert
-  until `http.enabled`. Design note learned landing it: the route-row keys
+  until `web.enabled`. Design note learned landing it: the route-row keys
   are `:web/effects`/`:web/reads` NAMESPACED — bare `:effects`/`:reads` trips
   the retired-tier-vocabulary advisory, and slopp namespacing what it adds is
   the standing §2 rule anyway.
@@ -1682,7 +1682,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   changed-ids (added-then-deleted on the branch) are pruned and
   `hot-load-form!` guards vanished forms; the one-shot CLI's errors carry
   their cause chain and stack. Full friction narrative:
-  `ideas/web-wave-frictions.md`.
+  `ideas/logs/web-wave-frictions.md`.
 - **Request/response maps stay RING-shaped**; slopp namespaces only what it
   ADDS (`:web/identity`, `:web/effects`, `:web/reads`, …). The training-data
   prior is an asset, not a hazard; the novelty budget is spent on
@@ -1726,7 +1726,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   `enforce`/`authorized?`/`serve!`/`stop!`), and BOTH adapters behind the
   seam. `slopp.http`'s `/call`, `/mcp`, `/metrics` are declared endpoints
   served through the facade (wire-compatible — the old transport tests pass
-  unchanged), and slopp's own store runs `http.enabled = true`. Design
+  unchanged), and slopp's own store runs `web.enabled = true`. Design
   corrections learned landing it: `enforce` not `require!` (a throwing
   guard mutates nothing; a bang would falsely taint every pure handler
   doing row-level authz); test namespaces' endpoint-shaped forms are
@@ -1747,7 +1747,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   projection threads a blob reader); `merge-logs` unions theirs' blobs.
   Serving: `slopp.web.static/mount-routes` (mounts + a reader → `:public`
   GET rows answering `:web/raw` responses both adapters write verbatim —
-  no JSON wrapping), wired in `slopp.http` from `http.static.*`
+  no JSON wrapping), wired in `slopp.http` from `web.static.*`
   capabilities over the store, so an edited asset hot-serves under
   `--live`. LATENT BUG FIXED en route (frictions #21): merge-logs' unknown-
   op default silently SKIPPED every `:config-put`/`:file-put` — main had
@@ -1767,7 +1767,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   native alike. THE WAVE-5 TAIL, deliberately together: the slim
   `io.github.nvoxland/slopp-web` jar (user apps' dep), the native-proof CI
   extension that consumes it (a sample web app with an asset, compiled and
-  curled), and `slopp.boot` add-libs for store manifests — plus wave 3's
+  curled), and `slopp.kernel.boot` add-libs for store manifests — plus wave 3's
   OIDC. Each needs the release surface the others define; shipping them as
   one arc beats four stubs.
 - **RELEASE TAIL SHIPPED 2026-07-22 — the program is complete.**
@@ -1784,7 +1784,7 @@ web-applications plan; frictions log: `ideas/web-wave-frictions.md`):
   ~/.m2, declared an endpoint + a content-addressed asset, built with
   app.main, and served — /hello answered, the asset's exact bytes and
   image/png came back. `native-proof.yml` gained a `native-web-app` job
-  running that exact flow through GraalVM. `slopp.boot` resolves the store
+  running that exact flow through GraalVM. `slopp.kernel.boot` resolves the store
   manifest via add-libs at load (DynamicClassLoader installed — the
   documented non-REPL constraint), so `java -jar slopp.jar <dir>` boots
   ANY app; proven against the scratch store from the bare kernel. Known
@@ -1809,7 +1809,7 @@ hole:
   a generic 500 with the detail logged, never returned (no `ex-message` /
   `ex-data` disclosure).
 - **Bodies are bounded.** Both adapters read at most `:web/max-body-bytes`
-  (default 1 MiB, the `http.max-body-bytes` capability) and answer 413 —
+  (default 1 MiB, the `web.max-body-bytes` capability) and answer 413 —
   the unbounded slurp was a heap-exhaustion DoS, and the configured limit
   had been dead.
 - **Crypto.** Static passwords are salted, iterated PBKDF2
@@ -1817,13 +1817,13 @@ hole:
   SHA-256 — the hash rides the git-projected config, so it must resist
   offline cracking; bearer and password compares are constant-time
   (`MessageDigest/isEqual`). **OIDC audience is mandatory**: an unset
-  `auth.oidc.audience` denies every token (a resource server must reject
+  `web.auth.oidc.audience` denies every token (a resource server must reject
   cross-audience tokens); a set one must match `:aud`.
 - **Static traversal is contained** in the reader (canonical path under
   root + a `..`-segment refusal), not left to the router's single-segment
   accident, which the reader's own docstring flagged as temporary.
 - **Proxy header lookup is case-insensitive** — adapters lowercase header
-  keys, so a canonically-cased `auth.proxy.user-header` config now matches.
+  keys, so a canonically-cased `web.auth.proxy.user-header` config now matches.
 
 ## D-merge-causality (2026-07-22) — round trips are causal
 
@@ -1905,7 +1905,7 @@ Every cross-cutting store concept gets exactly ONE declaration site
   one `canonical-tier` mapping lives in the registry
   (`edit.modules/canonical-tier` delegates), the `:module-tier` fold and
   the db load both normalize through it, and the surviving `:effects` row
-  (`slopp.bench`) was re-declared canonically. Deltas keep the author's
+  (`slopp.lab`) was re-declared canonically. Deltas keep the author's
   spelling verbatim — history is honest, state is canonical.
 - **`db/write-snapshot!`** is the one transaction tail `persist!` and
   `append!` share — the copy-pasted meta-row blocks whose silent-miss
@@ -1941,7 +1941,7 @@ Two decisions from the frictions-architecture program's episode wave:
   Revisit only if branch lines become long-lived archives rather than
   integrate-and-delete work lines.
 
-Not built, recorded in `ideas/episode-grain.md`: promoting the episode to
+Not built, recorded in `ideas/research/episode-grain.md`: promoting the episode to
 a first-class journal object (changeset atomicity in merges, episode-grain
 provenance queries). The concrete asks that motivated it are served — 
 edit-group!/edit_move_forms are the changeset grain for writes, and the
@@ -1988,23 +1988,23 @@ attributes), nothing in this design depends on it, and plain links + forms
   namespaced-keys boundary gate demanded it and it matches the `:web/*`
   envelope convention. The shell emits no inline script/style: strict-CSP
   compatible by construction; apps set their own CSP header.
-- **UI→route referential integrity, analysis-side** (`slopp.api.web`):
+- **UI→route referential integrity, analysis-side** (`slopp.rules.web`):
   `ui-route-refs` (a derived pure fn of forms — the keyword-inventory
   litmus, so correct across branches/merges/history) classifies literal
   `:href`/`:action` values `:exact`/`:prefix`/`:unresolved`;
   `dangling-route-refs` joins through `slopp.web.router/match` (scoped
   `^{:export "slopp.api"}` + the new `module_dep slopp.api → slopp.web`
-  edge — one matcher truth) plus `http.static.*` mounts with file
+  edge — one matcher truth) plus `web.static.*` mounts with file
   EXISTENCE. `query_routes` rows gain `:rendered-by`. The key set covers
   href/action today; hx-* verbs slot in if htmx is ever adopted.
 - **`web-dangling-route-refs` done-advisory, `:error` default,
   store-wide** — like dead surface, because deleting a route dangles an
-  UNCHANGED form's link. Inert until `http.enabled`; discharged by fixing
+  UNCHANGED form's link. Inert until `web.enabled`; discharged by fixing
   the path, adding the route/asset, or `^{:web/external-path "why"}` on
   the rendering form. Dynamic refs are NAMED (`:unresolved` via
   `api.web/dangling-route-refs`) but never findings — an `:error` key has
   no non-flipping finding lane (friction #4 in
-  `ideas/html-wave-frictions.md`).
+  `ideas/logs/html-wave-frictions.md`).
 - **`web-react-attrs` write gate, refuse-grade** — `:className`,
   `:htmlFor`, `on[A-Z]*`, `:dangerouslySetInnerHTML` in a literal map in
   position 2 of a keyword-tag vector. The silent-failure class: browsers
@@ -2039,13 +2039,13 @@ attributes), nothing in this design depends on it, and plain links + forms
   `start-server!`'s `:web/namespaces`.
 
 Deferred, deliberately: htmx (additive hx-* attributes + one static blob
-when an app wants partial updates; `ideas/htmx-hiccup-ui.md` keeps that
+when an app wants partial updates; `ideas/product/htmx-hiccup-ui.md` keeps that
 half), build-time static generation (`:web/static true` materialization —
 a serving strategy, not a representation change), an image-side
 html→hiccup conversion tool (build on pasted-HTML friction), an
 oversized-page-defn advisory, a CSP capability key, and ClojureScript
 (`ideas/clojurescript-client-code.md`, escalation after htmx). Wave
-frictions: `ideas/html-wave-frictions.md`.
+frictions: `ideas/logs/html-wave-frictions.md`.
 
 ## D-web-cljs (2026-07-22) — client-side ClojureScript: one store, one dialect, compiled on the JVM
 
@@ -2153,12 +2153,12 @@ contracts gated + shared with the client** (a schema-per-endpoint gate whose
 `.cljc` schema checks front-end usage — the deeper LoB payoff beyond a
 hand-shared schema; scoped in `.context/roadmap.md`, user ask 2026-07-23). Supersedes
 `ideas/clojurescript-client-code.md`. Wave frictions:
-`ideas/cljs-wave-frictions.md`.
+`ideas/logs/cljs-wave-frictions.md`.
 
 **Shipped after the milestone (user ask, 2026-07-23):** (1) the REFACTOR ops
 handle `:cljs` forms — every compiling refactor op (`edit_rename`/
 `edit_move_forms`/`edit_extract`/`change_signature`/`edit_requalify`/
-`rename_sweep`) funnels through `slopp.api.session/hot-load-all!`, guarded once
+`rename_sweep`) funnels through `slopp.ops.engine/hot-load-all!`, guarded once
 to skip a `form-id` whose ns isn't `jvm-loadable?` (per-form-id, so a multi-ns
 move loads the `:jvm`/`:cljc` ids and skips the `:cljs` in one pass; `ns_rename`
 and `ns_delete` were already safe). (2) the recompile dev loop is now ASYNC —
@@ -2203,14 +2203,14 @@ surprise. It extends the existing route-integrity index (which ties a literal
 
 **Shipped (part 1): the endpoint-schema gate.** `slopp.edit.modules/
 web-endpoint-schema` (refuse-grade, `^{:rule/applies-to :production}`, inert
-until `http.enabled`, mirroring `web-auth-refusal`): a `:web/path` endpoint with
+until `web.enabled`, mirroring `web-auth-refusal`): a `:web/path` endpoint with
 no `:web/response` — and a BODY method (`:post`/`:put`/`:patch`) with no
 `:web/request` — is refused, teaching both the named-var and inline paths.
 Registered in `per-form-write-gates` after `web-auth-refusal` (auth refuses
 first) and cataloged in `rule-catalog`.
 
 **Shipped (part 2): the generated typed client.** `generate_client`
-(`slopp.api.cljs/generate-client!`, sibling of `compile_client`) reads every web
+(`slopp.webdev.cljs/generate-client!`, sibling of `compile_client`) reads every web
 endpoint (`edit.modules/web-endpoint-rows`), resolves each `:web/request`/
 `:web/response` to a shippable schema, and writes a stored `:cljs` namespace
 (default `app.client.api`, `client`/`generated-ns`-configurable) of typed `fetch`
@@ -2240,8 +2240,8 @@ boundary; path `:segments` interpolated). Load-bearing sub-decisions:
   path and risks churn; an explicit step mirrors `compile_client`/`build!`. The
   safety net: `generate_client` records a contract fingerprint
   (`edit.modules/client-signature`, a hash of every endpoint's raw
-  method/path/request/response) on `client`/`generated-sig`; the `stale-client`
-  done-advisory (`slopp.api.rules/client-stale-check`) compares recorded vs
+  method/path/request/response) on `client`/`generated-sig`; the `web-stale-client`
+  done-advisory (`slopp.rules/client-stale-check`) compares recorded vs
   current and nudges "run generate_client" on drift — firing ONLY once a client
   has been generated. Composes with the dev loop: the generate WRITE, with
   `client`/`auto-compile` on, triggers the async recompile so the bundle
@@ -2250,7 +2250,7 @@ boundary; path `:segments` interpolated). Load-bearing sub-decisions:
   VAR must live in a `:cljc` ns (so it compiles into the client AND is the same
   one the server validates); `resolve-schema-ref` tags a non-`:cljc` or missing
   var as a `:problem` and SKIPS that wrapper (the ns always compiles). The
-  `inline-schema-dup` done-advisory flags a structurally-duplicated STRUCTURED
+  `web-inline-schema-dup` done-advisory flags a structurally-duplicated STRUCTURED
   inline schema across 2+ endpoints, nudging inline→named.
 - **Side-fix:** `missing-doc-warning` compared heads with a `'#{defn defmacro}`
   literal — D4 bans `defmacro` even as quoted DATA, so any edit re-froze the form
@@ -2307,7 +2307,7 @@ the whole thing at once.
 
 **This is not a new bet — it is the best-built ground slopp already has.**
 D-web-contracts shipped the contracts, the generated typed client and the
-`stale-client` advisory; D-web-cljs shipped one store, one dialect, compiled on
+`web-stale-client` advisory; D-web-cljs shipped one store, one dialect, compiled on
 the JVM. Declaring SPA the supported architecture mostly names what those
 already imply and closes the gaps around them.
 
@@ -2432,7 +2432,7 @@ first is the one worth remembering:
 Deferred: extending client-route integrity to the client-side route table;
 `:web/spa` is built but nothing declares it, because the reviewer UI has real
 server routes for every client route and is progressively enhanced rather than
-a hard SPA. Remaining frictions: `ideas/spa-wave-frictions.md`.
+a hard SPA. Remaining frictions: `ideas/logs/spa-wave-frictions.md`.
 
 ## D-module-view (2026-07-26) — the Code screen is a module map, and the diagram is DATA
 
@@ -2546,7 +2546,7 @@ contract suite against — the unverified-fake problem, volunteered for.
 
 The external-JS dependency capability (`js_dep`), which D-web-cljs already
 defers as "the npm/JS dependency world (its own later record)". Scoped in
-`ideas/external-js-dependencies.md`.
+`ideas/product/external-js-dependencies.md`.
 
 ## D-comments-are-content (2026-07-27) — whitespace is rendering; the form is the only unit
 
@@ -2597,7 +2597,7 @@ of them the literal `"\n\n"`; all sep bytes 7,780; 67 rows carried a comment,
 information that was not in the journal.** Normalizing every namespace to one
 rule cost **+345 bytes** across all 191 — `place-form` had been giving a
 tail-appended form a single newline, so most forms rendered jammed together
-(`slopp.api.session` alone: 33 single-newline separators against 11
+(`slopp.ops.engine` alone: 33 single-newline separators against 11
 blank-line ones).
 
 Deleted: `edit_trivia` and the `:trivia` op (superseding E4's trivia half),
@@ -2610,7 +2610,7 @@ this, `backfill-tree`, and the `tree` column.
 ### The rendering rule now has FOUR implementations
 
 `store.render/render-ns` (reference), `store.db/rendered-sources` (the git wip
-ref), `slopp.boot/store-sources` (the kernel — architecturally forbidden to
+ref), `slopp.kernel.boot/store-sources` (the kernel — architecturally forbidden to
 call the others, and the module gate enforces it), and `render/element-offsets`
 which must SIMULATE the rendering to map clj-kondo positions back to forms.
 Three of the four were found disagreeing, none by reasoning and all by a red
@@ -2675,7 +2675,7 @@ renderer drift and missed this entirely.
 
 ## D-hub (2026-07-27, user decision) — one UI process per machine; each project serves its own data
 
-`slopp.mcp/-main` autostarted the reviewer UI on `ui.port`, a capability
+`slopp.mcp/-main` autostarted the reviewer UI on `slopp.api.server/derived-port`, a capability
 whose default is the fixed 7359. That works for exactly one project. Run two
 MCP servers on a machine and the second one's UI reports `port 7359 is not
 available` — and the fix that suggests itself, giving each project its own
@@ -2781,7 +2781,7 @@ address.
 - `ui.port` keeps its name and changes meaning: the port THIS project's own
   listener binds. Default becomes derived-from-dir; an explicit value is an
   override for someone who wants a fixed address.
-- `ui.hub-port` (new, default 7359): the hub this project registers with.
+- `slopp.hub.port` (new, default 7359): the hub this project registers with.
   `0` disables registration — a project that wants no hub simply doesn't beat.
 
 ### What this revises
@@ -2810,7 +2810,7 @@ merely the first thing to notice.
 - **The prefix travels per REQUEST**, as `X-Slopp-Base` set by the proxy, not
   as configuration. The same server answers directly on its own port AND
   through a hub, so a configured value would be wrong for one of them.
-- **The generated client gained an exported `base`** (`slopp.api.cljs`) that
+- **The generated client gained an exported `base`** (`slopp.webdev.cljs`) that
   every wrapper's path routes through. Default `""` is exactly what every
   existing app already emitted. This is a general capability — any slopp app
   behind a reverse proxy wants it — not a hub special case.
@@ -2832,7 +2832,7 @@ what the project ACTUALLY received and failed immediately — the same lesson as
 the served-namespaces list: a value that crosses a process boundary has to be
 checked on the far side of it.
 
-Open, and cosmetic only: `ideas/ui-hub-styling.md`.
+Open, and cosmetic only: `ideas/hub-styling.md`.
 
 ### D-hub part 3 (2026-07-27, user decision) — the UI becomes its own slopp project, and talks HTTP
 
@@ -2841,7 +2841,7 @@ That left one store holding two applications, which is what made the
 route-collision gate refuse `ui.hub/picker` claiming `:get /` — right for one
 app, wrong for two — and made the dev process stand in for a deployment that
 will never exist. It also meant the UI was not a dogfood at all: it reached
-straight into `slopp.api.query`, `slopp.edit.refs` and `slopp.store`, which no
+straight into `slopp.read.query`, `slopp.index.refs` and `slopp.store`, which no
 user's app can do.
 
 **Decided:** the reviewer UI moves to its OWN slopp project (`../slopp-ui`,
@@ -2900,7 +2900,7 @@ only, so "start the MCP, open the URL" stops working without the UI process.
 knows its own base natively); it remains valid as a general reverse-proxy
 capability.
 
-Frictions found while building: `ideas/ui-split-frictions.md` — notably that a
+Frictions found while building: `ideas/logs/ui-split-frictions.md` — notably that a
 `def` computed from another form stays STALE after an in-image edit, which made
 a new tool parameter silently unusable in the session that added it.
 
@@ -2941,9 +2941,9 @@ same genre — the documentation was the trap:
 - A static mount could not serve `compile_client`'s output. The bundle is an
   ARTIFACT (sha + recipe; inlining it cost 30MB of delta log) and every mount
   consumer went through `store/file-content`, which read `:files` only — so
-  the tool's own "add an `http.static.*` mount" advice was impossible to
+  the tool's own "add an `web.static.*` mount" advice was impossible to
   follow. `file-content` now answers from the manifest first, then artifacts.
-- The capability registry's example was `http.static./assets = public/`, and
+- The capability registry's example was `web.static./assets = public/`, and
   both the handler and the check append their own separator. `public//app.css`
   matches nothing in a manifest — so the documented form worked against a
   filesystem reader and silently served nothing against a store-backed one.
@@ -2964,7 +2964,7 @@ contract, and the proof was that `slopp-ui.graph` ported cleanly and then
 nothing called it — the consumer could not draw its own diagram if it wanted
 one. The endpoint now ships `:modules` (rows carrying `:deps`), `:layers` and
 `:cycles`; `slopp.ui.graph` is deleted and its one genuine analysis,
-`substrate`, moved to `slopp.api.modules`. `slopp-ui.graph/picture-of` takes
+`substrate`, moved to `slopp.read.modules`. `slopp-ui.graph/picture-of` takes
 the response whole and lays it out client-side.
 
 That change was also the first real exercise of the regenerate loop, which is
@@ -2974,8 +2974,8 @@ client → restart its image → validate live. It held (10 nodes, 4 foundation,
 17 edges through the hub's proxy).
 
 **`slopp.ui` is renamed `slopp.review`.** (Superseded 2026-08-01: renamed
-again to `slopp.ui-api` — see D-ui-api-distinct below. `review` collided with
-`slopp.api.review`, which is review_scan.) A module called `slopp.ui` that
+again to `slopp.api` — see D-ui-api-distinct below. `review` collided with
+`slopp.ops.review`, which is review_scan.) A module called `slopp.ui` that
 serves no UI is a lie. Eleven namespaces moved by `rename_sweep`; `ui.pages`
 became `review.reads`, because what it holds is read performers and it had not
 served a page since the route forms left.
@@ -3020,7 +3020,7 @@ back retires the guard instead of having to argue with it. Sibling of
 `slopp-prose-never-names-a-tool-that-does-not-exist`, and the same class: gates
 see var references, never a promise made in prose.
 
-**Decided: `:ui-hub` is the project's own PAGE, and it exists only while a hub
+**Decided: `:hub` is the project's own PAGE, and it exists only while a hub
 is answering.** It was the configured hub root, set when the heartbeat started
 and never revisited — so a machine with no hub had orientation hand a human a
 connection refused, in the field the skill tells agents to hand over. No probe
@@ -3031,14 +3031,14 @@ link at once. `post!` was reading that reply and discarding everything but
 public address" while the project threw it away.
 
 So the beat reports every answer outward (`start!`'s third arity), nil
-included, and `:ui-hub` is rewritten per beat — a departed hub takes the claim
-with it. Where we BEAT is now a separate key, `:ui-hub-configured`, and when it
-is set with nothing answering the brief says so in `:ui-hub-note` rather than
+included, and `:hub` is rewritten per beat — a departed hub takes the claim
+with it. Where we BEAT is now a separate key, `:hub-configured`, and when it
+is set with nothing answering the brief says so in `:hub-note` rather than
 going quiet or lying. Core 1 applied to orientation: a hub is optional, so
 absence is an ordinary state that has to be sayable.
 
 **The test that hid it asserted `assoc` works.** It did
-`(swap! sess assoc :ui-hub "…7359/")` and read the value back, which passes
+`(swap! sess assoc :hub "…7359/")` and read the value back, which passes
 whatever `start-ui!` does. Fixed to assert what the session actually holds —
 and since no hub runs in that test, what it holds is nothing.
 
@@ -3241,7 +3241,7 @@ That removes the entire reason `slopp.mcp.http` existed: it was P4-m1's
 So the namespace is RETIRED, with its tests, including
 `phase4-test/two-agents-one-store` — the scenario itself. Nothing else
 depended on it: the benchmark calls `mcp/handle!` in-process, `--call` is a
-one-shot CLI through `slopp.boot`, and its only other consumers were its own
+one-shot CLI through `slopp.kernel.boot`, and its only other consumers were its own
 tests. `phase4-test`'s surviving tests (per-agent attribution, fork/edit/merge
 end to end) never used the transport, because attribution rides the DELTA — it
 holds whoever wrote it and however they connected.
@@ -3256,19 +3256,19 @@ So: reusing `slopp.web` to write them is right and stays. What is not right is
 serving them from the same listener as MCP, which
 `slopp.mcp.http/start-server!` did (it mounted `ui-server/served-namespaces`
 alongside `/call` and `/mcp`). That mixing goes with the transport.
-`review.server/serve!` on the derived `ui.port` is the one place the reviewer
+`review.server/serve!` on the derived `slopp.api.server/derived-port` is the one place the reviewer
 API is served, over the CALLER's live session.
 
-**What this does NOT change.** `http.enabled` on slopp's own store stays: it is
+**What this does NOT change.** `web.enabled` on slopp's own store stays: it is
 what turns the web write gates and `query_routes` on for slopp's own
-endpoint-shaped code, which is genuine value. And `http.port` still means one
+endpoint-shaped code, which is genuine value. And `web.port` still means one
 thing — the port a web app's server binds (see the 2026-08-01 note under
 `dev.server`). slopp simply has no web APP for it to describe now, which is
 the honest reading and was always the shape of it.
 
 **Consequence recorded, not fixed:** slopp's remaining `:web/`-declared
 endpoints (the reviewer API) are still seen by `query_routes`, the cljs client
-generator and `devserver/serving-namespaces` as "slopp's web app surface".
+generator and `webdev.live/serving-namespaces` as "slopp's web app surface".
 Nothing runs on it — `dev.server false` — and no other store has this problem,
 so it is a self-hosting wrinkle rather than a feature request. Revisit only if
 a second store grows tooling endpoints it does not want counted as its app.
@@ -3277,9 +3277,9 @@ a second store grows tooling endpoints it does not want counted as its app.
 `static/mount-routes`, one of the two implementations held to
 `slopp.web-test/reader-contract` — was only ever HOUSED in the transport. It
 moved to `api.web/store-reader` with its contract run, because it is the
-pattern the dev server will need for `http.static.*` mounts.
+pattern the dev server will need for `web.static.*` mounts.
 
-### D-ui-api-distinct (2026-08-01, user decision) — the API that feeds slopp-ui is `slopp.ui-api`
+### D-ui-api-distinct (2026-08-01, user decision) — the API that feeds slopp-ui is `slopp.api`
 
 Two naming corrections, both resolving collisions this repo made itself.
 
@@ -3293,19 +3293,19 @@ one.
 Resolved by user decision: **slopp's own surface is called "mcp"**, which is
 what it is called everywhere else anyway. "The dev server" keeps the meaning
 web developers already expect — the thing serving an app under development —
-so `slopp.api.devserver` and the `dev.server` capability stay as they are.
+so `slopp.webdev.live` and the `dev.server` capability stay as they are.
 
-**`review` was two things.** `slopp.api.review` is `review_scan`, risk triage
+**`review` was two things.** `slopp.ops.review` is `review_scan`, risk triage
 over the store. `slopp.review.*` was the HTTP API slopp-ui consumes: a
 different concern, a different module, its own layer.
 
 That collision was manufactured by an earlier fix. The module was
 `slopp.ui`, renamed to `slopp.review` (D-hub part 5) on the correct
 objection that a module named for a UI it no longer contains is a claim a
-reader trusts. True — but the replacement landed on a word `slopp.api.review`
+reader trusts. True — but the replacement landed on a word `slopp.ops.review`
 already owned.
 
-**`slopp.ui-api` is what that rename was reaching for**: not the UI, the API
+**`slopp.api` is what that rename was reaching for**: not the UI, the API
 *for* it. Six namespaces plus their tests:
 
     slopp.review.api        → slopp.ui-api.endpoints
@@ -3315,8 +3315,11 @@ already owned.
     slopp.review.server     → slopp.ui-api.server
     slopp.review.heartbeat  → slopp.ui-api.heartbeat
 
-`.api` became `.endpoints` because `slopp.ui-api.api` stutters, and endpoints
-is what the namespace holds — one fn per route. `slopp.api.review` is
+(Those `slopp.ui-api.*` names were themselves renamed to `slopp.api.*` in
+phase 2, once the old occupant of `slopp.api` had moved to `slopp.ops`.)
+
+`.api` became `.endpoints` because `slopp.api.api` stutters, and endpoints
+is what the namespace holds — one fn per route. `slopp.ops.review` is
 untouched; that one is genuinely review.
 
 **What `ns_rename` does not carry, recorded because the next rename will hit
@@ -3369,7 +3372,7 @@ needs a marked builder. Two scoping choices, both deliberate:
 - **`:web/path` endpoints only**, not every form naming the keyword. slopp's
   own `slopp.web.dispatch/handle!` assigns `:web/deps` onto the request; a
   keyword-anywhere gate would refuse writes to the framework's own dispatcher.
-- **Armed by `http.enabled`, not by `dev.server`.** Whether a handler's deps
+- **Armed by `web.enabled`, not by `dev.server`.** Whether a handler's deps
   have a declared source is a property of the APP, not of who runs it, and
   `dev.server` is a dev-lifecycle knob. The consequence is intended: an app
   that runs its own `serve!` and builds its own context is asked to mark the
@@ -3384,7 +3387,7 @@ is built, the contract has to be settled BEFORE it ships, since apps get
 written against whichever is true when they are written, and changing it later
 breaks them in the direction of state that unexpectedly persists — harder to
 notice than state that vanishes. See
-`ideas/how-slopp-learns-the-apps-perform-ctx.md`.
+`ideas/product/how-slopp-learns-the-apps-perform-ctx.md`.
 
 ## D-git-push-pull-only (2026-08-02, user decision) — slopp publishes to git; it is not itself a git remote
 
@@ -3593,3 +3596,43 @@ validating its page, `drive!` refusing in words, and `module_platform`
 reporting the `^:web/page` entries a `:cljs` declaration strands — the write
 that does the stranding being the only surface that can name it at the moment
 it happens.
+
+## D-where-addresses (2026-08-09) — `where` names a row; it does not assert a value
+
+**Decided:** `edit_subform`'s `where` is an ADDRESSING mechanism. Both sides of
+every entry — key and value alike — are compared by the spelling they answer
+to, not by `=`. So `:stored-name`, `'stored-name`, `"stored-name"` and
+`":stored-name"` are four spellings of one name and all four reach the same
+row, and a map stored with string keys is reachable from a wire that
+keywordizes every key it carries.
+
+**The measurement that forced it.** Every registry in this store is keyed by
+keyword VALUES — the rule catalog, the done-advisories, `crossings/kinds`, the
+fold-field registry, `refs/mention-kinds` — and `where` arrives as a JSON
+object, whose values are strings. So the single most common thing `where`
+exists to address was the one thing a caller could not express. It was filed
+five times as three different bugs, and the third instance landed against a
+registry built the same episode, which settles the "old data shapes" reading:
+a keyword is what a registry row IS keyed by.
+
+**And the no-hit answer names the store's state**, not the caller's: *"`:key`
+takes `:schema-drift`, `:key-typos`, …"*, or, when nothing carries the key at
+all, the keys that are there. A refusal that echoes the input reads as "no
+such row" when it means "wrong value".
+
+**The rule lives in the PLAN, not at the transport**, and that is the part
+worth stating because there was a precedent pulling the other way.
+`slopp.mcp/file-handlers!` keywordizes `js_dep`'s `:format` by hand at the
+boundary, with a comment saying why. That is a different act: `:format`'s
+CONSUMER requires a keyword, so the boundary converts a type for a consumer.
+`where` is compared against store data the boundary cannot see, and
+`"stored-name"` / `":stored-name"` are both plausible spellings of one name —
+a boundary rule has to pick one and would still miss the other. Putting it in
+`keyed-replace-plan` also means every caller gets it: `apply-group-step`
+accepts `:where` and nothing builds one today, so the day something does it
+addresses rather than asserts, with no second hand-coercion.
+
+**Not back-compat-breaking in any measurable way**: the exact-value spelling
+that worked before still works, and the widening can only turn a refusal into
+a hit or — if two rows collide once spelling-normalized — into the ambiguity
+refusal, which names the count and asks for another entry.

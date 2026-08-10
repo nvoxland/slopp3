@@ -128,6 +128,26 @@ Rules of the road:
   skips an endpoint whose schema is not shippable and names it in
   `:problems`. A `web-inline-schema-dup` advisory nudges a shape shared by two
   endpoints toward a named `.cljc` var.
+- **Declare the entries, or response validation is off for that field.** A field
+  typed `[:sequential :map]` accepts any map, so the generated client validates
+  it on every call and can never find anything -- the mechanism built to catch
+  drift is pointed at the field and switched off. Name the entries, or say
+  `:any` when the shape is genuinely unsettled: `:any` admits it is saying
+  nothing, while a bare `:map` looks like a type and admits everything. The
+  `web-unconstrained-contract` advisory lists them, whole-store, and it is the
+  prior question to the one below -- prose does not make a field real.
+- **Each field's prose belongs on the field.** A type says what shape a value
+  has and never what it means: `:total :int` does not tell a caller the number
+  counts hits *before* the limit is applied. Malli entry properties are open and
+  travel with the schema, so `[:total {:doc "hits before the limit is applied"}
+  :int]` reaches every consumer of the published contract, while a docstring on
+  the schema var does not -- a docstring is not a value. The
+  `web-undocumented-contract` advisory lists the fields that say nothing; it
+  runs over the whole store, because a published contract is stable and nothing
+  episode-scoped would ever look at it again. `:description` is accepted as
+  malli's JSON-Schema spelling. Build a long one with `(str ...)`: unlike a
+  docstring this is a value, so a multi-line literal ships its own source
+  indentation to everyone who renders it.
 - **Page endpoints opt out** with `:web/client false`. See [HTML and
   CSS](html.md).
 
