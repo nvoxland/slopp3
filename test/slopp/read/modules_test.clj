@@ -353,7 +353,7 @@
             (str "it has to say NOT an inventory: " t))))
     (testing "a docstring that is only an inventory is still no purpose"
       ;; deliberately NOT enforced by shape — a heuristic that guesses at
-      ;; prose quality would fire on good docstrings, and Core 2 says fix the
+      ;; prose quality would fire on good docstrings, and the rule is to fix the
       ;; analysis before restricting the language. The teach line carries it.
       (is (nil? (edit.modules/namespace-purpose-warning
                  (store/ingest (store/empty-store) 'app.listy

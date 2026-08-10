@@ -16,26 +16,43 @@
   '#{defmacro})
 
 ^:unsafe (def ^:private banned-syms
-  "D3 — the analysis-defeater denylist (extensible), matched by NAME against a
-  bare or `clojure.core/`-qualified symbol (see `banned-sym?`): a
-  same-named var in ANOTHER namespace — `clojure.edn/read-string` (the SAFE
-  reader), a user's `my.app/resolve` — is a different var and passes. The
-  RESOLVERS (requiring-resolve, resolve, ns-resolve, find-var, intern) are
-  here per the reference-carrier decision: mentions of var names in strings or
-  quoted symbols are INERT data, so the gate blocks the moment they could
-  BECOME a var — carriers (store/late-ref) or ^:unsafe are the sanctioned
-  paths. The EVAL-EQUIVALENTS (eval, read-string, load-string, load-file,
-  load-reader) and `defmacro` are here because they defeat static analysis
-  whether written bare, qualified, or nested inside another form. The METADATA
-  MUTATORS (alter-meta!, reset-meta!) are here because slopp reads markers
-  (^:export, ^:unsafe, ^:reads, :malli/schema) straight off the STORED node —
-  metadata must be SOURCE-only truth, so mutating a reference's metadata at
-  runtime (invisible to analysis) is refused; with-meta/vary-meta return NEW
-  values and are unaffected."
-  '#{eval alter-var-root binding gen-class definline read-string
-     load-string load-file load-reader defmacro
-     requiring-resolve resolve ns-resolve find-var intern
-     alter-meta! reset-meta!})
+  "D3 — the analysis-defeater denylist (extensible), mapping each symbol to HOW
+  TO GET PAST IT. Matched by NAME against a bare or `clojure.core/`-qualified
+  symbol (see `banned-sym?`): a same-named var in ANOTHER namespace —
+  `clojure.edn/read-string` (the SAFE reader), a user's `my.app/resolve` — is a
+  different var and passes.
+
+  The three families, and why each is here. The RESOLVERS (requiring-resolve,
+  resolve, ns-resolve, find-var, intern) are here per the reference-carrier
+  decision: mentions of var names in strings or quoted symbols are INERT data,
+  so the gate blocks the moment they could BECOME a var. The EVAL-EQUIVALENTS
+  (eval, read-string, load-string, load-file, load-reader) and `defmacro`
+  defeat static analysis whether written bare, qualified, or nested. The
+  METADATA MUTATORS (alter-meta!, reset-meta!) are here because slopp reads
+  markers (^:export, ^:unsafe, ^:reads, :malli/schema) straight off the STORED
+  node — metadata must be SOURCE-only truth.
+
+  **The teaching lives on the entry, not in the refusal's `cond`.** It was four
+  hand-listed branches with no `:else`, so 10 of these 17 refused with a bare
+  message naming no way forward — measured, and the reason this is a map. A
+  new denylist member cannot now be added without its escape."
+  '{eval              "build DATA and interpret it rather than building code; mark the form ^:unsafe only if you truly own the obligation"
+    read-string       "clojure.edn/read-string is the SAFE reader and a different var — it passes this gate. Use it for data; ^:unsafe is for the rest"
+    load-string       "code enters a store through the edit tools, never through a loader — a loaded form has no delta, no verification and no provenance; ^:unsafe if you truly own the obligation"
+    load-file         "code enters a store through the edit tools, never through a loader — the working tree is FILELESS, so there is no file to load; ^:unsafe if you truly own the obligation"
+    load-reader       "code enters a store through the edit tools, never through a loader; ^:unsafe if you truly own the obligation"
+    defmacro          "user macros are banned (D4) wherever they appear, not just at a form's head; write a function, or a data-driven form the analyzer can read"
+    definline         "an inline definition is a macro in disguise (D4) — write a function; the JVM inlines small ones anyway"
+    gen-class         "slopp does not AOT-compile to named classes — `build {dir main}` emits a GraalVM native-image recipe instead; ^:unsafe if you truly own the obligation"
+    binding           "pass the value as an ARGUMENT — a dynamic rebinding is invisible to the analyzer and to the oracle image, so a form's behaviour stops being a function of its source; ^:unsafe if you truly own the obligation"
+    alter-var-root    "the image IS the oracle, so a var's root must be what its stored form says — redefine through an edit; for a memo use slopp.cache, which keeps :internal checkable; ^:unsafe if you truly own the obligation"
+    requiring-resolve "references resolve through CARRIERS: (store/late-ref 'ns/name) for load-cycle late binding, #'ns/name for in-process references in data; mark the form ^:unsafe only if you truly own the obligation"
+    resolve           "references resolve through CARRIERS: (store/late-ref 'ns/name) for load-cycle late binding, #'ns/name for in-process references in data; mark the form ^:unsafe only if you truly own the obligation"
+    ns-resolve        "references resolve through CARRIERS: (store/late-ref 'ns/name) for load-cycle late binding, #'ns/name for in-process references in data; mark the form ^:unsafe only if you truly own the obligation"
+    find-var          "references resolve through CARRIERS: (store/late-ref 'ns/name) for load-cycle late binding, #'ns/name for in-process references in data; mark the form ^:unsafe only if you truly own the obligation"
+    intern            "a var minted at runtime has no stored form, so nothing can read, rename or verify it — add the form through the edit tools, or carry the reference with (store/late-ref 'ns/name); ^:unsafe if you truly own the obligation"
+    alter-meta!       "metadata is SOURCE-only truth in slopp: markers (^:export, ^:unsafe, ^:reads, :malli/schema) are read straight off the stored form, so write the metadata ON the form itself; runtime metadata mutation is invisible to analysis. with-meta/vary-meta return new values; mark the form ^:unsafe only if you truly own the obligation"
+    reset-meta!       "metadata is SOURCE-only truth in slopp: markers (^:export, ^:unsafe, ^:reads, :malli/schema) are read straight off the stored form, so write the metadata ON the form itself; runtime metadata mutation is invisible to analysis. with-meta/vary-meta return new values; mark the form ^:unsafe only if you truly own the obligation"})
 
 (defn- banned-sym?
   "Is `sym` a D3-denylisted core operator? Matched by NAME against a bare or
@@ -54,14 +71,22 @@
   "Every symbol reachable in the form's sexpr, INCLUDING those inside literal
    metadata maps: `^{:h eval} x` compile-time-evaluates its metadata, so a
    banned symbol there is as live as one in the body — and a `tree-seq` over
-   the sexpr alone never descends into metadata."
-  [node]
-  (let [branch? (fn [x] (or (coll? x)
-                            (and (instance? clojure.lang.IObj x) (meta x))))
-        kids    (fn [x] (concat (when (instance? clojure.lang.IObj x)
-                                  (some-> (meta x) list))
-                                (when (coll? x) (seq x))))]
-    (filter symbol? (tree-seq branch? kids (n/sexpr node)))))
+   the sexpr alone never descends into metadata.
+
+   `prune?` stops the walk at a subtree the caller says is DATA. A tagged
+   literal sexprs as `(read-string \"#…\")`, so scanning inside one reports a
+   denylist hit on `read-string` — the synthetic head of its own expansion,
+   which the author's source does not contain. The gate should no more read
+   inside a tagged literal than inside a string."
+  ([node] (all-symbols node (constantly false)))
+  ([node prune?]
+   (let [branch? (fn [x] (and (not (prune? x))
+                              (or (coll? x)
+                                  (and (instance? clojure.lang.IObj x) (meta x)))))
+         kids    (fn [x] (concat (when (instance? clojure.lang.IObj x)
+                                   (some-> (meta x) list))
+                                 (when (coll? x) (seq x))))]
+     (filter symbol? (tree-seq branch? kids (n/sexpr node))))))
 
 (defn unsafe?
   "Does the top-level form carry `^:unsafe` metadata? The greppable,
@@ -134,27 +159,34 @@
   (when-not (unsafe? node)
     (let [s    (n/sexpr node)
           head (when (seq? s) (first s))
-          ;; a reader conditional sexprs as `(read-string "#?…")`, so it is
-          ;; recognised by SHAPE and by the head's NAME — never by mentioning
-          ;; the banned symbol, which is the one thing this gate must not do.
-          rc?  (fn [x] (and (seq? x) (symbol? (first x))
-                            (= "read-string" (name (first x)))
-                            (= 2 (count x)) (string? (second x))
-                            (str/starts-with? (str/triml (second x)) "#?")))]
+          ;; ANY tagged literal sexprs as `(read-string "#<tag> …")`, so it is
+          ;; recognised by SHAPE and by its TAG — never by mentioning the
+          ;; banned symbol, which is the one thing this gate must not do.
+          ;;
+          ;; This arm previously matched the single tag it was written for
+          ;; (`#?`), so every OTHER tagged literal fell through to the denylist
+          ;; below and was blamed on `read-string`: the synthetic head of its
+          ;; own expansion, and a symbol the author's source does not contain.
+          ;; Measured: `#inst` and `#uuid` — ordinary data literals the store
+          ;; round-trips perfectly — were refused outright.
+          tag-of (fn [x]
+                   (when (and (seq? x) (symbol? (first x))
+                              (= "read-string" (name (first x)))
+                              (= 2 (count x)) (string? (second x)))
+                     (let [t (str/triml (second x))]
+                       (when (str/starts-with? t "#")
+                         (apply str (take-while
+                                     (complement #{\space \tab \newline \return
+                                                   \( \[ \{ \" \^})
+                                     (subs t 1)))))))
+          tagged? (fn [x] (some? (tag-of x)))
+          tags    (into #{} (keep tag-of) (tree-seq coll? seq s))
+          ;; a tagged literal is DATA: the gate reads no more inside one than
+          ;; inside a string. `#?`/`#?@` are the exception, and the reason is
+          ;; that they change what code is READ.
+          hits    (filter banned-sym? (all-symbols node tagged?))]
       (cond
-        ;; ANYWHERE in the form, not only at its head. This arm tested the
-        ;; form's OWN head, so it fired only for a form that IS a reader
-        ;; conditional at top level — a shape nobody writes. Every real one is
-        ;; nested in a body, fell through to the denylist arm below, and got
-        ;; blamed on `read-string`: the synthetic head of its own expansion,
-        ;; and a symbol the author's source does not contain. The splicing
-        ;; form was worse still, reaching the LOCAL-NAME arm and advising a
-        ;; rename of a local that does not exist.
-        ;;
-        ;; A wrong-but-ACTIONABLE message costs more than an unhelpful one —
-        ;; it reads as a finding, so the next three calls go into disproving
-        ;; it. Measured: three, by the reader who hit this.
-        (some rc? (tree-seq coll? seq s))
+        (some #{"?" "?@"} tags)
         (str "dialect (D3): reader conditionals (#?/#?@) are not allowed in"
              " stored code — slopp is single-dialect, so a form must read the"
              " same everywhere. Write the one branch this store targets.")
@@ -162,35 +194,19 @@
         (contains? banned-heads head)
         (str "dialect (D4): user macros are banned — " head)
 
-        (some banned-sym? (all-symbols node))
-        (let [hit (first (filter banned-sym? (all-symbols node)))]
+        (seq hits)
+        (let [hit (first hits)]
           (str "dialect (D3): denylisted symbol used — " hit
-               (cond
-                 (= "defmacro" (name hit))
-                 (str " — user macros are banned (D4) wherever they appear, not"
-                      " just at a form's head; write a function, or a"
-                      " data-driven form the analyzer can read")
-
-                 (local-name? s hit)
-                 (str " — you are using it as a LOCAL name, which cannot invoke"
+               " — "
+               (if (and (local-name? s hit) (not= "defmacro" (name hit)))
+                 ;; positional, so it cannot live on the denylist entry: the
+                 ;; symbol is fine, its USE as a binding name is not
+                 (str "you are using it as a LOCAL name, which cannot invoke"
                       " clojure.core/" (name hit) " at all (locals shadow); the"
                       " gate matches symbol NAMES regardless of position, so"
                       " RENAME the local (binding → bnd, eval → ev) — ^:unsafe"
                       " is the wrong tool here")
-
-                 (#{"requiring-resolve" "resolve" "ns-resolve" "find-var"}
-                  (name hit))
-                 (str " — references resolve through CARRIERS:"
-                      " (store/late-ref 'ns/name) for load-cycle late binding,"
-                      " #'ns/name for in-process references in data; mark the"
-                      " form ^:unsafe only if you truly own the obligation")
-                 (#{"alter-meta!" "reset-meta!"} (name hit))
-                 (str " — metadata is SOURCE-only truth in slopp: markers"
-                      " (^:export, ^:unsafe, ^:reads, :malli/schema) are read"
-                      " straight off the stored form, so write the metadata ON"
-                      " the form itself; runtime metadata mutation is invisible"
-                      " to analysis. with-meta/vary-meta return new values; mark"
-                      " the form ^:unsafe only if you truly own the obligation"))))
+                 (get banned-syms (symbol (name hit))))))
         :else nil))))
 
 ^:unsafe (def ^:private observe-banned

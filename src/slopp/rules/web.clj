@@ -20,7 +20,7 @@
   keep those apart, and each distinction was added because collapsing it made a
   report state something false. Prefer adding a category over widening one."
   (:require [slopp.project.capabilities :as capabilities]
-            [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.edit.web :as web] [rewrite-clj.parser :as p]))
+            [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.edit.web :as web] [rewrite-clj.parser :as p] [slopp.index.refs :as refs]))
 
 (defn endpoints
   "Every declared endpoint in the store — a `:web/path` form's route row:
@@ -619,3 +619,280 @@
                          {:form (symbol (str own) (str (:name e)))
                           :cljs cljs})))))
                changed))))
+
+(defn- schema-prose?
+  "Does a malli entry's property map carry prose?
+
+  BOTH spellings count. `:doc` is preferred and is what the teach string asks
+  for; `:description` is malli's JSON-Schema spelling, and an imported schema
+  that documented itself in that dialect must not fail a check for it.
+
+  A `(str …)` form counts as much as a literal. This rule reads SOURCE, so a
+  computed doc arrives as a LIST rather than a string — and `(str …)` is not an
+  edge case here, it is the shape the teach asks for: unlike a docstring, a
+  schema doc is a VALUE, so a multi-line literal ships its own source
+  indentation to every consumer that renders it. Anything else non-string stays
+  flagged, which is the safe direction for an advisory: a missed field costs a
+  nudge, a wrong claim of prose costs the reader's trust in every other row."
+  [props]
+  (boolean (and (map? props)
+                (some (fn [v] (or (string? v)
+                                  (and (seq? v) (= 'str (first v)) (seq (rest v)))))
+                      [(:doc props) (:description props)]))))
+
+(defn- schema-resolver
+  "`(fn [from sym] -> [from' schema])` — the schema a symbol NAMES, resolved
+  through THE reference graph.
+
+  `from` is the `[ns name]` of the form the symbol was READ from, and the
+  answer carries the resolved one, so a nested reference resolves from where
+  it is written rather than from where the walk started.
+
+  Resolution has to be real rather than by simple name: all ten of slopp's own
+  endpoints name their schema through an ALIAS, and `timeline`, `module-index`,
+  `form-view`, `change-view`, `ns-outline` and `module-detail` each exist in
+  two or three namespaces of this store — so a name-matching resolver would
+  skip most of the population it was written for and report clean.
+
+  nil when the symbol resolves to nothing, to more than one thing, or to a
+  form that is not a `def`. Those are the cases where a finding would be a
+  guess, and this rule is advisory: a missed field costs a nudge, a wrong one
+  costs trust in every other row."
+  [store]
+  (let [edges (group-by (juxt :from-ns :from-var) (refs/refs store))]
+    (fn [from sym]
+      (let [nm   (symbol (name sym))
+            hits (distinct (for [r (get edges from) :when (= nm (:to-name r))]
+                             [(:to-ns r) (:to-name r)]))]
+        (when (= 1 (count hits))
+          (let [[tns tnm] (first hits)
+                s (store/named-sexpr store tns tnm)]
+            (when (and (seq? s) (= 'def (first s)))
+              [[tns tnm] (last s)])))))))
+
+(defn- undocumented-paths
+  "Every `:map` entry reachable from `schema` whose properties carry no prose,
+  as a vector PATH — `[:rows :loc]` for a field one level inside a sequential.
+
+  `seen` holds the schemas already entered, so mutually-referencing schemas
+  terminate on the relationship rather than on a depth guess.
+
+  Nesting is followed through ANY vector rather than through an enumerated set
+  of collection schemas: `:sequential`, `:maybe`, `:map-of`, `:or` and `:tuple`
+  all carry their children positionally, so walking every vector covers the one
+  nobody listed. The `(remove map? …)` drops a schema-level property map, which
+  is the only non-entry a `:map` can hold."
+  [resolve-sym from schema path seen]
+  (cond
+    (symbol? schema)
+    (when-let [[from' s'] (resolve-sym from schema)]
+      (when-not (contains? seen [from' s'])
+        (undocumented-paths resolve-sym from' s' path (conj seen [from' s']))))
+
+    (and (vector? schema) (= :map (first schema)))
+    (mapcat (fn [entry]
+              (when (vector? entry)
+                (let [props (when (map? (second entry)) (second entry))
+                      path' (conj path (first entry))]
+                  (concat (when-not (schema-prose? props) [path'])
+                          (undocumented-paths resolve-sym from (last entry) path' seen)))))
+            (remove map? (rest schema)))
+
+    (vector? schema)
+    (mapcat #(undocumented-paths resolve-sym from % path seen) (rest schema))
+
+    :else nil))
+
+(defn undocumented-contract-fields
+  "Every field of every declared `:web/request` / `:web/response` schema in
+  `store` that says nothing about what it IS — `[{:endpoint :schema :fields}]`,
+  one row per endpoint per schema key, `:fields` being the entry PATHS.
+
+  A type is not a contract term. `:total :int` does not say that the number
+  counts hits BEFORE the limit is applied, and on this store that sentence
+  exists — in the schema def's docstring, which is not a value and does not
+  travel. Malli property maps are open and survive the wire untouched, so the
+  prose belongs on the entry, where a consumer generating a client can read it.
+
+  A pure function of the store value, and whole-store by construction: the
+  endpoints this fires on are stable and published, which is exactly the
+  population an episode-scoped check can never see."
+  [store]
+  (let [resolve-sym (schema-resolver store)]
+    (vec
+     (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
+           k     [:web/request :web/response]
+           :let  [schema (get meta k)
+                  from   [ns name]
+                  fields (when schema
+                           (vec (distinct (undocumented-paths resolve-sym from schema [] #{}))))]
+           :when (seq fields)]
+       {:endpoint (symbol (str ns) (str name)) :schema k :fields fields}))))
+
+(defn web-undocumented-contract-check
+  "Advisory: a published endpoint's request/response schema has fields that
+   say nothing about what they ARE. A type is a shape, not a term of the
+   contract — nothing in `:total :int` tells a caller the number counts hits
+   BEFORE the limit is applied, and a consumer generating a client from the
+   document has no other place to learn it. Malli entry properties are open
+   and already survive the wire, so this asks for prose rather than a feature.
+
+   Advisory on purpose: an undocumented field is a legitimate state for the
+   commit between declaring a schema and describing it, and red would make the
+   rule something to route around. Whole-store on purpose: a published contract
+   is stable, and a check whose population is the episode's CHANGED forms
+   cannot see something that has stopped changing."
+  [_session store _changed]
+  (for [{:keys [endpoint schema fields]} (undocumented-contract-fields store)
+        :let [shown (take 6 fields)
+              path-str (fn [p] (str/join " → " (map str p)))]]
+    {:endpoint endpoint
+     :schema schema
+     :fields fields
+     :teach (str endpoint "'s " schema " leaves " (count fields)
+                 (if (= 1 (count fields)) " field" " fields")
+                 " undocumented: " (str/join ", " (map path-str shown))
+                 (when (> (count fields) (count shown))
+                   (str " (+" (- (count fields) (count shown)) " more)"))
+                 ". A type says what SHAPE a value has, never what it MEANS, and"
+                 " the document is all a consumer generating a client can read."
+                 " Put the prose on the entry, where malli carries it over the"
+                 " wire unchanged: [" (pr-str (last (first shown)))
+                 " {:doc \"what it is\"} <type>]. :description is accepted too —"
+                 " it is malli's JSON-Schema spelling, so an imported schema is"
+                 " not penalised for documenting itself in that dialect."
+                 " Keep it to one line or build it with (str …): unlike a"
+                 " docstring this is a VALUE, so a multi-line literal ships its"
+                 " own source indentation to every consumer that renders it.")}))
+
+(defn- unconstrained
+  "What `schema` DECLARES when it declares nothing — `:any`, `:map`, or nil.
+
+  `:any` accepts anything and says so. A `:map` with no entries accepts any map
+  at all, and looks like a type while doing it — which is the whole cost: a
+  generated client validates every response against the published schema, so a
+  field whose shape can change without failing validation has the mechanism
+  that exists to catch drift pointed at it and switched off.
+
+  `[:map {:closed true}]` counts too: the properties are not entries, and a
+  closed map with nothing in it constrains no field."
+  [schema]
+  (cond
+    (= :any schema) :any
+    (= :map schema) :map
+    (and (vector? schema) (= :map (first schema))
+         (empty? (remove map? (rest schema))))
+    :map
+    :else nil))
+
+(defn- unconstrained-paths
+  "Every position reachable from `schema` that constrains nothing, as
+  `{:path [...] :declares :map|:any}`.
+
+  Same traversal and same resolver as [[undocumented-paths]] — deliberately,
+  because the two rules must ask their different questions of the SAME
+  population. A field one of them can see and the other cannot would be a gap
+  neither reports.
+
+  An empty `:path` means the schema ITSELF is unconstrained: `:web/response :map`
+  publishes an endpoint that promises a map and nothing else."
+  [resolve-sym from schema path seen]
+  (if-let [k (unconstrained schema)]
+    [{:path path :declares k}]
+    (cond
+      (symbol? schema)
+      (when-let [[from' s'] (resolve-sym from schema)]
+        (when-not (contains? seen [from' s'])
+          (unconstrained-paths resolve-sym from' s' path (conj seen [from' s']))))
+
+      (and (vector? schema) (= :map (first schema)))
+      (mapcat (fn [entry]
+                (when (vector? entry)
+                  (unconstrained-paths resolve-sym from (last entry)
+                                       (conj path (first entry)) seen)))
+              (remove map? (rest schema)))
+
+      (vector? schema)
+      (mapcat #(unconstrained-paths resolve-sym from % path seen) (rest schema))
+
+      :else nil)))
+
+(defn unconstrained-contract-fields
+  "Every position in a declared `:web/request` / `:web/response` schema that
+  constrains NOTHING — `[{:endpoint :schema :fields}]`, each field
+  `{:path [...] :declares :map|:any}`.
+
+  The prior question to [[undocumented-contract-fields]]: that one asks whether
+  a declared field says what it MEANS, this asks whether it is declared at all.
+  A field is not made real by prose — `[:sequential :map]` with a lovely `:doc`
+  on it still admits any map, and the generated client still validates every
+  response against it and finds nothing.
+
+  Reported from a real drift: a `:diff` that moved from `[String]` to
+  `[[String String]]` passed validation on every call for weeks, because the
+  schema that would have caught it said `:map`.
+
+  Pure, and whole-store for the same reason its sibling is: a published
+  contract is stable, so no episode changes it and nothing episode-scoped can
+  ever look at it again."
+  [store]
+  (let [resolve-sym (schema-resolver store)]
+    (vec
+     (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
+           k     [:web/request :web/response]
+           :let  [schema (get meta k)
+                  fields (when schema
+                           (vec (distinct (unconstrained-paths resolve-sym [ns name]
+                                                               schema [] #{}))))]
+           :when (seq fields)]
+       {:endpoint (symbol (str ns) (str name)) :schema k :fields fields}))))
+
+(defn web-unconstrained-contract-check
+  "Advisory: a published endpoint declares a field that constrains nothing —
+   a bare `:map`, which accepts any map, or `:any`, which accepts anything.
+
+   The cost is not vagueness, it is a SILENT mechanism. A generated client
+   validates every response against the published schema, so a field whose
+   shape can change without failing validation has the one thing built to
+   catch drift pointed at it and switched off. Measured in the wild: a `:diff`
+   moved from `[String]` to `[[String String]]` and passed validation on every
+   call for weeks.
+
+   `:any` and a bare `:map` are both reported and are not the same offence.
+   `:any` ADMITS it is saying nothing; a bare `:map` looks like a type while
+   saying the same thing, and that is the one a reader trusts by mistake.
+
+   Advisory, because an unspecified field is a legitimate state while a shape
+   is still settling. Whole-store, because a published contract is stable and
+   nothing episode-scoped will look at it again."
+  [_session store _changed]
+  (for [{:keys [endpoint schema fields]} (unconstrained-contract-fields store)
+        :let [maps  (filter #(= :map (:declares %)) fields)
+              anys  (filter #(= :any (:declares %)) fields)
+              where (fn [f] (if (seq (:path f))
+                              (str/join " → " (map str (:path f)))
+                              "the whole schema"))]]
+    {:endpoint endpoint
+     :schema schema
+     :fields fields
+     :teach (str endpoint "'s " schema " declares "
+                 (count fields) (if (= 1 (count fields))
+                                  " field that constrains nothing"
+                                  " fields that constrain nothing")
+                 (when (seq maps)
+                   (str " — a bare :map at " (str/join ", " (map where maps))
+                        ", which accepts ANY map"))
+                 (when (seq anys)
+                   (str (if (seq maps) "; and :any at " " — :any at ")
+                        (str/join ", " (map where anys))))
+                 ". The generated client validates every response against this"
+                 " schema, so a shape that changes underneath one of these"
+                 " passes forever — the mechanism that exists to catch drift is"
+                 " pointed at the field and switched off."
+                 (when (seq maps)
+                   (str " A bare :map is the misleading one: it looks like a"
+                        " type and admits everything, where :any at least says"
+                        " so."))
+                 " Name the entries — [:map [:kind :string] [:text :string]] —"
+                 " or, if the shape genuinely is not settled, say :any and let"
+                 " the document be honest about it.")}))

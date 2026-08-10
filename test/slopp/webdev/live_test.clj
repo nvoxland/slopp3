@@ -50,7 +50,7 @@
     (testing "the plan says it is dev, so nothing reads it as the shipped one"
       ;; the dev server and the built app answer the same routes from
       ;; different stores at different grains — a plan that does not say
-      ;; which it is becomes a proxy for the other (Core 9)
+      ;; which it is becomes a proxy for the other
       (is (= :dev (:mode (live/serve-plan on "/tmp/shop"))))) ))
 
 (deftest the-app-image-loads-the-web-surface-and-what-it-reaches
@@ -410,7 +410,8 @@
               "one code delta landed since the image was built")))
       (finally (live/stop! r)))))
 
-(deftest the-generated-serve-call-accounts-for-every-option-it-could-carry
+(deftest ^{:correspondence "the options webdev.live/serve-code GENERATES vs the :web/keys arglists of web/serve! + web/context (the destructuring IS the implementation, and the malli schemas drift from it) — plus the only exemption cross-check in the store: nothing may be both generated and declared-dropped"}
+  the-generated-serve-call-accounts-for-every-option-it-could-carry
   ;; The generalisation of `catalog-covers-every-registered-rule`, which is
   ;; the one completeness test this codebase had and the only reason the new
   ;; write gate could not ship uncataloged.

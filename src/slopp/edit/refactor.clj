@@ -404,35 +404,96 @@
 
               :else {:zloc (first usable)})))))))
 
+(defn- answers-to
+  "The spelling `x` ANSWERS TO when a caller addresses it.
+
+  `where` names a row; it does not assert a value. The wire it arrives over
+  has no keyword, so `:stored-name`, `'stored-name`, `\"stored-name\"` and
+  `\":stored-name\"` are four spellings of one name and all four must reach
+  the same row. Namespaces survive — `:web/spa` answers to `\"web/spa\"`."
+  [x]
+  (let [s (if (and (seq? x) (= 'quote (first x)))
+            (str (second x))
+            (str x))]
+    (if (= \: (first s)) (subs s 1) s)))
+
+(defn- up-to
+  "Up to `n` distinct `xs`, printed, with the true count when the list is cut."
+  [n xs]
+  (let [ds    (distinct xs)
+        total (count ds)]
+    (str (clojure.string/join ", " (map pr-str (take n ds)))
+         (when (< n total) (str ", … (" total " total)")))))
+
+(defn- carries-entries?
+  "Does map `m` carry every entry of `where`, compared by what each side
+  ANSWERS TO rather than by identity? Keys are matched the same way as
+  values: the wire keywordizes every key it carries, so a map stored with
+  string keys would otherwise be unaddressable."
+  [m where]
+  (let [idx (into {} (map (fn [[k v]] [(answers-to k) (answers-to v)])) m)]
+    (every? (fn [[k v]] (= (answers-to v) (get idx (answers-to k) ::absent)))
+            where)))
+
+(defn- where-diagnosis
+  "What `maps` say about the keys of `where` — the values each key DOES take.
+
+  A refusal that echoes the caller's own input reads as \"no such row\" when
+  it means \"wrong value\", so the answer names what is there instead. When a
+  key is on no map at all, the keys that ARE there is the useful answer."
+  [maps where]
+  (if (empty? maps)
+    "this form contains no maps"
+    (clojure.string/join
+     "; "
+     (for [[k _] where
+           :let [ak (answers-to k)
+                 vs (for [m maps
+                          [mk mv] m
+                          :when (= ak (answers-to mk))]
+                      mv)]]
+       (if (seq vs)
+         (str (pr-str k) " takes " (up-to 12 vs))
+         (str "no map here carries " (pr-str k) "; keys seen: "
+              (up-to 12 (mapcat keys maps))))))))
+
 (defn ^:export keyed-replace-plan
   "Plan replacing the UNIQUE map inside `form-name` that contains every
   entry of `where` (e.g. {:name \"query_history\"} addresses one tool
   descriptor in a registry vector) with `new-src` — first-person friction:
   registry-style edits shouldn't need the exact current text, just a key.
+
+  `where` ADDRESSES a row; it does not assert a value. Both sides are matched
+  by the spelling they answer to, so `\"stored-name\"` reaches a row stored as
+  `:stored-name` — registry rows are keyed by keywords and the wire `where`
+  arrives over has none. When nothing matches, the answer names the values
+  that key DOES take rather than restating what was asked for.
+
   Returns {:new-form-src s} or {:error msg}."
   [store ns-sym form-name where new-src]
   (try
     (if-let [e (store/form-named store ns-sym form-name)]
       (let [form-src (n/string (:node e))
-            matches  (->> (iterate z/next (z/of-string form-src
+            maps     (->> (iterate z/next (z/of-string form-src
                                                        {:track-position? true}))
                           (take-while (complement z/end?))
                           (filter #(= :map (z/tag %)))
-                          (filter #(let [s (try (z/sexpr %) (catch Exception _ nil))]
-                                     (and (map? s)
-                                          (every? (fn [[k v]] (= v (get s k)))
-                                                  where))))
-                          vec)]
+                          (keep (fn [zloc]
+                                  (let [s (try (z/sexpr zloc) (catch Exception _ nil))]
+                                    (when (map? s) [zloc s]))))
+                          vec)
+            matches  (filterv #(carries-entries? (second %) where) maps)]
         (cond
           (empty? matches)
-          {:error (str "no map containing " (pr-str where) " in " form-name)}
+          {:error (str "no map containing " (pr-str where) " in " form-name
+                       " — " (where-diagnosis (mapv second maps) where))}
 
           (< 1 (count matches))
           {:error (str (count matches) " maps contain " (pr-str where) " in "
                        form-name " — add entries to `where` until unique")}
 
           :else
-          (let [m       (first matches)
+          (let [m       (ffirst matches)
                 [r c]   (z/position m)
                 [er ec] (node-span (z/position m) (n/string (z/node m)))]
             {:new-form-src (replace-span form-src [r c] [er ec] new-src)})))

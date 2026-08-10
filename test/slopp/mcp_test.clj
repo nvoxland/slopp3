@@ -1122,7 +1122,9 @@
     (testing "a scalar has no items to drop — caller falls back"
       (is (nil? (#'mcp/fit-payload 42 100))))))
 
-(deftest ^:external slopp-prose-never-names-a-tool-that-does-not-exist
+(deftest ^:external
+  ^{:correspondence "tool names spelled in slopp's own PROSE vs mcp.tools/tools — the side that cannot be derived, so it is checked forever; this is the guard that spent its whole life scanning an empty store"}
+  slopp-prose-never-names-a-tool-that-does-not-exist
   ;; The self-description half of P1. Gates see var references; they do not see
   ;; a TOOL NAME in a docstring, a tool description, or an error message — so a
   ;; consolidated or removed tool leaves its name behind in the very surfaces
@@ -1574,7 +1576,8 @@
         (ops/close! sess)))))
 
 (deftest targets-accepts-the-shapes-a-reader-would-try
-  ;; Core 6, the reporting half: a refusal must speak the AUTHOR's vocabulary.
+  ;; The reporting half of a boundary crossing: a refusal must speak the
+  ;; AUTHOR's vocabulary.
   ;; `query_source {targets}` accepted only [{:ns … :name …}] and died on
   ;; ["ns/name"] — the shape the tool index's own `{targets}` shorthand
   ;; suggests — with `no conversion to symbol`, naming an internal call the
@@ -1731,7 +1734,9 @@
         (is (contains? tools/read-only-tools "store_doctor")))
       (finally (ops/close! sess)))))
 
-(deftest ^:external no-tool-keeps-its-own-result-key-allowlist
+(deftest ^:external
+  ^{:correspondence "call-tool!'s result-key selection vs mcp.tools/wire-keys — a literal select-keys list is a fresh chance to drop a key silently; four keys were built, tested and correct one layer down while the agent saw the old behaviour"}
+  no-tool-keeps-its-own-result-key-allowlist
   ;; Four keys have been built, tested and correct one layer down while the
   ;; agent saw the old behaviour — `:dry-run`'s payload, `:drift`,
   ;; `:external-pending`, and a `:fix` hint. Each looked like a missing
@@ -1948,7 +1953,9 @@
                {:serving? false :stopped true
                 :reason "web.enabled is false for this store — the managed app server was stopped"})))))
 
-(deftest ^:external every-advertised-tool-has-a-handler-that-names-it
+(deftest ^:external
+  ^{:correspondence "mcp.tools/tools (advertised at initialize) vs the dispatch keys in slopp.mcp — related by nothing but a string literal; an advertised tool with no handler answers \"unknown tool: X\" naming X itself"}
+  every-advertised-tool-has-a-handler-that-names-it
   ;; The other half of `slopp-prose-never-names-a-tool-that-does-not-exist`.
   ;; That guard catches prose naming a tool that is not on the wire; this one
   ;; catches the reverse — a tool ADVERTISED in `tools/tools` with nothing in
@@ -1987,3 +1994,93 @@
         (str "tools/tools advertises " (count orphans) " tool(s) slopp.mcp"
              " does not dispatch — calling one returns \"unknown tool\" naming"
              " the tool itself: " (pr-str orphans)))))
+
+(deftest a-tool-declares-whether-it-writes-where-it-is-DEFINED
+  ;; `read-only-tools` was a hand-kept set of 32 name strings, three hundred
+  ;; lines from the descriptors it classified. Measured before the change: 90
+  ;; advertised, 32 read-only, and ZERO stale entries — the list happened to be
+  ;; correct, and nothing made it stay that way.
+  ;;
+  ;; The cost was the second write. Adding a read-only tool meant naming it in
+  ;; its group AND in the set, and forgetting the second is the quietest
+  ;; failure in the system: the tool works, no test goes red, and the client
+  ;; prompts for permission forever — which is indistinguishable from normal
+  ;; behaviour. Guarded, before this, by one test per tool: 5 tests for 35
+  ;; members.
+  ;;
+  ;; The group already carries the fact. Measured: orientation 20/20 read-only,
+  ;; history 3/3, edit 0/23, and NINE exceptions across the other three. So the
+  ;; classification lives where the tool is defined, and the derived set
+  ;; replaces the list.
+  (testing "a group resolves its default onto every entry"
+    (is (= [true true]   (map :read-only (tools/classify [{:name "a"} {:name "b"}] :read-only true))))
+    (is (= [false false] (map :read-only (tools/classify [{:name "a"} {:name "b"}] :read-only false)))))
+  (testing "an entry that states its own classification overrides the group default"
+    ;; the nine exceptions — help, the file/deps reads, store_health/doctor,
+    ;; query_commits/query_git — sit in write-shaped groups
+    (is (= [true]  (map :read-only (tools/classify [{:name "help" :read-only true}] :read-only false))))
+    (is (= [false] (map :read-only (tools/classify [{:name "x" :read-only false}] :read-only true)))))
+  (testing "read-only-tools is DERIVED, so it cannot fall behind the descriptors"
+    (is (= tools/read-only-tools
+           (into #{} (comp (filter :read-only) (map :name)) @#'tools/classified))))
+  (testing "every advertised tool carries a resolved boolean — none is unclassified"
+    (is (every? #(boolean? (:read-only %)) @#'tools/classified))
+    (is (= (count tools/tools) (count @#'tools/classified))))
+  (testing "and the marker NEVER reaches the wire — tools/tools is serialized as-is"
+    (is (not-any? #(contains? % :read-only) tools/tools)
+        "an MCP descriptor must carry no key the protocol does not define")
+    (is (some #(= {:readOnlyHint true} (:annotations %)) tools/tools)
+        "the annotation the marker exists to produce is still set"))
+  (testing "the classification itself did not change — this is a refactor"
+    ;; positive control on the refactor: same answer, different home
+    (is (= 32 (count tools/read-only-tools)))
+    (is (contains? tools/read-only-tools "query_store"))
+    (is (contains? tools/read-only-tools "store_doctor"))
+    (is (not (contains? tools/read-only-tools "ui_serve")))
+    (is (not (contains? tools/read-only-tools "edit_add_form")))))
+
+(deftest a-tool-declares-whether-it-needs-the-image-where-it-is-DEFINED
+  ;; `image-free-tools` is the SECOND of the four registries the tool surface
+  ;; was: 25 name strings sitting three hundred lines from the descriptors they
+  ;; classify, with nothing checking the two agree. `read-only-tools` was the
+  ;; first and collapsed the same way.
+  ;;
+  ;; Its failure modes are ASYMMETRIC, and its own docstring says so: a tool
+  ;; wrongly EXCLUDED merely waits for the async image boot — silent and slow —
+  ;; while one wrongly INCLUDED touches a not-yet-live image. So the dangerous
+  ;; direction is loud and the quiet direction is the one a second write is
+  ;; likely to forget, which is exactly the read-only shape one notch milder.
+  ;;
+  ;; Measured: the GROUP carries this fact too — orientation 15/20 image-free,
+  ;; history 3/3, edit 0/23 — with TWELVE exceptions. The five in orientation
+  ;; are the oracle tools the docstring already names, because they eval IN the
+  ;; image.
+  ;;
+  ;; The two facts share defaults per group and diverge per entry (`query_eval`
+  ;; is read-only and NOT image-free), so they stay two dials. Collapsing them
+  ;; into one because today's defaults coincide would be the same false economy
+  ;; this exercise exists to undo.
+  (testing "a group resolves its default onto every entry, per FACT"
+    (is (= [true true]   (map :image-free (tools/classify [{:name "a"} {:name "b"}] :image-free true))))
+    (is (= [false false] (map :image-free (tools/classify [{:name "a"} {:name "b"}] :image-free false))))
+    (is (= [true] (map :read-only (tools/classify [{:name "a"}] :read-only true)))
+        "the same classifier carries the other fact — one mechanism, not two"))
+  (testing "an entry that states its own classification overrides the group"
+    (is (= [false] (map :image-free (tools/classify [{:name "query_eval" :image-free false}] :image-free true)))))
+  (testing "image-free-tools is DERIVED, so it cannot fall behind the descriptors"
+    (is (= tools/image-free-tools
+           (into #{} (comp (filter :image-free) (map :name)) @#'tools/classified))))
+  (testing "every advertised tool carries a resolved boolean for BOTH facts"
+    (is (every? #(boolean? (:image-free %)) @#'tools/classified))
+    (is (every? #(boolean? (:read-only %))  @#'tools/classified)))
+  (testing "and neither marker reaches the wire"
+    (is (not-any? #(contains? % :image-free) tools/tools))
+    (is (not-any? #(contains? % :read-only) tools/tools)))
+  (testing "the classification did not change — this is a refactor"
+    ;; positive control: same answer, different home
+    (is (= 25 (count tools/image-free-tools)))
+    (is (contains? tools/image-free-tools "session_brief"))
+    (is (contains? tools/image-free-tools "query_git") "a sync-group exception")
+    (is (not (contains? tools/image-free-tools "query_eval"))
+        "the oracle tools eval IN the image, which is the whole distinction")
+    (is (not (contains? tools/image-free-tools "edit_add_form")))))

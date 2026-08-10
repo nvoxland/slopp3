@@ -50,10 +50,17 @@
                             :let [ns-sym (symbol (namespace form))]]
                         (cond-> {:form    (str form)
                                  :form-id form-id
-                                 :status  status
+                                 ;; keyword VALUES become strings here, for the same
+                                 ;; reason `:form` is `(str form)`: a key round-trips
+                                 ;; symmetrically through JSON and a value does not.
+                                 ;; `diff-lines` keeps its keywords — it also feeds
+                                 ;; the agent-facing text renderer, and shaping for
+                                 ;; the wire is this layer's job, not its producer's.
+                                 :status  (name status)
                                  :ns      (str ns-sym)
                                  :module  (modules/module-of ns-sym)
-                                 :diff    (vec (history/diff-lines was now))
+                                 :diff    (mapv (fn [[k text]] [(name k) text])
+                                                (history/diff-lines was now))
                                  :callers (count (distinct (map (juxt :from-ns :from-var)
                                                                 (get by-target form []))))}
                           (get prompts form-id) (assoc :why (get prompts form-id))))]
@@ -123,7 +130,12 @@
                            (let [prev (:commit (nth rows (inc i) nil))]
                              (cond-> (-> (select-keys row [:commit :description :more-lines
                                                            :status :at :agent :sha])
-                                         (update :description snip))
+                                         (update :description snip)
+                                         ;; a keyword VALUE reaches a consumer as a
+                                         ;; string and nothing converts it back — the
+                                         ;; same reason `:form` is `(str form)` and not
+                                         ;; a symbol. Keys are symmetric; values are not.
+                                         (update :status #(some-> % name)))
                                prev (assoc :range (str prev ".." (:commit row))))))
                          rows))
         ds         (store/deltas st)

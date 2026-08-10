@@ -264,6 +264,68 @@ client-deps (merge (:client-deps st) (:client provided))
                                      " — the native build may need a tracing-agent run")
                                 :metadata-missing warns))))))))))
 
+(defn ^:export observation-of
+  "An external run's `result` as an OBSERVATION: `{:tier :status :ran
+  :failures}`, where `:failures` is a list of `{:test <symbol>}`.
+
+  **Qualification is the load-bearing step.** clojure.test prints
+  `FAIL in (name)` and [[slopp.ops.testrun/parse-test-failures]] carries that
+  BARE name, while a reader of red evidence — `rules/assertions-never-red-check`
+  — compares `(str 'ns/name)`. An unqualified name matches nothing, so this
+  resolves it against `store` and keeps the bare symbol where the answer is
+  ABSENT or AMBIGUOUS. Bare is the safe direction: an unmatched name makes the
+  advisory fire again, never closes it silently.
+
+  `:failures` is `[]` rather than absent on a green run, so a reader never has
+  to tell 'no failures' from 'no answer'. Pure, and separate from
+  [[record-run-observation!]] for a reason: a GREEN run records `[]` and
+  exercises none of the qualification, so this is where the evidence that it
+  works has to come from."
+  [store result]
+  (let [qualify (fn [nm]
+                  (let [s (str nm)]
+                    (if (str/includes? s "/")
+                      (symbol s)
+                      (let [hits (distinct
+                                  (for [n (keys (:namespaces store))
+                                        f (store/forms store n)
+                                        :when (= s (str (:name f)))]
+                                    (symbol (str n) s)))]
+                        (if (= 1 (count hits)) (first hits) (symbol s))))))]
+    {:tier     :external
+     :status   (:status result)
+     :ran      (:ran result)
+     ;; DISTINCT: clojure.test emits a FAIL block per failing ASSERTION, so one
+     ;; red test arrives three times. The observation records which tests went
+     ;; red, not how many of their assertions did — measured on a real red run
+     :failures (vec (distinct (for [f (:failing result) :when (:test f)]
+                                {:test (qualify (:test f))})))}))
+
+(defn- record-run-observation!
+  "Append the run's result as an `:observe` delta — *these tests ran, in this
+  tier, at this content, and this is what happened*.
+
+  This tier is the ONLY place an `^:external` test ever executes, so it is the
+  only place their red evidence can come from; before this it appended nothing
+  and `:assertions-never-red` was consequently unclearable for one, which is
+  filed three times from three directions.
+
+  The closure key comes from [[slopp.ops.engine/closure-hashes]] rather than
+  from anything local, so the key WRITTEN here and the key a later reader
+  recomputes are one derivation — a second one would agree until the day it
+  did not, and a verdict cache is exactly where that costs a false green.
+
+  The shell: [[observation-of]] and `closure-hashes` are the transforms, and
+  the parts that can be WRONG are all in there."
+  [session scope result]
+  (let [st (:store @session)]
+    (session/commit-appended!
+     session
+     #(store/record-observation % scope (observation-of st result)
+                                (session/closure-hashes st scope))
+     []))
+  result)
+
 (defn ^:export external-test-run!
   "Run the STORE's test suite in a FRESH EXTERNAL JVM: materialize the store
   (build!) into a throwaway dir and shell `clojure -M<alias>` there — the
@@ -460,6 +522,14 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; here is missed forever. nil when the build carried no runner, so
                 ;; untraced stores behave exactly as before.
                 (session/absorb-trace! session (testrun/read-traces dir))
+                ;; and the run itself is EVIDENCE — the same argument as the
+                ;; trace one line up: this is the only tier that ever runs an
+                ;; ^:external test, so a red missed here is missed forever, and
+                ;; `:assertions-never-red` had nothing to read for one
+                (record-run-observation!
+                 session
+                 (or (seq full-set) (when ns [(symbol (str ns))]) [])
+                 result)
                 (stamp result))))
           (finally
             ;; a full materialized project per run; nothing else ever deletes it
@@ -1097,7 +1167,8 @@ client-deps (merge (:client-deps st) (:client provided))
                                                  " re-serve — until then the browser"
                                                  " is showing an older store than"
                                                  " this verdict describes"))))
-      ;; Core 6: everything above is an edge INSIDE the store. A green here
+      ;; Verification stops at the boundary: everything above is an edge INSIDE
+      ;; the store. A green here
       ;; says nothing about what LEAVES it, and reads as though it did — so
       ;; name the exits nothing checks, right where the green is about to be
       ;; believed. Advisory: these are standing documented holes, not

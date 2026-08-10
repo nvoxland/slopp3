@@ -120,7 +120,7 @@
           (finally (ops/close! s2)))))))
 
 (deftest ^:external declaring-a-tier-verifies-the-code-already-there
-  ;; The gap recorded in ideas/functional-core-gate.md: `:pure` gates only NEW
+  ;; The gap this pins: `:pure` gates only NEW
   ;; writes, so declaring it over an existing module produced a claim nothing
   ;; had verified — a marker that lies. A declaration is an assertion about the
   ;; code, so it has to be checked against the code.

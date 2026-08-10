@@ -2,7 +2,7 @@
   "Seed the eval-round-2 template: a known-green ~16-form tasker app, as (a) a
   slopp store and (b) a conventional files project (via build!). Fresh eval
   agents then get IDENTICAL starting codebases for the modify-and-extend task.
-  Run: clojure -M -m slopp.lab.evalseed <template-dir>   (see .context/dogfooding.md)"
+  Run: clojure -M -m slopp.lab.evalseed <template-dir>"
   (:require [slopp.ops :as ops] [clojure.java.io :as io] [clojure.string :as str] [slopp.ops.external :as external]))
 
 (def model-src

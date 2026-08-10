@@ -51,7 +51,7 @@
    "app"   "any project, whatever kind of application it is"
    "web"   "the web app type — present in every store, inert until web.enabled"})
 
-(def registry
+(def ^:export registry
   "The capability registry: one entry per `capabilities` config key —
   `{:key :type :default :doc}`. THE single source the validator
   (`check-value`), the effective-value read (`effective`), and
@@ -95,8 +95,6 @@
     :doc "Enabled identity providers, comma-separated."}
    {:key "web.auth.default-policy" :type [:enum "deny" "authenticated" "public"] :default :deny
     :doc "Policy for an endpoint with no :web/auth of its own (reachable only when web-auth-refusal is dialed down)."}
-   {:key "web.auth.session.ttl-seconds" :type [:int {:min 1}] :default 86400
-    :doc "Browser session lifetime, seconds."}
    {:key "web.auth.static.*" :type [:string] :default nil
     :doc "Static-provider settings (web.auth.static.users.<name> = {:password-hash … :groups […]})."}
    {:key "web.auth.bearer.*" :type [:string] :default nil

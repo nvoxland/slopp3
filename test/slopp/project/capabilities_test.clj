@@ -218,7 +218,8 @@
     (testing "nothing orphaned says so by absence, like :debt does"
       (is (nil? (:orphaned (caps/report (put (store/empty-store) "web.enabled" "true"))))))))
 
-(deftest every-capability-key-declares-its-owner
+(deftest ^{:correspondence "every key in capabilities/registry vs the owner segments declared in capabilities/owners — R6: a key belonging to nobody means app type #2 has to edit a generic vector"}
+  every-capability-key-declares-its-owner
   ;; R6: no slopp surface may assume a project is a web project, and support
   ;; for an app TYPE lives under that type's name. The registry was the
   ;; violation — 14 of 19 entries were web's, and 8 of those sat under `auth.`

@@ -308,3 +308,40 @@
         (let [conn (db/open! dir)]
           (try (is (= "# mine\n" (slurp gi)))
                (finally (.close conn))))))))
+
+(deftest ^:external an-observation-names-what-it-OBSERVED-as-data
+  ;; The deltas table has ONE `ns` column, written `(str (:ns d))` and read
+  ;; back `(symbol ...)`. Every consumer treats it as ONE namespace —
+  ;; replay-delta, merge-logs, query-outline — and the markers that are not
+  ;; about a namespace say so honestly: `:done`, `:commit` and `:turn-begin`
+  ;; all put `*session*` there.
+  ;;
+  ;; `record-observation` was handed the LIST of namespaces a run covered and
+  ;; put it in that column, so it round-tripped as one symbol whose NAME is the
+  ;; printed list. Measured on this store: all 27 recorded observations, the
+  ;; largest 2293 characters.
+  ;;
+  ;; This is not tidiness. An observation exists to be a KEY — *these tests
+  ;; ran, and this is what happened* — and a scope nothing can read
+  ;; per-namespace cannot answer "was this namespace covered by that run",
+  ;; which is the only question anything downstream wants to ask of it.
+  (let [dir  (temp-dir)
+        conn (db/open! dir)
+        s1   (store/record-observation (store/empty-store)
+                                       '[a.one-test a.two-test a.three-test]
+                                       {:tier :external :status :green :ran 7 :failures []})]
+    (db/persist! conn s1 (last (:deltas s1)))
+    (.close conn)
+    (let [conn2 (db/open! dir)
+          d     (last (:deltas (db/load-store conn2)))]
+      (testing "the scope survives as a VECTOR of namespace symbols"
+        (is (= '[a.one-test a.two-test a.three-test] (:scope d)) (pr-str d)))
+      (testing "so a reader can ask about ONE namespace without parsing a symbol"
+        (is (contains? (set (:scope d)) 'a.two-test)))
+      (testing "and the ns column carries the sentinel the other whole-session
+                markers already use, rather than a list pretending to be a name"
+        (is (= '*session* (:ns d)) (pr-str d)))
+      (testing "the result rides along unchanged — this moves the scope, it
+                does not touch what was observed"
+        (is (= {:tier :external :status :green :ran 7 :failures []} (:result d))))
+      (.close conn2))))

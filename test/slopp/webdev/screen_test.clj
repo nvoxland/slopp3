@@ -13,7 +13,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
             [slopp.ops.external :as external]
-            [slopp.webdev.screen :as scr] [clojure.java.io :as io] [slopp.kernel.boot :as boot] [rewrite-clj.parser :as p]))
+            [slopp.webdev.screen :as scr] [clojure.java.io :as io] [slopp.kernel.boot :as boot] [rewrite-clj.parser :as p] [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (deftest ^:external an-agent-can-look-at-a-screen-without-writing-code
   ;; The end of the loop this feature exists to close: a real store, a real
@@ -188,3 +188,69 @@
         (is (str/includes? code ":screens"))
         (is (str/includes? code "(drive s [step])")
             "single-step drives on one session: no second interpreter, and no re-run of non-idempotent effects")))))
+
+(deftest ^:external
+  ^{:correspondence "every form in slopp.web.screen.render that OPENS a page tag vs page-tag, the single attr route its own docstring calls 'deliberately the only route' — a branch building \"<\" (name t) \">\" by hand drops the capability trio and slopp:on silently, which is how a clickable <h2> rendered as inert text"}
+  no-form-in-the-renderer-opens-a-page-tag-by-hand
+  ;; `page-tag`'s docstring asserts it is "deliberately the only route, so a
+  ;; branch cannot hand-build page attrs and drift from the whitelist", and
+  ;; nothing made that true. Prose asserting that two things agree is a test
+  ;; nobody runs, and worse than no prose at all: a bare duplicate invites
+  ;; suspicion while a documented parity disarms it. Its enumerating sibling
+  ;; `screen-test/every-page-tag-renders-through-one-attr-route`
+  ;; asserted FOUR tags, all four of which already complied, and stayed green
+  ;; for the entire life of a four-tag defect: heading, table, pre and cell
+  ;; each built their own opening tag, so a clickable <h2> rendered
+  ;; `<h2>Title</h2>` — a real control shown as inert text, in the mode whose
+  ;; whole contract is that an unprefixed tag means something you can act on.
+  ;;
+  ;; The two are complementary, not redundant: the enumeration pins attr ORDER
+  ;; and content, which this cannot see; this makes the CLASS total, which the
+  ;; enumeration cannot.
+  ;;
+  ;; It lives HERE rather than beside its subject because it is store ANALYSIS
+  ;; of web rendering — tooling genre, the same reasoning that moved web-only
+  ;; rules out of generic `slopp.rules` into `slopp.rules.web`. `slopp.web` is
+  ;; layer 0 and `the-web-framework-never-reaches-back-into-slopp` holds the
+  ;; whole subtree there; putting this beside its subject cost two test-only
+  ;; edges out of that module, which is a worse trade than the distance.
+  ;;
+  ;; The population is the NAMESPACE, with no exemption list — measured:
+  ;; `open-tag` and `page-tag` build `(str "<" tag …)`, whose literal is `"<"`
+  ;; with no letter after it, so the sanctioned builders need no carve-out. An
+  ;; exemption list here would be the same hand-kept-list defect one level up.
+  (let [st    (external/built-store)
+        opens (fn [s] (->> (tree-seq coll? seq s)
+                           (filter string?)
+                           (filter #(re-find #"<[a-z]" %))
+                           ;; slopp:* tags are DERIVED by the reader and have no
+                           ;; page attrs to be wrong about — page-tag says so
+                           (remove #(clojure.string/starts-with? % "<slopp:"))
+                           distinct vec))
+        body  (fn [f] (let [[_ _ & more] (n/sexpr (:node f))]
+                        (if (string? (first more)) (rest more) more)))]
+    (testing "the detector BITES — an empty result must not be its only mode"
+      (is (= ["<td>"] (opens '(str "<td>" x "</td>"))))
+      (is (= ["<h2 class="] (opens '(str "<h2 class=" c ">")))))
+    (testing "and it ignores exactly what it must"
+      (is (= [] (opens '(str "</td>" "</" (name t) ">")))
+          "a CLOSING tag is not an opening one")
+      (is (= [] (opens '(str "<slopp:elided count=\"2\"/>")))
+          "the derived channel carries no page attrs")
+      (is (= [] (opens '(str "<" (name t) ">")))
+          "the sanctioned builders compose the tag, which is the point"))
+    (testing "there is a population — the scan reached real source"
+      (let [strs (mapcat #(filter string? (tree-seq coll? seq (body %)))
+                         (store/forms st 'slopp.web.screen.render))]
+        (is (< 50 (count strs))
+            (str "an empty scan and a clean renderer are the same output —"
+                 " measured 83 here, so this catches built-store reaching"
+                 " nothing rather than tracking the renderer's size"))))
+    (testing "no form in the renderer opens a page tag by hand"
+      (doseq [f (store/forms st 'slopp.web.screen.render)
+              :when (:name f)]
+        (is (= [] (opens (body f)))
+            (str "slopp.web.screen.render/" (:name f)
+                 " builds a page tag by hand, so every capability attr"
+                 " (aria-label / aria-hidden / inert) and slopp:on it should"
+                 " carry is dropped — render it through page-tag"))))))

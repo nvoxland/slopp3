@@ -350,7 +350,8 @@
   ;; comes back as [nil]. An EMPTY vector means no value arrived at all, which
   ;; no successful eval produces: the image was unresponsive.
   ;;
-  ;; Core 1 at the transport, with the third claim this one was missing. It
+  ;; The same distinction at the transport, with the third claim this one was
+  ;; missing. It
   ;; threw / it returned nothing / IT NEVER ANSWERED are three states, and two
   ;; representations is one too few — the same shape as :host-drift's
   ;; absent/clean/behind, one layer down.

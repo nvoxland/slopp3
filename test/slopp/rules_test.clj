@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates] [slopp.project.capabilities :as caps] [clojure.string :as str] [slopp.rules.web :as rules.web]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates] [slopp.project.capabilities :as caps] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.store.fields :as fields] [rewrite-clj.parser :as p]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -158,7 +158,8 @@
              " — a rule that needs it belongs in slopp.rules.<type>, where its "
              "name is graded against the type that owns it"))))
 
-(deftest catalog-covers-every-registered-rule
+(deftest ^{:correspondence "the two EXECUTION registries (edit.gates/write-gate-names, rules/done-advisories) vs rules.catalog/rule-catalog — a registered rule missing from the catalog refuses with no :teach and no :escape"}
+  catalog-covers-every-registered-rule
   (let [cataloged   (set (map :rule catalog/rule-catalog))
         write-gates (set (gates/write-gate-names))
         done-keys   (set (map :key rules/done-advisories))]
@@ -409,47 +410,6 @@
                      nil st (mapv :id (store/forms st 'sr.typo))))]
       (is (= "sr.typo/charge" (:suggest f)) (pr-str f))
       (is (re-find #"did you mean" (str (:teach f))) (pr-str f)))))
-
-(deftest retired-vocabulary-catches-the-second-copy-not-the-marker
-  ;; The tier rename migrated the gate and left the reporting arm holding its
-  ;; own rank table — which NPE'd a live tool. The signal is a form ENUMERATING
-  ;; the vocabulary with stale members, not the bare keyword: on this store a
-  ;; lone :reads is the still-valid ^:reads MARKER in four production forms.
-  (let [cfg (fn [st] (assoc-in st [:config "vocabulary" :values]
-                               {"reads" "internal" "effects" "external"}))
-        one (fn [src] (let [st (cfg (store/ingest (store/empty-store) 'rv.core src))]
-                        (rules/retired-vocabulary-check
-                         nil st (mapv :id (store/forms st 'rv.core)))))]
-    (testing "a rank table mixing retired and current spellings fires"
-      (let [f (first (one (str "(ns rv.core)\n"
-                               "(defn ^:unused-ok rank [] {:pure 0 :reads 1 :effects 2})\n")))]
-        (is (some? f) "the stale second copy must be caught")
-        (is (= [:effects :reads] (:retired f)) (pr-str f))))
-    (testing "a retired-ONLY filter fires too — this is how a rule went silently dead"
-      ;; shell-widening matched (contains? #{:reads :effects} t) against tier
-      ;; values that were all canonical by then, so it could never fire again
-      ;; and looked exactly like a clean codebase.
-      (let [f (first (one (str "(ns rv.core)\n"
-                               "(defn ^:unused-ok widened? [t]\n"
-                               "  (contains? #{:reads :effects} t))\n")))]
-        (is (some? f) "a legacy-only match set is a second copy too")))
-    (testing "a lone retired keyword does NOT fire — it is the marker, not the tier"
-      (is (empty? (one (str "(ns rv.core)\n"
-                            "(defn ^:unused-ok reads? [m] (:reads m))\n")))
-          "bare :reads is the ^:reads marker in real code — 4 of 5 uses on this store"))
-    (testing "the normalizer discharges with ^:legacy-ok"
-      (is (empty? (one (str "(ns rv.core)\n"
-                            "(defn ^:unused-ok ^:legacy-ok norm [t]\n"
-                            "  ({:reads :internal :effects :external} t t))\n")))))
-    (testing "and the marker polices itself when it stops earning its keep"
-      (let [f (first (one (str "(ns rv.core)\n"
-                               "(defn ^:unused-ok ^:legacy-ok clean [x] x)\n")))]
-        (is (:stale-marker f) (pr-str f))))
-    (testing "no declared vocabulary means no findings at all"
-      (let [st (store/ingest (store/empty-store) 'rv.none
-                             "(ns rv.none)\n(defn ^:unused-ok r [] {:pure 0 :reads 1})\n")]
-        (is (empty? (rules/retired-vocabulary-check
-                     nil st (mapv :id (store/forms st 'rv.none)))))))))
 
 (deftest public-mutation-asks-at-done
   (let [src (str "(ns pm.api)\n\n"
@@ -780,7 +740,7 @@
           (is (pos? (:forms sw)) (pr-str sw))
           (is (contains? (set (:swept sw)) :direct-http) (pr-str (:swept sw))))
         (testing "and NAMES what it could not sweep, rather than implying it covered everything"
-          ;; the Core 9 sharpening: a count is a check, and it reports on the
+          ;; the proxy sharpening: a count is a check, and it reports on the
           ;; population it counted. key-typos is the worked example — over a
           ;; whole store nothing is "established", so it is green vacuously
           (let [scoped (into {} (map (juxt :rule :why)) (:not-swept sw))]
@@ -974,3 +934,61 @@
     (testing "and it says where the name went, derived by last segment the way
               a stranded alias's :suggest is"
       (is (= 'rp.image.testmain (:suggest (first found))) (pr-str found)))))
+
+(deftest an-observation-clears-assertions-never-red-for-an-external-test
+  ;; `:assertions-never-red` is the vacuity guarantee — a deftest that GAINED
+  ;; assertions and was never watched FAIL. It is grounded (104
+  ;; assertion-additions measured over this store's lifetime, 82 never observed
+  ;; red) and it is UNCLEARABLE for an ^:external test, filed three times from
+  ;; three directions.
+  ;;
+  ;; Measured why, and it is THREE gaps stacked rather than one:
+  ;;   1. `traced-run` drops ^:external tests unconditionally and by design, so
+  ;;      no in-image :verify delta ever names one;
+  ;;   2. `external-test-run!` — the only tier that runs them — appends no
+  ;;      delta at all, so its reds never enter the journal;
+  ;;   3. and its failure list is `:failing` (`:failures` there is a COUNT),
+  ;;      carrying the BARE name clojure.test prints in `FAIL in (name)`, while
+  ;;      the check reads `:failures` and compares `(str 'ns/name)`.
+  ;;
+  ;; So the remedy the advisory teaches — break it and watch it bounce — is
+  ;; performable and unrecordable. An advisory nobody can discharge trains
+  ;; agents to ignore advisories, which corrodes every other signal slopp emits.
+  ;;
+  ;; The fix is a SECOND journal citizen, never a widened `:verify`: a
+  ;; spot-check is a narrower claim than a verification, and `done`'s scope
+  ;; logic, milestone `:status` and the trace map all read `:verify`.
+  ;;
+  ;; NOTE the fixture uses `replace-node`, not a second `ingest`: ingest
+  ;; RE-MINTS form ids, so the check's baseline-source lookup misses and it
+  ;; returns [] for a reason that has nothing to do with what is under test.
+  ;; The control below is what caught that.
+  (let [src0 "(ns demo-t (:require [clojure.test :refer [deftest is]]))\n\n(deftest ^:external t (is (= 1 1)))"
+        base (store/ingest (store/empty-store) 'demo-t src0)
+        done (update base :deltas conj
+                     {:id "d-done" :parent (:id (last (:deltas base)))
+                      :op :done :at 0})
+        grew (first (store/replace-node
+                     done 'demo-t 't
+                     (p/parse-string "(deftest ^:external t (is (= 1 1)) (is (= 2 2)))")))
+        fid  (:id (first (filter #(= 't (:name %)) (store/forms grew 'demo-t))))]
+    (testing "the control: an added assertion with no red observed FIRES"
+      (is (seq (rules/assertions-never-red-check nil grew [fid]))
+          "if this is empty the fixture is wrong and everything below is vacuous"))
+    (testing "an OBSERVATION naming the test red clears it"
+      (let [obs (store/record-observation grew 'demo-t
+                                          {:tier :external :status :red :ran 1
+                                           :failures [{:test 'demo-t/t}]})]
+        (is (empty? (rules/assertions-never-red-check nil obs [fid])))))
+    (testing "an observation of a DIFFERENT test does not clear it"
+      (let [obs (store/record-observation grew 'demo-t
+                                          {:tier :external :status :red :ran 1
+                                           :failures [{:test 'demo-t/other}]})]
+        (is (seq (rules/assertions-never-red-check nil obs [fid])))))
+    (testing "a GREEN observation does not clear it — being run is not being watched fail"
+      (let [obs (store/record-observation grew 'demo-t
+                                          {:tier :external :status :green :ran 1
+                                           :failures []})]
+        (is (seq (rules/assertions-never-red-check nil obs [fid])))))
+    (testing "the op is a registered marker, or foreign sync full-reloads on every sighting"
+      (is (contains? fields/markers :observe)))))

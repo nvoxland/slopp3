@@ -223,3 +223,101 @@
       (is (= scan-unused report-unused)
           (str "review-scan says " (pr-str scan-unused)
                ", unused-report says " (pr-str report-unused))))))
+
+(deftest coverage-is-a-WHOLE-STORE-question-however-narrowly-you-asked
+  ;; Every other population in review-scan is already whole-store: `blast` and
+  ;; `adj` come off the reference graph with a comment saying caller counts must
+  ;; be true under :ns scoping, and declared coverage says the same of itself.
+  ;; The STATIC COVERAGE SEED was the one left enumerating the scoped `nses` —
+  ;; so unless you happened to scope the scan AT a -test namespace, nothing
+  ;; seeded it and every form in the namespace came back :untested.
+  ;;
+  ;; Measured on this store before the fix: `{ns "slopp.index.refs"}` reported
+  ;; 18 forms :untested that the whole-store scan reported covered, `covered-by`
+  ;; among them — a form with two tests of its own. A triage answer that depends
+  ;; on how widely you asked is worse than no answer, because the narrow ask is
+  ;; the one a reviewer makes when they have already decided where to look.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'sc.core "(ns sc.core)\n(defn reached [x] x)\n(defn orphan [x] x)\n")
+               (store/ingest 'sc.core-test
+                             (str "(ns sc.core-test (:require [clojure.test :refer [deftest is]]\n"
+                                  "                            [sc.core :as core]))\n"
+                                  "(deftest reach-t (is (= 1 (core/reached 1))))\n")))
+        sess     (atom {:store st :test-map {}})
+        untested (fn [r] (set (for [row (:top r)
+                                    :when (contains? (set (:flags row)) :untested)
+                                    :let [q (:form row)]
+                                    :when (= "sc.core" (namespace q))]
+                                q)))]
+    ;; value-shaped on both sides: `orphan` must be NAMED, not merely
+    ;; "not contradicted" — an empty :top would satisfy any absence assertion
+    ;; here, and this whole namespace exists because of that failure mode.
+    (testing "whole store: the test calls `reached`, nothing calls `orphan`"
+      (is (= '#{sc.core/orphan} (untested (review/review-scan sess)))))
+    (testing "scoped to the namespace, the same question gets the same answer"
+      (is (= '#{sc.core/orphan} (untested (review/review-scan sess :ns 'sc.core)))))))
+
+(deftest a-row-says-WHICH-KIND-of-evidence-stands-behind-it
+  ;; `:untested` is one word doing the work of four facts. Its absence can mean
+  ;; a test RAN this form, or a `^{:covers}` marker CLAIMS a path nothing can
+  ;; observe, or merely that some form in a test namespace reaches it through a
+  ;; chain of calls — and the third is nearly free. Measured on this store: 1120
+  ;; of 1285 production forms count as covered by static reach, 297 of them at
+  ;; three hops or more, where `test → ops → edit → store` marks the store form
+  ;; covered. A reviewer reading a quiet row cannot tell which of those they
+  ;; have, and the difference is the whole question they came to ask.
+  ;;
+  ;; So the row carries the class, in the vocabulary `refs/covered-by` already
+  ;; uses for the same distinction — one derivation of the words, not two.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'ev.core
+                             (str "(ns ev.core)\n"
+                                  "(defn observed [] 1)\n"
+                                  "(defn direct [] 1)\n"
+                                  "(defn deep [] 1)\n"
+                                  "(defn mid [] (deep))\n"
+                                  "(defn dispatched [] 1)\n"
+                                  "(defn orphan [] 1)\n"
+                                  "(def threshold 5)\n"))
+               (store/ingest 'ev.client "(ns ev.client)\n(defn draw [x] x)\n")
+               (store/ingest 'ev.core-test
+                             (str "(ns ev.core-test (:require [clojure.test :refer [deftest is]]\n"
+                                  "                            [ev.core :as c]))\n"
+                                  "(deftest obs-t (is (= 1 (c/observed))))\n"
+                                  "(deftest reach-t (is (= 1 (c/direct))) (is (= 1 (c/mid))))\n"
+                                  "(deftest ^{:covers \"ev.core/dispatched — resolved by name\"} disp-t (is true))\n"))
+               (assoc :module-platforms {"ev.client" :cljs}))
+        ;; only obs-t ever RAN, and it only touched `observed`
+        sess (atom {:store st :test-map {'ev.core-test/obs-t #{'ev.core/observed}}})
+        rows (into {} (for [row (:top (review/review-scan sess :limit 100))]
+                        [(:form row) (select-keys row [:evidence :hops])]))]
+    (testing "each kind is named, and the strongest evidence wins — `observed`
+              is statically reachable too, and the row says it RAN"
+      (is (= '{ev.core/observed   {:evidence :observed}
+               ev.core/dispatched {:evidence :declared}
+               ev.core/direct     {:evidence :static :hops 1}
+               ev.core/mid        {:evidence :static :hops 1}
+               ev.core/deep       {:evidence :static :hops 2}
+               ev.client/draw     {:evidence :off-platform}
+               ev.core/orphan     {:evidence :none}
+               ev.core/threshold  {:evidence :none}}
+             rows)))
+    (testing ":untested is a strict SUBSET of :none, and the difference is
+              deliberate: a plain (def x <data>) has no invocation to observe,
+              so it can never acquire evidence and flagging it would be a
+              finding nobody can discharge. `:evidence` answers what we KNOW;
+              `:untested` answers what is worth someone's afternoon."
+      (let [top   (:top (review/review-scan sess :limit 100))
+            by    (into {} (map (juxt :form identity)) top)
+            none  (set (for [r top :when (= :none (:evidence r))] (:form r)))
+            flagd (set (for [r top :when (contains? (set (:flags r)) :untested)] (:form r)))]
+        (is (= '#{ev.core/orphan ev.core/threshold} none) (pr-str top))
+        (is (= '#{ev.core/orphan} flagd) (pr-str top))
+        (is (= :none (:evidence (by 'ev.core/threshold))))
+        (is (not (contains? (set (:flags (by 'ev.core/threshold))) :untested))
+            "a data def is evidence-less and is nonetheless not a gap")))
+    (testing "and the same split in the SUMMARY, because nobody reads 954 rows —
+              on this store 892 of them rest on static reach, which is a fact
+              about the suite that no per-row reading would ever add up to"
+      (is (= '{:declared 1 :none 2 :observed 1 :off-platform 1 :static 3}
+             (:evidence (review/review-scan sess :limit 100)))))))

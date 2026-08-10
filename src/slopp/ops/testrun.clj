@@ -202,7 +202,7 @@
   fastest had finished. Longest-first gives `[101 101 100 100]` — 27% off the
   critical path for the same work on the same cores.
 
-  This is NOT the warm-pool dead end (`ideas/full-check-is-slow.md`), which
+  This is NOT the warm-pool dead end — keeping images alive to skip boot — which
   rescheduled boot work into CPU that was not idle and measured zero gain. It
   removes idle time that already exists, and adds no concurrency.
 

@@ -1,5 +1,6 @@
 (ns slopp.index.crossings
-  "The edges that LEAVE the store — Core 6's missing representation.
+  "The edges that LEAVE the store — the representation verification lacks at
+  the boundary.
 
   `slopp.index.refs`, its sibling here, makes every edge INSIDE the store
   answerable: who calls

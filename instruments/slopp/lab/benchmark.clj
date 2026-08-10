@@ -1,5 +1,5 @@
 (ns slopp.lab.benchmark
-  "Progress meter (see .context/dogfooding.md): build sample apps through the
+  "Progress meter: build sample apps through the
   REAL agent surface (mcp/handle, JSON round-tripped) with deterministic
   scripts, measuring wall time and token cost (chars/4 of the JSON actually
   sent/received). Deliberate red steps are included — debugging is part of
@@ -139,9 +139,7 @@
           (str "# Benchmark history\n\n"
                "Wall + token cost of building each sample app through the MCP surface\n"
                "(via the boot kernel, since the tree is fileless:\n"
-               "`clojure -M -m slopp.kernel.boot . --snapshot --main slopp.lab.benchmark/-main`;
-"
-               "see `.context/dogfooding.md`).\n"
+               "`clojure -M -m slopp.kernel.boot . --snapshot --main slopp.lab.benchmark/-main`).\n"
                "Rows are comparable only within the same script version (v).\n\n"
                "| date | sha | app | v | steps | wall ms | tok in | tok out |\n"
                "|---|---|---|---|---|---|---|---|\n")))

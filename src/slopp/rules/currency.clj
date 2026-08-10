@@ -72,9 +72,23 @@
   "Every form the image does not hold as the store describes it — pure over a
   store value and a stamp map (`slopp.image.currency/snapshot`).
 
-  Returns rows of `{:ns :form :why}`, plus `:behind` naming the form whose
-  re-evaluation left this one holding an old value. `:why` is
-  `:never-loaded`, `:superseded` or `:derived-stale`.
+  Returns rows of `{:ns :form :why}`. `:why` is `:never-loaded`, `:superseded`
+  or `:derived-stale`; a `:derived-stale` row also carries:
+
+  - `:behind` — the QUALIFIED form whose re-evaluation left this one holding
+    an old value. Qualified because it is usually in another namespace, and a
+    bare symbol cost a grep every time this fired.
+  - `:behind-edit` — `{:delta id :prompt text}` for the most recent write to
+    THAT form's namespace, which is what re-evaluated it. This is the answer
+    the reader actually needs: a write reloads its whole namespace, so the
+    form named by `:behind` is frequently one nobody edited, and \"which form
+    am I behind\" was always answerable without being the question.
+
+  **`:behind-edit` is the namespace's last write, not a proven cause.** A
+  reload triggered by a transitive dependency is not attributed, and naming it
+  exactly would mean stamping each form with the store head it was loaded at —
+  which belongs with the currency registry rather than here. The prompt is
+  truncated: this is a diagnostic, not a record.
 
   `:cljs` namespaces are skipped: they are never loaded into the JVM oracle by
   design, so calling them absent would be reporting a deliberate rule as a
@@ -104,6 +118,13 @@
                               :when (and (get stamps (:id e))
                                          (captures-at-load? (:node e)))]
                           [(:id e) e]))
+        edit   (fn [ns-sym]
+                 (when-let [d (store/last-write-on store ns-sym)]
+                   (cond-> {:delta (:id d)}
+                     (:prompt d) (assoc :prompt (let [p (:prompt d)]
+                                                  (if (< 140 (count p))
+                                                    (str (subs p 0 140) "…")
+                                                    p))))))
         behind (vec (distinct
                      (for [r  (refs/refs store)
                            :let [g  (get cap (:from-form r))
@@ -111,8 +132,10 @@
                                  fs (get-in stamps [(:to-form r) :seq])]
                            :when (and g gs fs (> fs gs)
                                       (not (moved? [(:ns g) (:name g)])))]
-                       {:ns (:ns g) :form (:name g)
-                        :why :derived-stale :behind (:to-name r)})))]
+                       (let [e (edit (:to-ns r))]
+                         (cond-> {:ns (:ns g) :form (:name g) :why :derived-stale
+                                  :behind (symbol (str (:to-ns r)) (str (:to-name r)))}
+                           e (assoc :behind-edit e))))))]
     (into moved behind)))
 
 (defn ^:export drift
@@ -143,6 +166,11 @@
   nothing ever repaired the staleness: once a write RELOADS the namespace
   holding a captured value, that form is stamped AFTER the edited one, and a
   comparison-free check would go on reporting it forever.
+
+  Deliberately does NOT name the edit the way `drift-of`'s rows do. There the
+  reader is holding a verdict and asking why; here they have just made the
+  write that caused it, so naming it back at them is noise. The asymmetry is
+  the point, not an oversight.
 
   A form is a candidate only if it was stamped (never-loaded is a different
   and louder problem, reported elsewhere) and only if it CAPTURES at load: a

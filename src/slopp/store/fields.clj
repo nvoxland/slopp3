@@ -9,7 +9,7 @@
   every set here cannot cross a merge (merge-logs REFUSES, naming this ns)
   and full-reloads on foreign sync rather than guessing.")
 
-(defn ^:export ^{:legacy-ok "this IS the mapping that retires :reads/:effects, so the retired spellings have to appear here to be translated away — the one place naming them is not drift"} canonical-tier
+(defn ^:export canonical-tier
   "Canonical spelling of a purity tier: the retired :reads/:effects map to
   :internal/:external (D-tiers); canonical spellings pass through. THE one
   mapping — slopp.edit.tiers/canonical-tier delegates here, and the
@@ -117,8 +117,7 @@
    :blobs        {:init {} :storage :table
                   :doc "sha256 → bytes, content-addressed (assets); merge = union, cleanup prunes"}})
 
-(def ^{:legacy-ok "the :module-tier SAMPLE deliberately spells a retired tier — canonicalization on load is exactly what that round-trip must prove crosses a merge, so the sample has to carry the old spelling"}
-  op-registry
+(def op-registry
   "Field-carrying delta op → {:field :fold :merge :sample :crossed}. :fold is
   THE fold — record-* (in-memory), replay-delta (foreign sync) and
   merge-logs' :replay strategy all call it, so the three can never drift.
@@ -291,8 +290,13 @@
   :skipped note (milestone markers deliberately do not travel; the open
   decision is frictions #9). A NEW marker op registers here, or foreign
   sync full-reloads on every sighting of it. Exported: session_brief reads
-  it to exclude markers from the host's code-delta count (review host-F2)."
-  #{:verify :done :merge :turn-begin :turn-end :commit :revert})
+  it to exclude markers from the host's code-delta count (review host-F2).
+
+  `:observe` is the second EVIDENCE citizen beside `:verify` — *these tests
+  ran and this is what happened*, which a verification is not. It is
+  bookkeeping for the same reason `:verify` is: it changes no code, so a host
+  that has not loaded one is not behind."
+  #{:verify :observe :done :merge :turn-begin :turn-end :commit :revert})
 
 (def silent-markers
   "The marker subset merge-logs skips without a note — verification and

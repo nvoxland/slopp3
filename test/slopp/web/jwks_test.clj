@@ -6,7 +6,7 @@
   them, so a fake that returns the second document tests nothing that was
   written. slopp ships an HTTP server, so the far side of this adapter can be
   stood up locally in a few lines — which is what makes it cheap here and is
-  not true of every adapter (see `ideas/hard-to-test-adapters.md`).
+  not true of every adapter — some reach a world no fake can stand in for.
 
   Neighbours: `slopp.web.auth-test` covers the POLICY these keys feed, using
   static keys and never a network."

@@ -348,7 +348,7 @@
   whole-store question.
 
   Deliberately NOT a shape check. A heuristic guessing whether prose is a
-  purpose or an inventory would fire on good docstrings, and Core 2's rule is
+  purpose or an inventory would fire on good docstrings, and the rule is
   to fix the analysis before restricting the language. Absence is objective;
   quality is a review question. The teaching carries the rest.
 

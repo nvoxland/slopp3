@@ -175,9 +175,6 @@
    {:rule :stale-reference :grain :done
     :escape "fix the prose (or the reference) so the name resolves — the text is teaching, and teaching that lies costs a failed call to discover"
     :teach "a docstring/teach-string names a.b/c where namespace a.b is in this store but has no form c — a rename or move left the prose behind (gates never see a var inside a string)"}
-   {:rule :retired-vocabulary :grain :done
-    :escape "route through the normalizer, or ^:legacy-ok on the name if this form IS the normalizer (it polices itself — a marker that mixes nothing is reported stale)"
-    :teach "a form ENUMERATES a retired vocabulary (two retired members, or one beside its replacement) — a second copy that missed the rename; declare yours with config_file {path vocabulary key <old> value <new>}"}
    {:rule :direct-http :grain :done
     :escape "call slopp.web.client/request, taking it as a PARAMETER so callers can pass client/fake-requester — or ^{:adapter \"http — why\"} on the name if this form IS the adapter (it polices itself; the value's first word names the port, so a \"postgres\" adapter is ignored rather than called stale)"
     :teach "a form reaches the network itself — a java.net.http.HttpClient, or a slurp of an http(s):// literal. Raw reaching belongs in a declared ADAPTER; everything else goes through the port and inherits its fake and its contract suite. TESTS ARE NOT EXEMPT: calling the port from a test still makes a REAL call, so an exemption would buy nothing and would carve out the one place this boilerplate breeds. Scoped to HTTP because a gate may only demand a port that EXISTS — slopp ships one for HTTP and none for files or subprocesses"}
@@ -193,6 +190,34 @@
    {:rule :web-inline-schema-dup :grain :done
     :escape "extract the shared inline schema to a named .cljc var both endpoints reference, or accept the duplication"
     :teach "2+ endpoints declare the same inline request/response schema — a shared shape belongs in one named .cljc schema so the server and the generated client agree (D-web-contracts part 2)"}
+   {:rule :web-unconstrained-contract :grain :done
+    :escape "name the entries — [:map [:kind :string] [:text :string]] — or, when the shape genuinely is not settled, declare :any so the document says so out loud; or accept it, this is advisory and never blocks"
+    :teach (str "a published endpoint declares a field that constrains"
+                " NOTHING: a bare :map, which accepts any map, or :any. The"
+                " cost is a silent mechanism rather than vagueness — a"
+                " generated client validates every response against this"
+                " schema, so a shape that changes underneath such a field"
+                " passes validation forever. Measured in the wild: a :diff"
+                " moved from [String] to [[String String]] and went unnoticed"
+                " for weeks. :any and a bare :map are not the same offence —"
+                " :any admits it is saying nothing, a bare :map looks like a"
+                " type while saying the same thing. This is the PRIOR question"
+                " to web-undocumented-contract: that one asks whether a"
+                " declared field says what it means, this asks whether it is"
+                " declared at all, and prose does not make a field real")}
+   {:rule :web-undocumented-contract :grain :done
+    :escape "add :doc (or :description) to the entry's property map — [:total {:doc \"hits before the limit is applied\"} :int] — or accept it; this is advisory and never blocks"
+    :teach (str "a published endpoint's :web/request/:web/response schema has"
+                " fields that say nothing about what they ARE. A type is a"
+                " SHAPE, not a term of the contract: :total :int does not say"
+                " the number counts hits before the limit is applied, and the"
+                " document is all a consumer generating a client can read —"
+                " the schema def's docstring is not a value and does not"
+                " travel. Malli entry properties are open and cross the wire"
+                " untouched, so this needs prose rather than a feature."
+                " WHOLE-STORE by construction: a published contract is stable,"
+                " and a check whose population is the episode's changed forms"
+                " cannot see what has stopped changing")}
    {:rule :shell-widening :grain :done
     :escape "move the effect into an existing SHELL namespace and keep the pure part in core, or accept the widening (it asks once)"
     :teach "this episode declared a namespace :external/:internal — the functional CORE got smaller, and only you know whether it had to"}

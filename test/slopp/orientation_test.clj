@@ -514,7 +514,7 @@
   ;; refused where a page was promised. The skill tells an agent to hand THIS
   ;; url to a human, so the cost lands on the human every time.
   ;;
-  ;; Core 1: "I did not check" must not print as "checked and fine". A hub is
+  ;; "I did not check" must not print as "checked and fine". A hub is
   ;; OPTIONAL — nobody has to start one — so absence is an ordinary state and
   ;; the brief has to be able to say it.
   (let [sess (external/open!)]

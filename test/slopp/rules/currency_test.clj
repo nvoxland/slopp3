@@ -69,8 +69,8 @@
         d     (currency/drift-of st after)]
     (is (= [{:ns 'app.core :form 'tools :why :derived-stale}]
            (mapv #(select-keys % [:ns :form :why]) d)))
-    (is (= 'env-tools (:behind (first d)))
-        "naming what it is behind is the difference between a warning and a fix")))
+    (is (= 'app.core/env-tools (:behind (first d)))
+        "naming what it is behind is the difference between a warning and a fix — QUALIFIED, because it is usually in another namespace")))
 
 (deftest evaluated-var-metadata-goes-stale-the-same-way
   ;; friction 17: `^{:web/response schema}` captured schema's VALUE at load, so
@@ -98,3 +98,40 @@
                       {} (store/elements st 'app.core))
         after (assoc-in base [(get i "helper") :seq] 999)]
     (is (empty? (currency/drift-of st after)))))
+
+(deftest a-derived-stale-row-names-the-edit-that-re-evaluated-it
+  ;; The measured shape of this repo's most frequent friction: `slopp.mcp/env-handlers!`
+  ;; captures `slopp.mcp.tools/cheat-sheet`, and what stales it is a write to a
+  ;; SIBLING form in that other namespace — a write reloads its whole namespace,
+  ;; so the form you are told you are behind may never have been edited. "Which
+  ;; form" was always answerable and was never the question; "which edit" is, and
+  ;; the store holds it.
+  (let [st0   (store/ingest (store/empty-store) 'app.reg
+                            "(ns app.reg)\n\n(def sheet \"v1\")\n\n(def sibling 1)\n")
+        st1   (store/ingest st0 'app.core
+                            (str "(ns app.core (:require [app.reg :as reg]))\n\n"
+                                 "(def tools {:sheet reg/sheet})\n"))
+        sib   (:id (store/form-named st1 'app.reg 'sibling))
+        [st]  (store/apply-changeset st1 :replace 'app.reg
+                                     {sib (n/coerce '(def sibling 2))}
+                                     :prompt "bump the sibling, which reloads app.reg")
+        stamp (reduce (fn [m e] (assoc m (:id e)
+                                       {:hash (reg/hash-of (n/string (:node e)))
+                                        :seq  (inc (count m))}))
+                      {} (concat (store/elements st 'app.reg)
+                                 (store/elements st 'app.core)))
+        ;; app.reg re-evaluated AFTER app.core captured from it
+        stamp (assoc-in stamp [(:id (store/form-named st 'app.reg 'sheet)) :seq] 999)
+        row   (first (currency/drift-of st stamp))]
+    (is (= {:ns 'app.core :form 'tools :why :derived-stale}
+           (select-keys row [:ns :form :why]))
+        (pr-str row))
+    ;; QUALIFIED: the form it is behind lives in another namespace, and the
+    ;; bare symbol cost a grep every time this fired
+    (is (= 'app.reg/sheet (:behind row)) (pr-str row))
+    (is (= (:id (last (store/deltas st))) (:delta (:behind-edit row)))
+        (str "the most recent write to that namespace is what reloaded it: "
+             (pr-str row)))
+    (is (= "bump the sibling, which reloads app.reg" (:prompt (:behind-edit row)))
+        (str "the prompt is what makes it click — a delta id alone is a lookup: "
+             (pr-str row)))))

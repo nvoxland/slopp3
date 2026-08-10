@@ -427,3 +427,45 @@
           "the pattern no longer matches a namespace that names itself, so the absence below proves nothing")
       (is (= [] (vec (re-seq #"slopp\.webdev\.cljs" src)))
           "the offending mentions are the failure value"))))
+
+(deftest a-verdicts-closure-is-identified-by-CONTENT-not-by-when-it-ran
+  ;; `verdict-cache.md` has been DESIGNED and unbuildable since 2026-07-22 for
+  ;; one reason: a verdict had nothing to be keyed to. The observation delta is
+  ;; that key now, and this is the value it carries — the content identity of
+  ;; everything a verdict for a test namespace depends on.
+  ;;
+  ;; Two properties decide whether reuse is ever SOUND, and they pull opposite
+  ;; ways, so both are pinned here. Miss the first and a stale green survives a
+  ;; real change; miss the second and the hash changes constantly and answers
+  ;; nothing.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'cl.dep "(ns cl.dep)\n(defn helper [] 1)\n")
+               (store/ingest 'cl.core "(ns cl.core (:require [cl.dep :as d]))\n(defn f [] (d/helper))\n")
+               (store/ingest 'cl.other "(ns cl.other)\n(defn unrelated [] 99)\n")
+               (store/ingest 'cl.core-test
+                             (str "(ns cl.core-test (:require [clojure.test :refer [deftest is]]\n"
+                                  "                            [cl.core :as c]))\n"
+                                  "(deftest t (is (= 1 (c/f))))\n")))
+        h  (fn [s] (get (session/closure-hashes s '[cl.core-test]) 'cl.core-test))
+        h0 (h st)]
+    (testing "the same store hashes the same — a key recomputed is a key"
+      (is (= h0 (h st))))
+    (testing "a real DIGEST, not clojure.core/hash: this value is persisted in
+              the journal and compared across processes, and `currency/hash-of`
+              says in its own docstring that it is in-process only"
+      (is (re-matches #"[0-9a-f]{64}" h0) (pr-str h0)))
+    (testing "editing a namespace the test can REACH changes it — two hops away,
+              through cl.core, which is where a naive one-hop key goes wrong"
+      (let [st' (store/ingest st 'cl.dep "(ns cl.dep)\n(defn helper [] 2)\n")]
+        (is (not= h0 (h st')))))
+    (testing "editing a namespace the test canNOT reach does not — without this
+              the key is just a store version and no verdict is ever reusable"
+      (let [st' (store/ingest st 'cl.other "(ns cl.other)\n(defn unrelated [] 100)\n")]
+        (is (= h0 (h st')))))
+    (testing "and the dependency manifest counts: the same sources against
+              different libraries are not the same verdict"
+      (is (not= h0 (h (assoc st :deps {'org.clojure/data.json {:mvn/version "2.5.0"}})))))
+    (testing "every namespace asked about gets an answer, and they differ"
+      (let [m (session/closure-hashes st '[cl.core-test cl.core cl.other])]
+        (is (= '#{cl.core-test cl.core cl.other} (set (keys m))))
+        (is (= 3 (count (set (vals m)))))))))

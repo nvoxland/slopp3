@@ -13,7 +13,7 @@
             [slopp.index.crossings :as crossings] [slopp.ops.external :as external] [slopp.rules.markers :as markers]))
 
 (deftest the-inventory-reports-holes-and-refuses-to-miss-a-new-one
-  ;; Core 6: slopp models edges INSIDE the store — the reference graph — and
+  ;; slopp models edges INSIDE the store — the reference graph — and
   ;; has no representation for one that LEAVES it. So every exit is unverified
   ;; by construction, and each grows a hand-written check or none. Fifteen of
   ;; the sixteen frictions in the SPA wave landed at a crossing.
@@ -119,7 +119,9 @@
       (is (nil? (crossings/finding
                  (store/ingest (store/empty-store) 'plain "(ns plain)\n(defn f [] 1)")))))))
 
-(deftest ^:external the-two-marker-registries-COVER-the-vocabulary
+(deftest ^:external
+  ^{:correspondence "the :web/* markers slopp DEFINES vs the vocabulary crossings/unclassified-markers classifies — a key claimed by neither registry falls down the gap and both guards report clean about it"}
+  the-two-marker-registries-COVER-the-vocabulary
   ;; Two registries describe slopp's markers: this one asks whether a key
   ;; carries data ACROSS the store's edge, `slopp.rules.markers` asks
   ;; whether a dial waives a rule and should say why. Splitting them is

@@ -15,17 +15,30 @@
             [slopp.store :as store]))
 
 (defn- json-shaped?
-  "True when `x` would survive a JSON round trip unchanged in structure:
-  maps keyed by keywords, vectors (never lists or sets, which JSON cannot
-  tell apart), and scalars. SYMBOLS are the one that matters — a qualified
-  symbol reads back as a string and silently stops being a reference, so
-  the models carry strings and the pages never have to know the difference."
+  "True when `x` would survive a JSON round trip UNCHANGED — structure and
+  values both: maps keyed by keywords, vectors (never lists or sets, which
+  JSON cannot tell apart), and scalars.
+
+  SYMBOLS are the one this was written for — a qualified symbol reads back as
+  a string and silently stops being a reference, so the models carry strings
+  and the pages never have to know the difference.
+
+  **A keyword KEY is fine and a keyword VALUE is not**, and collapsing those
+  into one test is what let the seam in. A key round-trips symmetrically:
+  every JSON reader here keywordizes keys back, so `{:status …}` is `{:status …}`
+  on both sides. A VALUE does not — `:modified` arrives as `\"modified\"` and
+  nothing turns it back. So a model carrying keyword values publishes a
+  contract that describes something no consumer receives, which is exactly the
+  ambiguity a `[:sequential :map]` was hiding one level up: the schema can be
+  satisfied by the handler and by the client and mean two different things."
   [x]
-  (cond
-    (map? x)    (and (every? keyword? (keys x)) (every? json-shaped? (vals x)))
-    (vector? x) (every? json-shaped? x)
-    (or (string? x) (number? x) (boolean? x) (keyword? x) (nil? x)) true
-    :else false))
+  (letfn [(val? [x]
+            (cond
+              (map? x)    (and (every? keyword? (keys x)) (every? val? (vals x)))
+              (vector? x) (every? val? x)
+              (or (string? x) (number? x) (boolean? x) (nil? x)) true
+              :else false))]
+    (val? x)))
 
 (deftest timeline-is-the-reviewer-landing-model
   ;; The landing page answers two questions in the order a reviewer asks
@@ -116,22 +129,27 @@
       (is (= 3 (:count cv)))
       (is (= 1 (:count (first (:modules cv)))))
       (is (= 2 (:count (second (:modules cv))))))
-    (testing "a modified form carries its identity, status and recorded ask"
+    (testing "a modified form carries its identity, status and recorded ask —
+              as WIRE values. A keyword here would reach a consumer as a string
+              with nothing to convert it back, so the model that publishes the
+              contract must already speak in what the contract declares."
       (let [h (by-form "demo.a.core/hello")]
-        (is (= :modified (:status h)))
+        (is (= "modified" (:status h)))
         (is (= "make hello increment" (:why h)))
-        (testing "the line diff is the same one history renders"
+        (testing "the line diff carries the same classes history renders,
+                  stringified — `diff-lines` keeps its keywords for the
+                  agent-facing text renderer"
           (is (= ["(defn hello [x] x)"]
-                 (mapv second (filter #(= :del (first %)) (:diff h)))))
+                 (mapv second (filter #(= "del" (first %)) (:diff h)))))
           (is (= ["(defn hello [x] (inc x))"]
-                 (mapv second (filter #(= :add (first %)) (:diff h))))))
+                 (mapv second (filter #(= "add" (first %)) (:diff h))))))
         (testing "blast radius: who calls this form now"
           (is (= 1 (:callers h)) "demo.b.util/helper calls it"))))
     (testing "an added form has no was-side and no callers"
       (let [h (by-form "demo.b.util/helper")]
-        (is (= :added (:status h)))
+        (is (= "added" (:status h)))
         (is (= 0 (:callers h)))
-        (is (every? #(= :add (first %)) (:diff h)))))
+        (is (every? #(= "add" (first %)) (:diff h)))))
     (testing "the whole model survives a JSON round trip"
       (is (json-shaped? cv) (pr-str cv)))))
 

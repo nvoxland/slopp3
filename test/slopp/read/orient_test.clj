@@ -563,3 +563,43 @@
         (is (= h1 (:head r)))
         (is (= (orient/code-deltas-since st (:at (first ds))) (:behind r))
             "the same counter the host and the served app report, not a fourth spelling")))))
+
+(deftest a-suspect-verdict-names-the-edit-that-made-it-suspect
+  ;; "Something is stale, restart" is a fix with no diagnosis, and the reader
+  ;; is mid-verdict asking why. One write reloads a whole namespace, so every
+  ;; value captured from it falls behind TOGETHER — which is what makes naming
+  ;; one edit for the whole list honest rather than a guess.
+  ;;
+  ;; BOTH readers are driven from one drift value on purpose. `host-brief` and
+  ;; `host-warning` are one producer aimed at two audiences, and this repo's
+  ;; most repeated defect is an improvement landing on one of a pair.
+  (let [info  {:mode :live :booted-at 100 :last-reload-at 200}
+        drift '[{:ns slopp.mcp :form env-handlers! :why :derived-stale
+                 :behind slopp.mcp.tools/cheat-sheet
+                 :behind-edit {:delta "d25795" :prompt "say what where now does"}}
+                {:ns slopp.mcp :form tail-handlers! :why :derived-stale
+                 :behind slopp.mcp.tools/cheat-sheet
+                 :behind-edit {:delta "d25795" :prompt "say what where now does"}}]]
+    (doseq [[who note] [["verdict" (:verdict-note (orient/host-warning info 0 drift))]
+                        ["brief"   (:note (orient/host-brief info 0 false drift))]]]
+      (is (re-find #"d25795" (str note))
+          (str who " must name the delta that put them behind: " (pr-str note)))
+      (is (re-find #"say what where now does" (str note))
+          (str who ": the prompt is what makes it click — a delta id alone is a"
+               " lookup: " (pr-str note)))
+      (is (re-find #"`restart`" (str note))
+          (str who ": the fix survives the diagnosis: " (pr-str note)))))
+  ;; positive control on the GUARD, not just the happy path: rows that disagree
+  ;; about the cause must get none named, or the note would confidently blame
+  ;; whichever row sorted first
+  (let [info  {:mode :live :booted-at 100 :last-reload-at 200}
+        split '[{:ns a.core :form f :why :derived-stale :behind b.core/x
+                 :behind-edit {:delta "d1" :prompt "one"}}
+                {:ns a.core :form g :why :derived-stale :behind c.core/y
+                 :behind-edit {:delta "d2" :prompt "two"}}]]
+    (doseq [[who note] [["verdict" (:verdict-note (orient/host-warning info 0 split))]
+                        ["brief"   (:note (orient/host-brief info 0 false split))]]]
+      (is (not (re-find #"went behind at" (str note)))
+          (str who ": two causes, so no single one is named: " (pr-str note)))
+      (is (re-find #"2 form" (str note))
+          (str who ": and the note is still produced: " (pr-str note))))))

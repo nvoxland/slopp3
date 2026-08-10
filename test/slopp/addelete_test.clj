@@ -157,8 +157,8 @@
   ;;
   ;; The information was always there — `query_depends {on "ns/name"}` answers
   ;; exactly this, and the skill teaches asking it before every delete. Making
-  ;; the agent remember a check the write path could run is the shape Core 1
-  ;; names. `ns_delete` has refused on this shape all along, naming the
+  ;; the agent remember a check the write path could run is a compensating
+  ;; habit — hand-patching a hole the system should own. `ns_delete` has refused on this shape all along, naming the
   ;; requirers; there is no reason for the form-level delete to differ.
   (let [sess (external/open!)]
     (try

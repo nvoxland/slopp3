@@ -89,3 +89,35 @@
         (is (re-find #"\[a \(inc x\)" (str (:suggestion r)))
             (pr-str r)))
       (finally (ops/close! sess)))))
+
+(deftest ^:external where-reaches-a-keyword-valued-registry-row-over-the-wire
+  ;; The wire keywordizes KEYS and leaves values as STRINGS, so `{"key":
+  ;; "stored-name"}` arrives here as `{:key "stored-name"}` — while every
+  ;; registry in this store is keyed by keyword values. That combination made
+  ;; the most common thing `where` exists to address the one thing a caller
+  ;; could not express, and it is the pipeline rather than the plan that this
+  ;; pins: nothing between the transport and the plan coerces a value.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'wr.reg
+                   (str "(ns wr.reg)\n\n"
+                        "(def catalog\n"
+                        "  [{:key :stored-name :severity :warn}\n"
+                        "   {:key :key-typos :severity :error}])\n"))
+      (testing "the wire spelling reaches the keyword-valued row"
+        (let [r (ops/edit-subform! sess 'wr.reg 'catalog nil
+                                   "{:key :stored-name :severity :fatal}"
+                                   :where {:key "stored-name"}
+                                   :prompt "raise stored-name")]
+          (is (nil? (:error r)) (pr-str r))
+          (let [src (query/query-source sess 'wr.reg)]
+            (is (re-find #":stored-name :severity :fatal" src) src)
+            ;; positive control: it addressed ONE row — a plan that ate the
+            ;; whole vector satisfies the assertion above just as well
+            (is (re-find #":key-typos :severity :error" src) src))))
+      (testing "a genuine miss names the values that key DOES take"
+        (let [e (str (:error (ops/edit-subform! sess 'wr.reg 'catalog nil "{}"
+                                                :where {:key "no-such-rule"})))]
+          (is (re-find #":stored-name" e) e)
+          (is (re-find #":key-typos" e) e)))
+      (finally (ops/close! sess)))))

@@ -23,11 +23,18 @@
           (sort (keys (:namespaces st))))))
 
 (defn ^{:web/read :browse/form-source} form-source-read
-  "Read performer: one form's source text, or nil when the form is unknown."
+  "Read performer: one form's source text AND its store id, or nil when the
+  form is unknown.
+
+  The id rides along because this performer already resolved the element to
+  get the text — it was in hand and discarded. It is what lets a consumer
+  holding only the NAME (which is what the published contract carries, as
+  `:handler`) reach the id-addressed form page, without a store identity ever
+  entering the portable document."
   [{:keys [session]} {:keys [ns name]}]
   (let [st (:store @session)]
     (when-let [e (store/form-named st (symbol (str ns)) (symbol (str name)))]
-      (n/string (:node e)))))
+      {:form-id (:id e) :source (n/string (:node e))})))
 
 (defn ^{:web/read :ui/timeline} timeline-read
   "Read performer: the reviewer landing model — milestones plus the

@@ -363,3 +363,50 @@
       ;; the control: the fix must not swallow the message it is narrowing
       (let [m (msg "(defn h \"H.\" [s] (eval s))")]
         (is (re-find #"eval" (str m)) (pr-str m))))))
+
+(deftest a-tagged-literal-is-data-and-every-denylisted-symbol-teaches-its-way-out
+  ;; ONE function, TWO hand-kept lists, and each had already cost.
+  ;;
+  ;; (1) A tagged literal sexprs as `(read-string "#…")`, and the recogniser
+  ;; matched the one tag it was written for. Measured: `#inst "2020-01-01"` and
+  ;; `#uuid "…"` — ordinary Clojure data literals, nothing to do with D3 — were
+  ;; REFUSED, blaming `read-string`, the synthetic head of their own expansion
+  ;; and a symbol the source does not contain. That is the exact bug the
+  ;; comment above the reader-conditional arm describes, still live for every
+  ;; tag but the one it was fixed for. The store round-trips both perfectly, so
+  ;; the gate was the only obstacle.
+  ;;
+  ;; A tagged literal is DATA. The gate must no more read inside it for banned
+  ;; symbols than it reads inside a string — except `#?`/`#?@`, which are
+  ;; special precisely because they change what code is READ.
+  ;;
+  ;; (2) The escape hatch was taught in four hand-listed `cond` branches over a
+  ;; 17-member denylist, with no `:else`. Measured: 10 of 17 taught nothing —
+  ;; alter-var-root, binding, definline, eval, gen-class, intern, load-file,
+  ;; load-reader, load-string, read-string. A refusal is read in fix-it mode
+  ;; and one that names no way forward sends the reader to guess.
+  (let [check #(edit/dialect-check (:node (edit/parse-one %)))]
+    (testing "an ordinary tagged literal is admissible — it is data"
+      (is (nil? (check "(defn f [] #inst \"2020-01-01\")")))
+      (is (nil? (check "(defn g [] #uuid \"00000000-0000-0000-0000-000000000001\")"))))
+    (testing "the reader conditional is still refused — by its TAG, both spellings"
+      (is (str/includes? (str (check "(defn h [] #?(:clj 1 :cljs 2))"))
+                         "reader conditionals"))
+      (is (str/includes? (str (check "(defn h [] #?@(:clj [1 2]))"))
+                         "reader conditionals")))
+    (testing "a read-string the author actually WROTE is still refused"
+      ;; the positive control on the pruning: it must not swallow real hits
+      (is (str/includes? (str (check "(defn k [] (read-string \"x\"))"))
+                         "read-string")))
+    (testing "the denylist carries its own teaching, so there is no branch to forget"
+      (is (map? @#'edit/banned-syms)
+          "banned-syms is the one list: symbol -> how to get past it")
+      (is (every? #(and (string? %) (seq %)) (vals @#'edit/banned-syms))
+          "a denylisted symbol with no teaching is the gap this closes"))
+    (testing "and every denylisted symbol's refusal names a way forward"
+      (let [bare (for [sym  (keys @#'edit/banned-syms)
+                       :let [msg (str (check (str "(defn probe [] [" sym "])")))]
+                       :when (not (re-find #"\^:unsafe|carrier|RENAME|write a function|store/late-ref|instead" msg))]
+                   sym)]
+        (is (empty? bare)
+            (str "denylisted symbols whose refusal teaches nothing: " (vec bare)))))))

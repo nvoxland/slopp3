@@ -102,7 +102,8 @@
   when readable and left as the raw printed string otherwise (so evals that
   return unreadable objects — namespaces, functions — don't blow up).
 
-  **Three states, three answers.** Core 1 at the transport, and it took two
+  **Three states, three answers.** An eval that threw and one that returned
+  nothing must not share a representation — the rule at the transport, and it took two
   goes to get all three.
 
   **It THREW.** This once kept only `:value`, and a throw produces none — the
@@ -524,7 +525,7 @@
   and a slightly slower suite.
 
   Both numbers are chosen against a NOISY signal: this box is shared, and
-  `ideas/full-check-is-slow.md` records full runs ranging 172–287s under other
+  Full runs have measured 172–287s under other
   load. Re-measure before retuning either, and take a single A/B pair as
   suggestive rather than settled."
   {:parked 2 :reuses 50})

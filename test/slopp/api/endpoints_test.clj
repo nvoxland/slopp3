@@ -794,3 +794,86 @@
         (ok? b)
         (is (<= (count (:hits b)) (:max model/search-limits)))
         (is (= (:total b) (reduce + (vals (:totals b)))))))))
+
+(deftest the-source-endpoint-hands-back-the-id-it-resolved
+  ;; slopp-ui asked for this and argued AGAINST the version that would have been
+  ;; easier to say yes to: `:form-id` in the published contract document. They
+  ;; ruled that out twice themselves — a form id exists only for a producer whose
+  ;; code lives in a store, so a portable document carrying one is the privilege
+  ;; `slopp.web.contract` exists to remove.
+  ;;
+  ;; This endpoint is already store-only: it answers with stored source and
+  ;; pretends nothing about portability. So the identity costs the published
+  ;; document nothing and closes the one hop a consumer cannot make — from the
+  ;; NAME the contract publishes (`:handler`) to the id-addressed page that
+  ;; carries callers, callees and warranty.
+  (let [st  (store/ingest (store/empty-store) 'src.demo
+                          "(ns src.demo)\n\n(defn rate [kg] (* kg 2))\n")
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st})}})
+        r   (web/handle! ctx {:request-method :get :uri "/api/source/src.demo/rate"})
+        b   (:body r)]
+    (testing "the form's own id comes back with its source"
+      (is (= 200 (:status r)) (pr-str r))
+      (is (= (:id (store/form-named st 'src.demo 'rate)) (:form-id b))
+          (str "the id the endpoint resolved, not a name a consumer must resolve: "
+               (pr-str b))))
+    (testing "the name-addressed answer still says which form it answered for"
+      (is (= "src.demo" (:ns b)))
+      (is (= "rate" (:name b)))
+      (is (re-find #"\(\* kg 2\)" (:source b))))
+    (testing "and it validates against the contract that declares it"
+      (is (m/validate contracts/form-source b) (pr-str b)))
+    (testing "an unknown form is still a 404, not a body with a nil id"
+      (is (= 404 (:status (web/handle! ctx {:request-method :get
+                                            :uri "/api/source/src.demo/nope"})))))))
+
+(deftest every-key-a-response-SENDS-is-a-key-its-contract-DECLARES
+  ;; The half `web-unconstrained-contract` cannot see. That rule finds a schema
+  ;; POSITION that constrains nothing (`[:sequential :map]`, `:any`). This is
+  ;; the other direction: a fully-typed `[:map …]` that simply omits entries the
+  ;; handler is really sending. `m/validate` passes an OPEN map, so those keys
+  ;; are checked by nothing, generated into no client, and documented nowhere —
+  ;; and unlike a bare `:map` there is no token in the schema to notice.
+  ;;
+  ;; Measured when this was written: `/api/timeline` sent EIGHT keys per
+  ;; milestone and declared three — `:at :status :agent :sha :more-lines` all
+  ;; arrived unannounced, and `:working` sent `:since`, the anchor every other
+  ;; number in that map is relative to. Every other endpoint was already clean,
+  ;; which is why this is a guard and not a project.
+  (let [st  (-> (store/empty-store)
+                (store/ingest 'ek.core "(ns ek.core)\n\n(defn rate [kg] (* kg 2))\n"))
+        ctx (web/context {:web/namespaces server/served-namespaces
+                          :web/perform-ctx {:session (atom {:store st :test-map {}})}})
+        get* (fn [uri] (:body (web/handle! ctx {:request-method :get :uri uri})))
+        ;; walk a value against its schema, collecting keys the schema does not
+        ;; name. Only descends where the schema does, so an undeclared subtree
+        ;; is reported once at its own key rather than as everything inside it.
+        undeclared
+        (fn undeclared [schema v path]
+          (cond
+            (and (map? v) (vector? schema) (= :map (first schema)))
+            (let [entries (into {} (for [e (remove map? (rest schema))] [(first e) (last e)]))]
+              (concat (for [k (keys v) :when (not (contains? entries k))] (conj path k))
+                      (mapcat (fn [[k sub]] (undeclared sub (get v k) (conj path k)))
+                              (select-keys entries (keys v)))))
+
+            (and (sequential? v) (vector? schema) (= :sequential (first schema)))
+            (mapcat #(undeclared (last schema) % path) v)
+
+            :else nil))
+        gaps (fn [uri schema] (vec (distinct (undeclared schema (get* uri) []))))]
+
+    (testing "the endpoints this namespace can drive send exactly what they declare"
+      (is (= [] (gaps "/api/timeline" contracts/timeline)))
+      (is (= [] (gaps "/api/modules" contracts/module-index)))
+      (is (= [] (gaps "/api/ns/ek.core" contracts/ns-outline)))
+      (is (= [] (gaps "/api/namespaces" contracts/namespace-list)))
+      (is (= [] (gaps "/api/source/ek.core/rate" contracts/form-source))))
+
+    (testing "and the walker can SEE an undeclared key — without this the five
+              assertions above are five empty lists agreeing with each other"
+      (is (= [[:milestones :at]]
+             (vec (distinct (undeclared [:map [:milestones [:sequential [:map [:commit :string]]]]]
+                                        {:milestones [{:commit "d1" :at "now"}]}
+                                        []))))))))

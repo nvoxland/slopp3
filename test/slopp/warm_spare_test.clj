@@ -6,7 +6,7 @@
   a restart cheap. The spare is a pure optimisation, so its correctness
   reduces to \"the image you get is the image you would have got\"; anything
   else asserted here would be asserting the timing of an implementation
-  detail. Recorded in `.context/design-disciplines.md` as a measured DEAD END
+  detail. A measured DEAD END
   in its pooled form, which is why this stayed one test rather than growing."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops] [slopp.ops.external :as external]))

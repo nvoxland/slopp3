@@ -529,6 +529,59 @@
             {}
             (:deltas store))))
 
+(defn record-observation
+  "Append an `:observe` delta recording that tests RAN and what happened —
+  the second journal citizen beside `:verify`, and deliberately not the same
+  one.
+
+  A VERIFICATION is a claim a WRITE makes about the store. An OBSERVATION is
+  narrower — *these tests ran, in this tier, and this is what happened* —
+  which is why `test_run` and the external tier could not simply append a
+  `:verify`: `done`'s scope logic, milestone `:status` and the trace map all
+  read `:verify`, and widening it would weaken what a verification MEANS.
+
+  Three facts, in three places:
+
+  - `scope` — WHAT was observed. One namespace symbol or a collection of them;
+    it lands in `:scope` as a VECTOR. It does NOT go in `:ns`: that column
+    holds ONE namespace (every consumer reads it that way — replay, merge, the
+    outline), so a collection put there is flattened by `(str …)` into a single
+    symbol whose name is the printed list. Measured before this was fixed: 2293
+    characters for one run, and the scope unreadable per-namespace in all 27
+    recorded observations. `:ns` therefore carries the `*session*` sentinel
+    that `:done`, `:commit` and `:turn-begin` already use for a marker that is
+    not about one namespace — always, so the scope has exactly one home and the
+    two cannot disagree.
+  - `result` — WHAT HAPPENED. Carries `:tier`, `:status`, `:ran`, and
+    `:failures` as a LIST of `{:test <qualified-sym>}` — **the same shape the
+    in-image summary uses**, so a reader of red evidence needs one spelling and
+    not two. Producers must QUALIFY before recording: clojure.test prints
+    `FAIL in (name)` and the external tier's own `:failing` blocks carry that
+    bare name, which cannot be matched back to a form.
+  - `closure` (optional) — AT WHAT CONTENT, as
+    {namespace [[slopp.ops.engine/closure-hashes]]}. This is what makes the
+    record a KEY rather than a diary entry: *these tests were green against
+    exactly this content*, askable later by a different process from the
+    journal alone. Omitted rather than empty when the caller has none, because
+    an empty map reads as \"nothing depended on anything\".
+
+  (`:verify` still puts its namespace list in `:ns` and has the same flattening
+  problem. It is on the verification path rather than the evidence path,
+  nothing reads that list today, and 7918 of them already exist — so it is a
+  separate change with its own risk, not a rename to fold in here.)
+
+  Registered in [[slopp.store.fields/markers]] as a no-content op, or foreign
+  sync full-reloads on every sighting of it."
+  ([store scope result] (record-observation store scope result nil))
+  ([store scope result closure]
+   (let [parent (:id (last (:deltas store)))
+         [did store] (gen-id store "d")
+         scope (vec (if (coll? scope) scope [scope]))]
+     (update store :deltas conj
+             (cond-> {:id did :parent parent :op :observe :ns '*session*
+                      :at (now-ms) :scope scope :result result}
+               (seq closure) (assoc :closure closure))))))
+
 (defn record-verification
   "Append a `:verify` delta recording a test-run result against `ns-sym` — 'what
   was proven green at this point' (C4, D5/D6 verification-provenance)."
@@ -1720,3 +1773,17 @@
           s0 (get store reg))))
      store
      (filter #(= :module (:grain (val %))) name-keyed-registers))))
+
+(defn last-write-on
+  "The most recent delta whose subject is `ns-sym`, or nil.
+
+  A write reloads its WHOLE namespace, so this is what most recently
+  re-evaluated every form in it — a different question from what last changed
+  any one form, and the one a staleness report needs. The form a captured
+  value has fallen behind is frequently one nobody edited.
+
+  Session-scoped deltas never match and need no filtering: `:done` and
+  `:observe` carry `*session*`, and `:verify` carries a VECTOR of namespaces,
+  so equality against a symbol excludes all three."
+  [store ns-sym]
+  (last (filter #(= ns-sym (:ns %)) (deltas store))))

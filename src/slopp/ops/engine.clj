@@ -1329,3 +1329,44 @@
   median 43 of 46 external test namespaces and deferred 84.6% of changes."
   [session store changed]
   (external-among store (impacted-tests session store changed)))
+
+(defn- sha256
+  "Hex SHA-256 of a string. A REAL digest rather than [[slopp.image.currency/hash-of]],
+  which says in its own docstring that it is in-process only because its
+  registry is never persisted — this one is written into the journal and
+  compared by a later process, so the guarantee has to hold across JVMs."
+  [^String s]
+  (->> (.digest (java.security.MessageDigest/getInstance "SHA-256")
+                (.getBytes s "UTF-8"))
+       (map #(format "%02x" %))
+       (apply str)))
+
+(defn ^:export closure-hashes
+  "For each namespace in `scope`, the CONTENT IDENTITY of everything a verdict
+  for it depends on: its own source, the source of every namespace its
+  require-closure reaches, and the dependency manifest.
+
+  This is what makes a verdict reusable in principle — *this test was green
+  against exactly this content* — and it is recorded on the `:observe` delta so
+  the question can be asked later, by a different process, from the journal
+  alone. Two properties decide soundness and pull opposite ways: it must change
+  when anything the test can LOAD changes (or a stale green outlives a real
+  edit), and it must NOT change when unrelated code moves (or it is merely a
+  store version and nothing is ever reusable).
+
+  Reach is the require closure — [[slopp.store/ns-closure]], the same producer
+  `test-nses-reaching` selects with, so the set a verdict is keyed to and the
+  set a change is routed to cannot disagree. That closure is a conservative
+  OVER-approximation of what a test executes, which is the safe direction here:
+  it can only ever invalidate a verdict that would still have been valid.
+
+  Each namespace is digested ONCE and the closures are combined from those
+  digests, so asking about a hundred test namespaces renders each source once
+  rather than once per closure that contains it."
+  [store scope]
+  (let [needed (into #{} (mapcat #(store/ns-closure store %)) scope)
+        per-ns (into {} (map (juxt identity #(sha256 (str (render/render-ns store %))))) needed)
+        deps   (sha256 (pr-str (:deps store)))]
+    (into {} (for [n scope]
+               [n (sha256 (str/join "|" (cons deps (map #(get per-ns % "?")
+                                                        (sort (store/ns-closure store n))))))]))))

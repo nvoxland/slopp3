@@ -113,3 +113,59 @@
                        (recur (inc i) (conj out (str c))))
 
             :else (recur (inc i) (conj out (str c)))))))))
+
+(def ^:private percent-of
+  "ASCII character → its `%XX` escape, for every character that is not
+  unreserved.
+
+  Built with `char` over a `range`, so it is KEYED by whatever this platform
+  yields for a character — a Character on the JVM, a one-character string in a
+  browser — exactly as [[hex-digit]] is. That is what lets the lookup be
+  written once and be correct on both without anyone asking which it is.
+
+  Unreserved is RFC 3986's set (`A-Z a-z 0-9 - . _ ~`), and everything else in
+  ASCII is escaped rather than only the characters that break a URL today. An
+  encoder that escapes too little is wrong somewhere specific; one that escapes
+  too much is merely ugly, and the ugliness is visible."
+  (let [unreserved (set (concat (map char (range 65 91))    ; A-Z
+                                (map char (range 97 123))   ; a-z
+                                (map char (range 48 58))    ; 0-9
+                                [\- \. \_ \~]))
+        hex        "0123456789ABCDEF"]
+    (into {} (for [n (range 128)
+                   :let [c (char n)]
+                   :when (not (contains? unreserved c))]
+               [c (str "%" (nth hex (quot n 16)) (nth hex (rem n 16)))]))))
+
+(defn ^:export encode-component
+  "Percent-encode `s` for one URL component → a string. `nil`/`\"\"` → `\"\"`.
+
+  The other half of [[decode-component]], and the pair is the point: this is
+  written against the decoder that will read it back, and the round trip is
+  what the tests assert. Two functions written apart are two guesses — which is
+  how a literal `+` in a name like `merge+` reaches a reader as a space.
+
+  A space becomes `%20`, never `+`. `decode-component` accepts both, but `%20`
+  is also correct in a PATH, where `+` is a literal plus — so one spelling
+  serves both positions and a caller never has to know which it is building.
+
+  **Non-ASCII passes through VERBATIM, and that is a limit rather than an
+  oversight.** Percent-encoding a character requires its CODE POINT, and asking
+  what a character IS is the single question this namespace exists so that
+  nobody has to ask — `(int c)` answers it on one platform and throws on the
+  other, and D3 denies the reader conditional that would branch. So the honest
+  encoder is the one that escapes what it can address portably (the whole ASCII
+  range, exactly) and leaves the rest alone.
+
+  What that costs is precision on the wire, not correctness in the loop: the
+  round trip still holds, because the decoder passes non-`%` text through
+  unchanged. A caller who needs strictly RFC 3986 bytes for a non-ASCII name
+  needs a platform encoder, and should say so where it is used."
+  [s]
+  (let [t (str s)
+        n (count t)]
+    (loop [i 0 out []]
+      (if (>= i n)
+        (apply str out)
+        (let [c (nth t i)]
+          (recur (inc i) (conj out (or (percent-of c) (str c)))))))))

@@ -19,8 +19,9 @@
 (def namespace-row
   "One namespace on the wire: its name and how many named forms it holds."
   [:map
-   [:ns :string]
-   [:forms :int]])
+   [:ns {:doc "the namespace's full name"} :string]
+   [:forms {:doc (str "how many NAMED forms it holds — the ns form and anonymous"
+                      " top-level forms are not counted")} :int]])
 
 (def namespace-list
   "`GET /api/namespaces` — every namespace, sorted.
@@ -62,19 +63,42 @@
   `m/validate` passes an OPEN map, so a key the schema does not name is a key
   nothing checks."
   [:map
-   [:name :string]
-   [:form-id :string]
-   [:kind :string]
-   [:sig [:maybe [:sequential :string]]]
-   [:private? :boolean]
-   [:doc [:maybe :string]]
-   [:schema [:maybe :string]]
-   [:mass :int]
-   [:calls [:sequential :string]]
-   [:callers-out :int]
-   [:callers-out-test :int]
-   [:effectful? :boolean]
-   [:exported? :boolean]])
+   [:name {:doc "the form's own name, unqualified"} :string]
+   [:form-id {:doc (str "its stable address in the store — survives renames and"
+                        " moves, which the name does not")} :string]
+   [:kind {:doc "the defining head: defn, def, deftest, defmulti, ns …"} :string]
+   [:sig {:doc (str "arglists, ONE STRING PER ARITY and unjoined, so a consumer can"
+                    " stack a multi-arity the way source does. Joining is something"
+                    " a reader can do and cannot undo. nil when the form has none —"
+                    " a def has no signature at all")}
+    [:maybe [:sequential :string]]]
+   [:private? {:doc "true when the var is private"} :boolean]
+   [:doc {:doc "the docstring's first line, nil when there is none"} [:maybe :string]]
+   [:schema {:doc "the schema this form declares, nil when it declares none"} [:maybe :string]]
+   [:mass {:doc (str "the form's size as a NODE COUNT over its sexpr — not lines and"
+                     " not characters. Over the sexpr a docstring is one node, so"
+                     " the body's structure dominates; by lines a 40-line docstring"
+                     " over a 30-line body makes the documentation win")} :int]
+   [:calls {:doc (str "the SAME-NAMESPACE forms this one calls, direct edges only,"
+                      " sorted. From the reference graph, so a form reached through"
+                      " a carrier position counts — resolved calls alone draw"
+                      " dispatch targets as leaves, and those matter most. Empty"
+                      " rather than absent: a leaf is an answer")}
+    [:sequential :string]]
+   [:callers-out {:doc (str "how many forms OUTSIDE this namespace call it, counting"
+                            " PRODUCTION namespaces only — fan-in, the blast radius")}
+    :int]
+   [:callers-out-test {:doc (str "the same count over TEST namespaces, kept separate"
+                                 " because one integer cannot be taken apart again."
+                                 " Measured, not reasoned: as a single number it was"
+                                 " ranking by test count — ten of twelve outside"
+                                 " callers were deftests, and the entry point that IS"
+                                 " the render sat fourth on its one real caller")}
+    :int]
+   [:effectful? {:doc (str "true when the form performs effects — what this form"
+                           " DOES, as against the namespace's :tier, which is what"
+                           " it is allowed to do")} :boolean]
+   [:exported? {:doc "true when the form is part of its module's public surface"} :boolean]])
 
 (def token
   "One syntax token: `[\"keyword\" \":web/path\"]`.
@@ -106,9 +130,52 @@
   wrapper called with only `:id` sends no query string at all, which is the
   request every link written before these existed already made."
   [:map
-   [:id :string]
-   [:view {:optional true} :string]
-   [:depth {:optional true} :int]])
+   [:id {:doc (str "the form's stable id — interpolated into the PATH, not sent as a"
+                   " query parameter, and the only required part of the address")} :string]
+   [:view {:optional true
+           :doc (str "the rendering fidelity to build the response at; travels as a"
+                     " query parameter. Omit for the default — a wrapper called with"
+                     " only :id sends no query string at all, which is the request"
+                     " every link written before these existed already made")} :string]
+   [:depth {:optional true
+            :doc (str "how far to follow the call graph for :callers and :callees;"
+                      " query parameter. Omit for the default")} :int]])
+
+(def neighbour-card
+  "One form on the OTHER end of an edge — a caller or a callee, as a card.
+
+  Declared once for both directions because it is one shape, and declared at
+  all because `[:sequential :map]` is not a type: a bare `:map` validates any
+  map, so the generated client checked every response against it and could
+  never find anything. Reported by slopp-ui after a shape change went silent
+  for weeks one endpoint over.
+
+  The card INLINES what a reader needs in order to decide whether to follow
+  the edge — signature, docstring, recorded why, coverage — because the
+  failure this page exists to avoid is the lonely bubble: arriving cold at a
+  form and having to make one request per neighbour just to learn which of
+  them matters.
+
+  **The optional four are OPTIONAL rather than `:maybe`, measured over 34 real
+  cards.** A form with no docstring OMITS `:doc`; it does not send nil. Getting
+  that backwards writes a contract that refuses valid data, which is the
+  failure mode where the contract becomes the thing you route around."
+  [:map
+   [:form {:doc "the neighbour's qualified name"} :string]
+   [:form-id {:doc "its stable address, for a permalink"} :string]
+   [:ns {:doc "the namespace it lives in"} :string]
+   [:module {:doc "that namespace's module"} :string]
+   [:calls {:doc (str "how many edges run between it and the subject — a COUNT here,"
+                      " unlike a form row's :calls, which lists same-namespace callee"
+                      " NAMES. Same key, two documents, two meanings")} :int]
+   [:warranty {:doc "what is known to have exercised it"}
+    [:map [:covered {:doc "how many tests were OBSERVED running it"} :int]]]
+   [:sig {:optional true :doc "its arglist as one string; absent when it has none"} :string]
+   [:doc {:optional true :doc "its docstring's first line; absent when it has none"} :string]
+   [:why {:optional true :doc "the recorded ask behind its last write; absent when none"} :string]
+   [:via {:optional true
+          :doc (str "how the edge was found — present on a CALLEE, absent on a caller"
+                    " card because callers are grouped by it one level up")} :string]])
 
 (def form-view
   "`GET /api/form/:id` — one form's permalink model.
@@ -119,31 +186,93 @@
   refuses valid data every time the model grew a field — the failure mode
   where the contract becomes the thing you route around."
   [:map
-   [:form-id :string]
-   [:form :string]
-   [:name :string]
-   [:ns :string]
-   [:view :string]
-   [:views [:sequential :string]]
-   [:tokens [:sequential token]]
-   [:callers [:sequential [:map
-                           [:via :string]
-                           [:count :int]
-                           [:forms [:sequential :map]]]]]
-   [:callees [:sequential :map]]
-   [:note :string]])
+   [:form-id {:doc "the form's stable address — the permalink this view answers for"} :string]
+   [:form {:doc "the form's qualified name, ns/name"} :string]
+   [:name {:doc "the form's own name, unqualified"} :string]
+   [:ns {:doc "the namespace it lives in"} :string]
+   [:view {:doc (str "the rendering FIDELITY this response was built at, echoing"
+                     " ?view= — so a consumer can tell which one it got rather than"
+                     " assuming its request was honoured")} :string]
+   [:views {:doc "every fidelity this form can be requested at"} [:sequential :string]]
+   [:tokens {:doc (str "the form's source as [CLASS TEXT] PAIRS — first element the"
+                       " syntax class (\"keyword\", \"string\", \"comment\"…), second the"
+                       " literal text. Not markup: the server sends classes and text"
+                       " and the client decides what element they become, so no"
+                       " consumer needs a lexer. Concatenating every TEXT reproduces"
+                       " the source exactly, which is what lets a form render from"
+                       " these alone")}
+    [:sequential token]]
+   [:callers {:doc (str "who reaches this form, GROUPED BY HOW — a static call and a"
+                        " declared reference are both callers and are not the same"
+                        " evidence")}
+    [:sequential [:map
+                  [:via {:doc (str "HOW the edge was found: \"static\" is a call written"
+                                   " in the code, \"carrier\" is a reference passed as a"
+                                   " value (#'var, a late-ref), \"declared\" is a marker"
+                                   " naming it. Grouped rather than summed because"
+                                   " they are not the same evidence")} :string]
+                  [:count {:doc "how many callers reach it that way"} :int]
+                  [:forms {:doc "the caller cards reached this way"}
+                   [:sequential neighbour-card]]]]]
+   [:callees {:doc (str "the forms this one reaches, as cards — the other direction"
+                        " of the graph. Each carries its own :via inline, where a"
+                        " caller's sits on the group")}
+    [:sequential neighbour-card]]
+   [:note {:doc (str "the standing caveat on :callers and :callees, in words: the"
+                     " edges come from a SYNTACTIC reader over the store, so they are"
+                     " a FLOOR and not a census — a call reached through a binding or"
+                     " built at runtime is not among them. Render it wherever the"
+                     " edges are shown; a reader who takes a caller list for complete"
+                     " draws the wrong conclusion from a short one")} :string]])
 
 (def timeline
   "`GET /api/timeline` — milestones newest first, plus the working set."
   [:map
-   [:milestones [:sequential [:map
-                              [:commit :string]
-                              [:description :string]
-                              [:range {:optional true} :string]]]]
-   [:working [:map
-              [:forms :int]
-              [:namespaces [:sequential :string]]
-              [:prompts [:sequential :string]]]]])
+   [:milestones {:doc "milestones, NEWEST FIRST — render in the order given"}
+    [:sequential [:map
+                  [:commit {:doc (str "the milestone's delta id, e.g. d24976 — this"
+                                      " store's own address for it, not a git sha")} :string]
+                  [:description {:doc "what the milestone was recorded as achieving"} :string]
+                  [:at {:doc "when it was recorded, formatted — \"2026-08-06 00:38\""} :string]
+                  [:status {:doc (str "the verdict the milestone was recorded under,"
+                                      " mirroring its done-point — \"green\" on every"
+                                      " milestone in this store, and not declared as an"
+                                      " enum because a red one is expressible and this"
+                                      " store has never produced one to check against")} :string]
+                  [:range {:optional true
+                           :doc (str "from..to, the delta span this milestone covers,"
+                                     " which is what /api/change/:range takes. Absent"
+                                     " on the first milestone, which has no predecessor")} :string]
+                  [:more-lines {:optional true
+                                :doc (str "how many lines of :description were cut. Present"
+                                          " only when it was capped, so its absence means"
+                                          " you have the whole thing")} :int]
+                  [:agent {:optional true
+                           :doc "who recorded it; absent on milestones written before agents were tracked"} :string]
+                  [:sha {:optional true
+                         :doc (str "the git sha this milestone was projected to. Present"
+                                   " only for milestones whose DELTA carries one — this"
+                                   " model is a pure fold and never opens the projection"
+                                   " to go looking")} :string]]]]
+   [:working {:doc (str "the work since the newest milestone — what is written and"
+                        " NOT yet milestoned. This is the field with no counterpart"
+                        " in a git-shaped timeline: it is uncommitted work that is"
+                        " nonetheless recorded, verified and addressable")}
+    [:map
+     [:since {:doc (str "the delta this set is measured AFTER — the newest milestone's"
+                        " id, or \"log-start\" when there is no milestone yet. Every"
+                        " other number here is relative to it, so a consumer showing"
+                        " the counts without it is showing a figure with no baseline")} :string]
+     [:forms {:doc "how many forms have been touched since :since"} :int]
+     [:namespaces {:doc "the namespaces those forms are in"} [:sequential :string]]
+     [:prompts {:doc (str "the recorded WHYs of those writes — the asks that produced"
+                          " them, in order. Intent, not a commit message: nobody"
+                          " wrote these to be read later. CAPPED; :forms is exact")}
+      [:sequential :string]]
+     [:more-prompts {:optional true
+                     :doc (str "how many asks were left out of :prompts. Present only"
+                               " when the list was capped, so its absence means you"
+                               " have all of them")} :int]]]])
 
 (def change-view
   "`GET /api/change/:range` — one milestone reviewed, grouped module then
@@ -154,17 +283,46 @@
   Same discipline as [[token]]: the server sends what changed, never how it
   should look."
   [:map
-   [:from :string]
-   [:to :string]
-   [:count :int]
-   [:modules [:sequential [:map
-                           [:module :string]
-                           [:count :int]
-                           [:namespaces [:sequential [:map
-                                                      [:ns :string]
-                                                      [:count :int]
-                                                      [:forms [:sequential :map]]]]]]]]
-   [:arc [:sequential :any]]])
+   [:from {:doc "the delta id this range starts AFTER — exclusive"} :string]
+   [:to {:doc "the delta id this range ends at — inclusive, and usually a milestone"} :string]
+   [:count {:doc "how many forms changed across the whole range"} :int]
+   [:modules {:doc (str "the changes grouped module then namespace, with a count at"
+                        " every rung so a consumer can render a collapsed tree"
+                        " without summing anything itself")}
+    [:sequential [:map
+                  [:module {:doc "the module name"} :string]
+                  [:count {:doc "forms changed in this module"} :int]
+                  [:namespaces {:doc "the namespaces within this module that changed"}
+                   [:sequential [:map
+                                 [:ns {:doc "the namespace's full name"} :string]
+                                 [:count {:doc "forms changed in this namespace"} :int]
+                                 [:forms {:doc "one entry per changed form"}
+                                  [:sequential
+                                   [:map
+                                    [:form {:doc "the form's qualified name"} :string]
+                                    [:form-id {:doc "its stable address in the store"} :string]
+                                    [:status {:doc "what happened to it in this range"}
+                                     [:enum "added" "modified" "deleted"]]
+                                    [:why {:optional true
+                                           :doc (str "the recorded ask behind the change."
+                                                     " Absent when the write carried none")} :string]
+                                    [:callers {:doc (str "how many distinct forms call it NOW —"
+                                                         " a floor, since the graph is a"
+                                                         " syntactic reader")} :int]
+                                    [:diff {:doc (str "the change as [CLASS TEXT] pairs — class is"
+                                                      " \"same\", \"add\" or \"del\", text is the line."
+                                                      " Never rendered markup: the server says what"
+                                                      " changed, and a \"del\" line becoming a .del"
+                                                      " element is yours")}
+                                     [:sequential [:tuple :string :string]]]]]]]]]]]]
+   [:arc {:doc (str "the range's RED/GREEN arc, oldest first: one entry per"
+                    " verification recorded in the range. Zero failures throughout"
+                    " means the work never went red — which for a range that ADDED"
+                    " assertions is itself a finding, since a test nobody watched"
+                    " fail is a test nobody has evidence for")}
+    [:sequential [:map
+                  [:delta {:doc "the delta that verification ran at"} :string]
+                  [:fail {:doc "failures and errors, summed — zero is green"} :int]]]]])
 
 (def form-source
   "`GET /api/source/:ns/:name` — one form's source text.
@@ -173,9 +331,17 @@
   [[form-view]] is addressed by the stable id. Both exist on purpose: the id
   is the permalink, the name is the path you arrive by."
   [:map
-   [:ns :string]
-   [:name :string]
-   [:source :string]])
+   [:ns {:doc "the namespace the form is in"} :string]
+   [:name {:doc "the form's own name, unqualified"} :string]
+   [:form-id {:doc (str "the form's stable store id — the address that survives a"
+                        " rename, where this endpoint's own :ns/:name does not."
+                        " It is HERE and deliberately not in the published contract"
+                        " document: a form id exists only for a producer whose code"
+                        " lives in a store, and this endpoint is already store-only,"
+                        " so it costs the portable document nothing")} :string]
+   [:source {:doc (str "the form's source text, RENDERED from the store rather than"
+                       " read from a file — there is no file. Canonical formatting,"
+                       " so it is the same text every caller gets")} :string]])
 
 (def gaps
   "Where a subject is about to be THIN — counts, never rows.
@@ -198,10 +364,18 @@
   that has run nothing reports everything uncovered rather than a zero that
   would read as coverage."
   [:map
-   [:forms :int]
-   [:no-doc :int]
-   [:no-why :int]
-   [:uncovered :int]])
+   [:forms {:doc "how many named forms the subject holds — the denominator the other three are counted against"} :int]
+   [:no-doc {:doc (str "of those, how many carry no docstring. NOT the missing-doc"
+                       " advisory, which asks whether to nag about public module"
+                       " surface — this asks whether a reader can learn what a"
+                       " form is without opening it")} :int]
+   [:no-why {:doc (str "how many have no recorded WHY — the write prompt, the ask"
+                       " that produced the form. Absent means nobody said why it"
+                       " exists, which no amount of reading the code recovers")} :int]
+   [:uncovered {:doc (str "how many no test has been OBSERVED exercising, measured"
+                          " against this session's trace — so a process that has"
+                          " run nothing reports everything uncovered rather than a"
+                          " zero that would read as coverage")} :int]])
 
 (def ns-outline
   "`GET /api/ns/:ns` — one namespace's forms in store order, and what tests it.
@@ -217,11 +391,24 @@
   `\"external\"`, so there is no \"nobody said\" for an absent key to mean, and a
   consumer badging on it would otherwise have to invent a fourth state."
   [:map
-   [:ns :string]
-   [:tier [:enum "pure" "internal" "external"]]
-   [:forms [:sequential form-row]]
-   [:tested-by [:sequential :string]]
-   [:gaps gaps]])
+   [:ns {:doc "the namespace's full name"} :string]
+   [:tier {:doc (str "this NAMESPACE's effective purity tier, most-specific"
+                     " declaration winning — what it is ALLOWED to do, which is a"
+                     " different grain from a form row's :effectful? (what one form"
+                     " actually does). Undeclared resolves to \"external\", so there"
+                     " is no fourth state for a consumer to invent")}
+    [:enum "pure" "internal" "external"]]
+   [:forms {:doc (str "its forms in STORE order — the order they load in, which is"
+                      " the order they were written and not alphabetical. A"
+                      " consumer that sorts them loses the only ordering the store"
+                      " has an opinion about")}
+    [:sequential form-row]]
+   [:tested-by {:doc (str "the test namespaces covering this one. Always present and"
+                          " EMPTY rather than absent when nothing does: an absent key"
+                          " and an untested namespace would render identically, and"
+                          " the second is a finding worth showing")}
+    [:sequential :string]]
+   [:gaps {:doc "where this namespace is thin"} gaps]])
 
 (def module-row
   "One module in the Code nav: its production namespaces, how many test
@@ -239,13 +426,24 @@
    layering: an edge into the substrate is not drawn, and `:foundation`
    already says which modules those are."
   [:map
-   [:module :string]
-   [:namespaces [:sequential :string]]
-   [:tests :int]
-   [:tier :string]
-   [:foundation :boolean]
-   [:deps [:sequential :string]]
-   [:gaps gaps]])
+   [:module {:doc "the module name — a namespace's first two segments, e.g. slopp.index"} :string]
+   [:namespaces {:doc (str "its PRODUCTION namespaces, sorted. Test namespaces are"
+                           " not peers of the code they cover, so they are counted"
+                           " in :tests rather than listed here")}
+    [:sequential :string]]
+   [:tests {:doc (str "how many -test namespaces fold into this module. A count"
+                      " rather than an omission because zero is a finding")} :int]
+   [:tier {:doc (str "the declared purity tier — what code in this module is"
+                     " ALLOWED to do: pure, internal, or external")} :string]
+   [:foundation {:doc (str "true when this module is substrate anything may depend"
+                           " on. Edges INTO it are left out of :deps, so a drawn"
+                           " graph is not a hairball of arrows into the basement")}
+    :boolean]
+   [:deps {:doc (str "the modules this one depends on, foundation excluded — the"
+                     " other end of every edge, which is what lets a consumer draw"
+                     " the graph instead of asking the producer for a picture")}
+    [:sequential :string]]
+   [:gaps {:doc "where this module is thin"} gaps]])
 
 (def module-detail
   "`GET /api/module/:m` — one module from the inside: its namespaces, how they
@@ -272,25 +470,47 @@
   `module-index` excludes them: a test folds into the module it covers, so
   listing it puts two things at the same rung that are not peers."
   [:map
-   [:module :string]
-   [:tier [:enum "pure" "internal" "external"]]
-   [:namespaces [:sequential [:map
-                              [:ns :string]
-                              [:forms :int]
-                              [:tier [:enum "pure" "internal" "external"]]
-                              [:deps [:sequential :string]]
-                              [:gaps gaps]]]]
-   [:boundary [:map
-               [:out [:sequential [:map
-                                   [:from :string]
-                                   [:to :string]
-                                   [:to-module :string]]]]
-               [:in [:sequential [:map
-                                  [:from :string]
-                                  [:from-module :string]
-                                  [:to :string]]]]]]
-   [:layers [:sequential [:sequential :string]]]
-   [:cycles [:sequential [:sequential :string]]]])
+   [:module {:doc "the module name — a namespace's first two segments"} :string]
+   [:tier {:doc "the module's declared purity tier — what its code is allowed to do"}
+    [:enum "pure" "internal" "external"]]
+   [:namespaces {:doc (str "its PRODUCTION namespaces. -test namespaces fold into"
+                           " the module they cover, so listing them here would put"
+                           " two things at one rung that are not peers")}
+    [:sequential [:map
+                  [:ns {:doc "the namespace's full name"} :string]
+                  [:forms {:doc "how many named forms it holds"} :int]
+                  [:tier {:doc (str "its own effective tier, most-specific"
+                                    " declaration winning — which may be stricter"
+                                    " than the module's")}
+                   [:enum "pure" "internal" "external"]]
+                  [:deps {:doc (str "the namespaces INSIDE this module it depends"
+                                    " on. An edge that leaves the module is in"
+                                    " :boundary instead — one arrow, one place")}
+                   [:sequential :string]]
+                  [:gaps {:doc "where this namespace is thin"} gaps]]]]
+   [:boundary {:doc (str "the edges that CROSS the module's frame, which is what"
+                         " makes a descended diagram readable: without it you cannot"
+                         " tell the module's front door from a namespace nothing"
+                         " outside touches, and those are different things")}
+    [:map
+     [:out {:doc "edges leaving this module"}
+      [:sequential [:map
+                    [:from {:doc "the namespace INSIDE this module that depends"} :string]
+                    [:to {:doc "the outside namespace it depends on"} :string]
+                    [:to-module {:doc (str "that namespace's module, so the stub can"
+                                           " be labelled without a second request")} :string]]]]
+     [:in {:doc "edges arriving from outside"}
+      [:sequential [:map
+                    [:from {:doc "the outside namespace that depends on us"} :string]
+                    [:from-module {:doc "that namespace's module"} :string]
+                    [:to {:doc "the namespace INSIDE this module it reaches"} :string]]]]]]
+   [:layers {:doc (str "the topological layering of the namespaces WITHIN this"
+                       " module, deepest first — the same analysis /api/modules"
+                       " ships one level up, and drawing it is still yours")}
+    [:sequential [:sequential :string]]]
+   [:cycles {:doc (str "dependency cycles among this module's own namespaces, each"
+                       " entry the namespaces caught in one. Empty is healthy")}
+    [:sequential [:sequential :string]]]])
 
 (def module-index
   "`GET /api/modules` — the Code landing: one row per module, the layering,
@@ -312,9 +532,22 @@
    the most useful thing on the screen, and a consumer that only wants the
    verdict should not have to read geometry to find it."
   [:map
-   [:modules [:sequential module-row]]
-   [:layers [:sequential [:sequential :string]]]
-   [:cycles [:sequential [:sequential :string]]]])
+   [:modules {:doc "one row per module, sorted by name"} [:sequential module-row]]
+   [:layers {:doc (str "the TOPOLOGICAL layering, deepest first: each entry is the"
+                       " modules at that depth, and a module's dependencies are all"
+                       " in earlier entries. This is ANALYSIS — the store's own"
+                       " module graph, which no consumer can recompute — and it is"
+                       " deliberately not a drawing: placing boxes on these rungs is"
+                       " yours, and every consumer should get to disagree about it")}
+    [:sequential [:sequential :string]]]
+   [:cycles {:doc (str "dependency cycles, each entry the modules caught in one."
+                       " Empty is the healthy case and the usual one. Alongside"
+                       " :layers rather than inside it because a cycle is a FINDING"
+                       " about the architecture, not a drawing instruction — on a"
+                       " tangled store it is the most useful thing on the screen,"
+                       " and a consumer that only wants the verdict should not have"
+                       " to read geometry to find it")}
+    [:sequential [:sequential :string]]]])
 
 (def search-request
   "`GET /api/search` — what a caller SENDS: the query text and a row budget,
@@ -332,8 +565,15 @@
   and `:total` is counted before the cut either way, so \"showing 20 of 340\"
   cannot be made false by a limit the caller did not choose."
   [:map
-   [:q {:optional true} :string]
-   [:limit {:optional true} :int]])
+   [:q {:optional true
+        :doc (str "the text to search for. Absent is a legal ask and answers"
+                  " with the empty state rather than a 400, because a search"
+                  " page is reachable by URL")} :string]
+   [:limit {:optional true
+            :doc (str "how many rows to return. Clamped to a declared ceiling,"
+                      " and :total is counted BEFORE the cut either way, so"
+                      " 'showing 20 of 340' cannot be made false by a limit you"
+                      " did not choose")} :int]])
 
 (def search-results
   "`GET /api/search` — everything matching a query, ranked across all three
@@ -374,21 +614,36 @@
   over here. It is the same error as naming a port for its consumer. One
   producer of the scheme, and it is the side that owns the routes."
   [:map
-   [:query :string]
-   [:total :int]
-   [:totals [:map
-             [:modules :int]
-             [:namespaces :int]
-             [:forms :int]]]
-   [:hits [:sequential
-           [:map
-            [:kind [:enum "module" "namespace" "form"]]
-            [:name :string]
-            [:module {:optional true} :string]
-            [:ns {:optional true} :string]
-            [:form-id {:optional true} :string]
-            [:sig {:optional true} [:sequential :string]]
-            [:doc {:optional true} :string]
-            [:why {:optional true} :string]
-            [:matched [:enum "name" "doc" "why" "source"]]
-            [:rank :double]]]]])
+   [:query {:doc "the query as received, echoed so a result can label itself"} :string]
+   [:total {:doc (str "how many things matched in all, counted BEFORE :limit —"
+                      " so a limited hit list can still say 'showing 20 of 340'")} :int]
+   [:totals {:doc (str "the same count split by kind, also before :limit: a cut"
+                       " hit list cannot know how many modules matched beyond"
+                       " the cut, which is why this is not left to the consumer")}
+    [:map
+     [:modules {:doc "modules matching, before :limit"} :int]
+     [:namespaces {:doc "namespaces matching, before :limit"} :int]
+     [:forms {:doc "forms matching, before :limit"} :int]]]
+   [:hits {:doc (str "the matches, SORTED by :rank descending and meant to be"
+                     " rendered in the order given — re-deriving the sort is a"
+                     " second opinion on the one thing this side was asked to own")}
+    [:sequential
+     [:map
+      [:kind {:doc "which grain matched"} [:enum "module" "namespace" "form"]]
+      [:name {:doc "the thing's own name, unqualified for a form"} :string]
+      [:module {:optional true :doc "the module it belongs to; absent for a module hit"} :string]
+      [:ns {:optional true :doc "the namespace it belongs to; absent above form grain"} :string]
+      [:form-id {:optional true :doc "the form's stable address, for a form hit"} :string]
+      [:sig {:optional true :doc "the form's arglists, one string per arity"} [:sequential :string]]
+      [:doc {:optional true :doc "the form's own docstring, when it has one"} :string]
+      [:why {:optional true :doc "the recorded intent of the last write to it"} :string]
+      [:matched {:doc (str "WHICH text matched, and it is data rather than"
+                           " decoration: a hit whose name says nothing about the"
+                           " query reads as a bug unless the row can say the"
+                           " docstring is what matched")}
+       [:enum "name" "doc" "why" "source"]]
+      [:rank {:doc (str "ONE scale across kinds, not normalised per kind — a"
+                        " module at 0.9 really does beat a form at 0.5, which is"
+                        " what makes a single mixed list honest. Name-exact 1.0,"
+                        " name-prefix 0.9, name-substring 0.8, doc 0.5, why 0.4,"
+                        " source 0.2")} :double]]]]])

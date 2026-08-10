@@ -69,7 +69,9 @@
         (is (= #{} (markers/undeclared st))
             "and a clean store reports an empty set, not nil")))))
 
-(deftest ^:external slopps-own-store-declares-every-marker-it-uses
+(deftest ^:external
+  ^{:correspondence "every marker slopp's own code USES vs markers/marker-registry — an undeclared marker is a new dial nobody registered or a typo of a real one, and both silently do nothing"}
+  slopps-own-store-declares-every-marker-it-uses
   ;; The registry's first cut missed three markers that were in live use
   ;; (`:external`, `:live-handle`, `:teach`) and `undeclared` found all three
   ;; the moment it existed. This is the standing version of that check: the
@@ -86,3 +88,38 @@
       (is (= #{} (markers/undeclared st))
           "an undeclared marker is either a new dial nobody registered or a
            typo of a real one — both silently do nothing"))))
+
+(deftest ^:external every-correspondence-check-names-the-pair-it-holds
+  ;; The correspondence checks are one mechanism hand-written eleven times, and
+  ;; until now the only way to find them was to grep `built-store` — which
+  ;; finds the 8 STORE-derived ones and misses the 3 IMAGE-derived ones,
+  ;; including `catalog-covers-every-registered-rule`, the founding instance.
+  ;; The two families share no token at all.
+  ;;
+  ;; A registry of declared correspondences was the obvious fix and was
+  ;; DEFERRED: its enforcement half — a check must not be able to scan nothing
+  ;; and pass — turned out to belong to `:assertions-never-red`, which is
+  ;; general to every test rather than to these; and ENUMERATION, which is the
+  ;; rest of what a registry would have bought, needs no chassis at all. One
+  ;; declared marker is the whole of it.
+  ;;
+  ;; Carrying the PAIR is the half that makes it worth doing: a marker alone
+  ;; answers "which checks exist", and the question people actually have is
+  ;; "what does each one hold".
+  (let [st   (external/built-store)
+        rows (vec (for [n (keys (:namespaces st))
+                        f (store/forms st n)
+                        :let [holds (:correspondence (store/form-name-meta f))]
+                        :when holds]
+                    {:form (symbol (str n) (str (:name f))) :holds holds}))]
+    (testing "the marker is declared, or it silently does nothing"
+      (is (markers/known? :correspondence)))
+    (testing "the population is enumerable, and both families are in it"
+      (is (< 5 (count rows))
+          "a store query must reach what grepping built-store cannot")
+      (is (some #(= 'slopp.rules-test/catalog-covers-every-registered-rule (:form %)) rows)
+          "the IMAGE-derived founding instance is the one a grep misses"))
+    (testing "each names WHICH two derivations must agree"
+      (is (every? #(and (string? (:holds %)) (seq (:holds %))) rows)
+          (str "a correspondence that does not say what it holds is a name, not"
+               " a declaration: " (pr-str (remove #(seq (str (:holds %))) rows)))))))

@@ -123,7 +123,7 @@
 
   A location that does not resolve to a store namespace anchors NOTHING and
   says so by omission rather than guessing — an anchor pointing at the wrong
-  form is worse than no anchor (Core 1)."
+  form is worse than no anchor — a wrong one reads as a finding."
   [store msg {:keys [file line]}]
   (let [nsx (when file
               (some-> (re-matches #"(?:file:)?(?:.*?/)?((?:[^/]+/)*[^/]+)\.clj[sc]$"

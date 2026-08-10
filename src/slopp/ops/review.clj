@@ -17,6 +17,12 @@
   rather than `:untested` because no test could ever cover it. When adding a
   signal, the question to answer first is what its absence could innocently mean.
 
+  Coverage answers that question by CLASS rather than by exclusion: every row
+  carries `:evidence`, so a reader is told whether a test ran the form, claimed
+  it, merely reaches it in four hops, or nothing at all — instead of inferring
+  it from the absence of a word. An exclusion list grows one bite at a time; a
+  class the row states cannot silently acquire a fifth member.
+
   Read-only over the store value plus the session's trace map; the done-point's
   own findings live in `slopp.ops.done`."
   (:require [clojure.string :as str]
@@ -33,11 +39,18 @@
   knows and files don't: tested?, blast radius (callers), size, lint
   findings, undocumented public surface, effects — then RISK-RANKS so a
   reviewer reads the dangerous forms first instead of eyeballing
-  everything. Coverage is STATIC (a form reachable in the call graph from
-  any test namespace is covered) so the signal survives ^:external tests,
-  which never touch the in-image trace map; the trace map, when warm,
-  refines it, and a ^{:covers} DECLARATION discharges the dispatch/data
-  path neither reach nor trace can see. ONE analysis pass (analyze + lint
+  everything. Every row says WHICH KIND of evidence stands behind it, in
+  `:evidence`: `:observed` (the trace watched a test exercise it — the only
+  one that means verified), `:declared` (a `^{:covers}` marker names the
+  dispatch/data path neither reach nor trace can see), `:static` (some form
+  in a test namespace reaches it in the call graph, with `:hops` saying how
+  far — this is what survives ^:external tests, which never touch the
+  in-image trace map, and at three or four hops it is nearly free),
+  `:off-platform` (the JVM oracle cannot load it at all) or `:none`.
+  `:evidence` in the summary is that split over the whole flagged list.
+  `:none` is WIDER than the `:untested` flag on purpose: a plain
+  (def x <data>) has no invocation to observe, so it is honestly
+  evidence-less and is nonetheless not a gap anyone can close. ONE analysis pass (analyze + lint
   share the memoized kondo). Drill into a flagged form with query_slice.
   `:ns` scopes to one namespace; `:limit` caps the rows (default 25), the
   tail in :omitted. Clean forms drop out."
@@ -66,17 +79,35 @@
                   (symbol (str (:to-ns r)) (str (:to-name r)))])
         blast (frequencies (for [[from to] usages :when (not= from to)] to))
         adj   (reduce (fn [m [from to]] (update m from (fnil conj #{}) to)) {} usages)
-        ;; STATIC coverage: everything reachable from a test ns's forms
-        test-seed (set (for [nsx nses
+        ;; STATIC coverage: everything reachable from a test ns's forms.
+        ;; Seeded from the WHOLE store, exactly like `adj` and `covered-declared`
+        ;; above and for the same reason: whether a test reaches this form is
+        ;; not a fact about how widely the caller asked. Seeding from the scoped
+        ;; `nses` meant a {ns "x"} scan seeded from ONE namespace — so unless
+        ;; that namespace was itself a -test, nothing seeded it and every form
+        ;; came back :untested. Measured before the fix: 18 such rows in
+        ;; `slopp.index.refs` alone, `covered-by` among them.
+        test-seed (set (for [nsx (keys (:namespaces st))
                              :when (str/ends-with? (str nsx) "-test")
                              e (store/forms st nsx) :when (:name e)]
                          (symbol (str nsx) (str (:name e)))))
-        covered-static (loop [seen #{} frontier test-seed]
+        ;; {form hops}, not a set. "A test namespace calls this directly" and
+        ;; "a chain of six calls reaches this" are the same word today, and the
+        ;; second is nearly free: measured on this store, 1120 of 1285
+        ;; production forms are covered this way and 297 of those sit at three
+        ;; hops or more, where `test → ops → edit → store` marks the store form
+        ;; covered. The closure stays UNBOUNDED on purpose — bounding it is what
+        ;; `refs/covered-by` does, and a bound here would flip every deep form
+        ;; to a false :untested, which is why this cannot simply call it. The
+        ;; distance is REPORTED instead of the reach being narrowed.
+        covered-static (loop [seen {} frontier test-seed hop 0]
                          (if (empty? frontier)
                            seen
-                           (let [seen' (into seen frontier)]
+                           (let [seen' (reduce #(if (contains? %1 %2) %1 (assoc %1 %2 hop))
+                                               seen frontier)]
                              (recur seen' (into #{} (comp (mapcat adj) (remove seen'))
-                                                frontier)))))
+                                                frontier)
+                                    (inc hop)))))
         ;; DECLARED coverage: a ^{:covers} marker names a form the graph and
         ;; the trace both miss (dispatch/data/child-image). Whole-store so
         ;; :ns scoping still sees the declaration in the test namespace.
@@ -176,6 +207,25 @@
                                        ;; nobody hand-tests; the :cljc contracts ns is
                                        ;; generated too, so this is not just the :cljs case
                                        (not (:generated (meta (second s)))))
+                         ;; WHICH KIND of evidence, strongest first. The words
+                         ;; are `refs/covered-by`'s — one distinction, spelled
+                         ;; one way, so a reader who has seen :via :static on a
+                         ;; form page does not have to learn a second vocabulary
+                         ;; for the same fact here.
+                         ;;
+                         ;; :none is WIDER than :untested and deliberately so.
+                         ;; :evidence answers "what do we know", :untested
+                         ;; answers "is this worth an afternoon" — a plain
+                         ;; (def x <data>) has no invocation to observe, so it
+                         ;; is honestly evidence-less and is nonetheless not a
+                         ;; gap anyone can close.
+                         hops     (get covered-static q)
+                         evidence (cond
+                                    (pos? traced)                  :observed
+                                    (contains? covered-declared q) :declared
+                                    hops                           :static
+                                    off-platform                   :off-platform
+                                    :else                          :none)
                          flags    (cond-> []
                                     untested       (conj :untested)
                                     off-platform   (conj :off-platform)
@@ -198,14 +248,21 @@
                                      (if doc? 1 0)
                                      (if bang? 1 0))]
                    :when (and (not skip?) (pos? risk))]
-               {:form q :risk risk :loc loc :callers callers
-                :covered traced :flags flags})
+               (cond-> {:form q :risk risk :loc loc :callers callers
+                        :covered traced :flags flags :evidence evidence}
+                 (= :static evidence) (assoc :hops hops)))
         ranked (sort-by (juxt (comp - :risk) (comp - :callers) (comp str :form)) rows)]
     (cond-> {:reviewed (if ns (str ns) (str (count nses) " namespaces"))
              :forms    (reduce + 0 (map #(count (filter :name (store/forms st %))) nses))
              :flagged  (count rows)
              :top      (vec (take limit ranked))
              :totals   (into (sorted-map) (frequencies (mapcat :flags rows)))
+             ;; WHAT the triage list rests on, over the same rows :totals counts.
+             ;; Nobody reads 954 rows, so "892 of these are covered only by
+             ;; static reach" is a fact about the suite that no amount of
+             ;; per-row reading adds up to — and it is the fact that decides
+             ;; whether the quiet rows deserve to be quiet.
+             :evidence (into (sorted-map) (frequencies (map :evidence rows)))
              ;; the SHAPE of form sizes, not just how many cross 50 loc:
              ;; decomposing a god-form ADDS forms, so the :large count can
              ;; rise while the codebase genuinely improves. Max and median

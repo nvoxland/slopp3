@@ -307,7 +307,8 @@
       (finally (reset! index/kondo-cache-dir prev)))))
 
 (deftest externality-ORIGINATES-in-one-var-and-only-reaches-the-other
-  ;; The adapter/reaches distinction (ideas/isolating-the-external-world.md §2):
+  ;; The adapter/reaches distinction — one var IS the contact with the outside
+  ;; world, the others merely reach it through that one:
   ;; a namespace is :external when it REACHES the world; it is an ADAPTER when
   ;; it IS the reaching. Only the second has a fake, so only the second can be
   ;; asked for one — a gate built on the fixpoint would fire on slopp.api,

@@ -18,8 +18,7 @@
   markers it had missed the moment it existed."
   (:require [slopp.store :as store]))
 
-(def ^:export ^{:legacy-ok "the `:reads` below is the live FORM-LEVEL marker (^:reads on a read-only dep call), NOT the retired `:reads` TIER spelling that normalizes to :internal. AGENTS.md names this exact near-miss — a careless vocabulary sweep breaks correct guidance — and a registry of marker names is precisely where the two tokens collide."}
-  marker-registry
+(def ^:export marker-registry
   "Every marker slopp gives meaning to, declared ONCE.
 
   Four escape markers currently hand-wire their own detection, their own stale
@@ -58,8 +57,6 @@
     :asks "who downstream did you tell, and what broke?"     :self-polices? true}
    {:marker :foreign-keys :kind :escape :discharges :namespaced-keys-refusal :on :name
     :asks "whose map is it?"                                 :self-polices? true}
-   {:marker :legacy-ok    :kind :escape :discharges nil       :on :name
-    :asks "what makes this worth keeping as-is?"             :self-polices? false}
    ;; the reaches/is distinction, declared: this form IS the reaching, so raw
    ;; external contact is sanctioned HERE and refused everywhere else. Its
    ;; VALUE names the port first ("http — why"), which is what lets a second
@@ -78,6 +75,21 @@
     :self-polices? true}
    {:marker :side-effect  :kind :declaration :discharges nil  :on :name
     :asks "what does requiring it register?"                 :self-polices? false}
+   ;; waives nothing — it says "this deftest holds two derivations that must
+   ;; agree", which slopp cannot derive. Eleven such checks exist and were
+   ;; findable only by grepping `built-store`: that reaches the 8 STORE-derived
+   ;; ones and none of the 3 IMAGE-derived ones, including
+   ;; `catalog-covers-every-registered-rule`, the founding instance. The two
+   ;; families share no token at all.
+   ;;
+   ;; `:asks` is the half that earns the marker. A bare flag answers "which
+   ;; checks exist"; the question people actually have is "what does each one
+   ;; hold", and a pair nobody can name is a check nobody can review.
+   ;; NOT self-policing: a check that quietly stopped comparing two things is
+   ;; not mechanically distinguishable from one that still does.
+   {:marker :correspondence :kind :declaration :discharges nil :on :name
+    :asks "which two derivations must agree, and what does a mismatch mean?"
+    :self-polices? false}
    {:marker :entry-point  :kind :declaration :discharges :unused-public :on :name
     :asks "what invokes it from outside — CLI flag, wire tool, eval template?"
     ;; no stale symmetry, and the reason is worth keeping: the outside world

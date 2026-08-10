@@ -394,7 +394,7 @@
       (finally (ops/close! sess)))))
 
 (deftest a-hard-compile-error-anchors-like-a-warning
-  ;; Core 6: verification stops at the boundary. Analyzer WARNINGS cross the
+  ;; Verification stops at the boundary. Analyzer WARNINGS cross the
   ;; cljs compile beautifully — anchor-warnings turns {:ns :line} into a form
   ;; and a snippet, so a cljs warning reads like a clj compile error. A hard
   ;; FAILURE crossed as `failed compiling file:cljs-src/slopp/ui/client/app.cljs`:
@@ -442,7 +442,7 @@
                (:form (cljs/anchor-error st2 "boom"
                                          {:file "cljs-src/app/my_view.cljs" :line 3}))))))
     (testing "an unlocatable error still carries its message, and says no more"
-      ;; Core 1: never let \"could not anchor\" and \"anchored fine\" look alike
+      ;; never let \"could not anchor\" and \"anchored fine\" look alike
       (let [r (cljs/anchor-error st "something went wrong" nil)]
         (is (= "something went wrong" (:error r)))
         (is (nil? (:form r)))

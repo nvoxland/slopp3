@@ -614,7 +614,7 @@
 
   A shape it cannot use is REFUSED rather than dropped: a target that
   silently vanishes reads as \"that form has no source\", which is a different
-  and false answer (Core 1)."
+  and false answer."
   [targets]
   (mapv
    (fn [t]

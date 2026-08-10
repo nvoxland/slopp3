@@ -124,7 +124,7 @@
   ;; In-image and free: no socket, no port, no server. This is the run that
   ;; makes the fake worth using — a fake nothing has checked is a guess, and a
   ;; guess that agrees with itself is the exact "could not check" wearing the
-  ;; face of "checked, fine" that Core 1 exists to prevent.
+  ;; face of "checked, fine".
   (requester-contract
    "fake-requester"
    (fn [routes]

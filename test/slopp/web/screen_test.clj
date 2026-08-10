@@ -1010,7 +1010,25 @@
           inline (screen/of [:p "see " [:span {:aria-label "card" :inert true
                                                :on {:click [:open]}} "this"]])]
       (is (str/includes? block  "aria-label=\"card\" inert slopp:on=\"click :open\""))
-      (is (str/includes? inline "aria-label=\"card\" inert slopp:on=\"click :open\"")))))
+      (is (str/includes? inline "aria-label=\"card\" inert slopp:on=\"click :open\""))))
+  ;; The STRUCTURAL tags were the half this guard never reached. Each built
+  ;; its own opening tag as a literal, so each dropped the trio — and the
+  ;; guard stayed green because it asserted only the tags that already
+  ;; complied. A clickable <h2> is the one that shows the cost: a real
+  ;; control, rendered as inert words, in the mode whose whole contract is
+  ;; that an unprefixed tag means something you can act on.
+  (testing "a heading is a page tag — a clickable one says so"
+    (is (str/includes? (screen/of [:div [:h2 {:aria-label "sect" :on {:click [:fold]}} "Title"]])
+                       "<h2 aria-label=\"sect\" slopp:on=\"click :fold\">Title</h2>")))
+  (testing "a table is a page tag"
+    (is (str/includes? (screen/of [:table {:aria-label "index"} [:tr [:td "a"]]])
+                       "<table aria-label=\"index\">")))
+  (testing "a pre is a page tag"
+    (is (str/includes? (screen/of [:div [:pre {:aria-label "src"} "code"]])
+                       "<pre aria-label=\"src\">")))
+  (testing "and a cell, which is where the class was reported from"
+    (is (str/includes? (screen/of [:table [:tr [:td {:aria-label "n"} "11"]]])
+                       "<td aria-label=\"n\">11</td>"))))
 
 (deftest a-plain-html-FORM-is-a-control-because-a-browser-says-so
   ;; slopp-ui, 2026-08-06. The door their search wave shipped is
@@ -1093,3 +1111,160 @@
         "CONCATENATED, not space-joined: no whitespace in the markup means none in a browser, and the fix belongs in the markup")
     (is (= "foo bar" (hiccup/text [:span "foo bar"]))
         "the measured case behind that rule — the screen once showed foobar for a button it then refused to press")))
+
+(deftest a-cell-descends-the-way-a-list-item-does
+  ;; slopp-ui, building a table lens over their Code index: every module name
+  ;; in the table is an <a href>, the links were LIVE (a click step navigated),
+  ;; and the readout showed bare words. So a reader who takes structured mode
+  ;; at face value files "the table is a readout, not a way in" — a false
+  ;; finding about working code, produced by the instrument that exists to
+  ;; prevent false findings. Same class as the canned-response `page` bug:
+  ;; nothing throws, and it is visible only if you go and check the thing the
+  ;; output has just told you not to bother checking.
+  ;;
+  ;; The cell branch was ALSO the last hand-built tag site — it wrote "<td>"
+  ;; by hand, so the capability trio never rode a cell either. That is why the
+  ;; fix is page-tag rather than a special case for <a>.
+  (testing "an anchor in a cell survives, exactly as the same anchor in an <li> does"
+    (let [link [:a {:href "/store/ns/demo.core"} "demo.core"]
+          cell (screen/of [:table [:tr [:td link]]])
+          item (screen/of [:ul [:li link]])]
+      (is (str/includes? item "<a href=\"/store/ns/demo.core\">demo.core</a>"))
+      (is (str/includes? cell "<a href=\"/store/ns/demo.core\">demo.core</a>"))))
+  (testing "a cell is a page tag, so the capability statements ride it too"
+    (is (str/includes?
+         (screen/of [:table [:tr [:td {:aria-label "forms" :on {:click [:sort]}} "11"]]])
+         "<td aria-label=\"forms\" slopp:on=\"click :sort\">11</td>")))
+  (testing "a plain row is still ONE line — the wide-table readout is the point"
+    (is (str/includes?
+         (screen/of [:table [:tr [:td "demo.core"] [:td "11"]]])
+         "<tr><td>demo.core</td><td>11</td></tr>")))
+  (testing "prose still reads a row as its words"
+    (is (str/includes?
+         (screen/of [:table [:tr [:td [:a {:href "/x"} "demo.core"]] [:td "11"]]]
+                    {:detail :prose})
+         "demo.core 11"))))
+
+(deftest no-container-flattens-away-a-child-it-cannot-replace
+  ;; slopp-ui ran the matrix after the cell fix rather than re-reading the one
+  ;; container they had reported, and found the SAME flatten-to-text defect in
+  ;; headings — which the cell fix had not carried, because that fix was made
+  ;; per-container instead of per-defect. Their instance: `views/change-main`
+  ;; renders `[:h4 [:a {:href …} form-name]]`, the ONE route from a change entry
+  ;; to the form it changed, and the Review screen read as a list of dead names
+  ;; for nine days.
+  ;;
+  ;; So the assertion here is over the CONTAINER SET, not over the two
+  ;; containers that were reported. Enumerating the containers is precisely how
+  ;; the first pass missed the second instance.
+  (let [link [:a {:href "/x"} "quote"]]
+    (doseq [container [[:div link]
+                       [:p link]
+                       [:label link]
+                       [:ul [:li link]]
+                       [:h1 link] [:h2 link] [:h3 link]
+                       [:h4 link] [:h5 link] [:h6 link]
+                       [:table [:tr [:td link]]]
+                       [:table [:tr [:th link]]]]]
+      (is (str/includes? (screen/of [:div container])
+                         "<a href=\"/x\">quote</a>")
+          (str "dropped inside " (pr-str (first container))))))
+  (testing "a control inside a heading keeps what it DOES, not just its label"
+    ;; strictly worse than the inert-heading case: not a control rendered
+    ;; inert, a control that is absent from the readout altogether
+    (is (str/includes? (screen/of [:div [:h2 [:button {:on {:click [:go]}} "toggle"]]])
+                       "<button slopp:on=\"click :go\">toggle</button>")))
+  (testing "and the text joining that slopp-ui #31 fixed still holds"
+    ;; a heading whose children carry nothing actionable still reads as one
+    ;; sentence — descending must not become a reason to split the line
+    (is (str/includes? (screen/of [:div [:h2 "quote" " " [:small "demo.order"]]])
+                       "<h2>quote demo.order</h2>"))))
+
+(deftest a-BLOCK-child-breaks-the-line-whatever-container-it-is-in
+  ;; Reported by slopp-ui from a real screen, and the generalisation is theirs:
+  ;; the rule is not about labels. `li` and `div` descend into a block child
+  ;; while `label` and `span` glue every child onto one line — so the SAME
+  ;; markup reads two ways depending on a container the output never names, and
+  ;; a browser disagrees with both of the gluing cases.
+  ;;
+  ;; One root cause under three symptoms: inline-ness was decided by the TAG,
+  ;; and it is a property of the SUBTREE. `[:span "a" [:p "b"]]` is
+  ;; inline-tagged and is not inline.
+  (let [l (fn [v] (mapv str/triml (screen/lines v)))]
+    (testing "a label whose children are all inline is still ONE line — the
+              common case, and the control this whole change has to preserve"
+      (is (= ["<label>q · string</label>"]
+             (l [:label [:span "q"] " · " [:span "string"]]))))
+
+    (testing "a label carrying a BLOCK child opens out, the way an li does"
+      (is (= ["<label>" "q · string" "what it is" "</label>"]
+             (l [:label [:span "q"] " · " [:span "string"] [:p "what it is"]]))))
+
+    (testing "and a span does too — which is what shows the rule is about
+              containers in general rather than about labels. It KEEPS its tag
+              on the way out rather than going transparent: the first version of
+              this let the element fall through to the transparent container,
+              which dropped an `[:a {:aria-hidden \"true\"} [:pre …]]` entirely and
+              with it the statement that the anchor is not a control. Ugly and
+              readable beats tidy and silent, the same asymmetry `inline-tags`
+              is chosen on — and a `p` inside a `span` is invalid HTML anyway,
+              so the noisy answer is the honest one exactly where it shows up."
+      (is (= ["<span>" "a" "b" "</span>"] (l [:span [:span "a"] [:p "b"]]))))
+
+    (testing "an inline-only span at block position stays one line"
+      (is (= ["ab"] (l [:span [:span "a"] [:em "b"]]))))
+
+    (testing "the predicate is RECURSIVE, so a block grandchild counts: a
+              heading whose inline child hides a block must open out, or the
+              guard the heading already has is decided by the wrong question"
+      (is (= ["<h2>" "<span>" "a" "b" "</span>" "</h2>"]
+             (l [:h2 [:span "a" [:p "b"]]]))))
+
+    (testing "an li was already right and stays right — the fix must not reach
+              the branches that had the guard"
+      (is (= ["<ul slopp:count=\"1\">" "<li>" "q" "what it is" "</li>" "</ul>"]
+             (l [:ul [:li [:span "q"] [:p "what it is"]]]))))))
+
+(deftest prose-never-emits-markup-however-a-container-opened-out
+  ;; REGRESSION, reported by slopp-ui against jar d25758 — mine, and from the
+  ;; descent fix they asked for. Making an inline tag with block children open
+  ;; out was right; writing that branch without the `prose?` guard every sibling
+  ;; branch has was not, so `<a href>` wrapping a `<div>` printed its own tags
+  ;; into a mode whose entire contract is sentences, unescaped.
+  ;;
+  ;; Worse than its size for one reason they named: prose is what this project
+  ;; is told to reach for when the fact is an ADJACENCY — `web ⚡ 1 ns` — because
+  ;; structured puts a closing tag between the two words. Markup in prose puts
+  ;; back exactly the characters prose exists to remove, and AGENTS.md points a
+  ;; reader at that mode with `:within`, so the recommended assertion style was
+  ;; the one that broke.
+  ;;
+  ;; Their nav rail is the ordinary whole-row-is-a-link pattern — an `<a>`
+  ;; around a block — so every row printed markup. Two of their assertions were
+  ;; the only thing that noticed.
+  (let [p (fn [v] (mapv str/triml (screen/lines v {:detail :prose})))]
+    (testing "an inline tag with INLINE children is words, as it always was"
+      (is (= ["web 1 ns"]
+             (p [:a {:href "/x"} [:span "web"] " " [:span "1 ns"]]))))
+
+    (testing "an inline tag with a BLOCK child is ALSO words — opening out is a
+              structured-mode decision and prose makes no structural claims"
+      (is (= ["web"] (p [:a {:href "/x"} [:div "web"]]))))
+
+    (testing "the same shape that is not an inline tag, as the control"
+      (is (= ["web"] (p [:div [:div "web"]]))))
+
+    (testing "a label was already right, and the fix must not disturb it"
+      (is (= ["q" "what it is"] (p [:label [:span "q"] [:p "what it is"]]))))
+
+    (testing "and NOTHING this renderer can produce in prose carries a tag —
+              the property the branch-by-branch assertions above are instances
+              of, asserted once over a tree that exercises every opened-out path"
+      (let [out (p [:div
+                    [:a {:href "/x"} [:div "row"]]
+                    [:span [:span "a"] [:p "b"]]
+                    [:label [:span "q"] [:p "d"]]
+                    [:h2 [:span "h" [:p "i"]]]
+                    [:ul [:li [:a {:href "/y"} [:p "cell"]]]]])]
+        (is (empty? (filter #(re-find #"[<>]" %) out))
+            (str "prose is sentences, unescaped and unmarked: " (pr-str out)))))))

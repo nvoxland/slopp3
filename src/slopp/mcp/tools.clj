@@ -66,7 +66,7 @@
                                :modules {:type "boolean"}
                                :detail {:type "boolean"}}}}
    {:name "review_scan"
-    :description "REVIEW TRIAGE for a whole codebase (or one :ns): every form the store thinks is RISKY — untested (no covering test), off-platform (:cljs — the JVM oracle cannot load it, so NO test could ever cover it: the compiler is its only check, and this is a standing fact rather than a gap to close, so it ranks below untested), unused (public with ZERO in-store callers — dead code or unadvertised surface; whole scans only), effectful (!), high-blast (many callers), large, lint-flagged, or undocumented public surface — RISK-RANKED so you read the dangerous forms first. One pass; :top rows carry :form/:risk/:flags/:callers/:covered; drill in with query_slice. Run a test_run first so :untested is populated — :covered comes from the observed trace, so a form only ever exercised ACROSS A PROCESS BOUNDARY (an endpoint hit over a socket, a namespace mounted by quoted symbol) reads as untested too: check whether a test reaches it that way before believing the flag."
+    :description "REVIEW TRIAGE for a whole codebase (or one :ns): every form the store thinks is RISKY — untested (no covering test), off-platform (:cljs — the JVM oracle cannot load it, so NO test could ever cover it: the compiler is its only check, and this is a standing fact rather than a gap to close, so it ranks below untested), unused (public with ZERO in-store callers — dead code or unadvertised surface; whole scans only), effectful (!), high-blast (many callers), large, lint-flagged, or undocumented public surface — RISK-RANKED so you read the dangerous forms first. One pass; :top rows carry :form/:risk/:flags/:callers/:covered plus :evidence — WHICH KIND of evidence stands behind the row, so a quiet row is readable instead of ambiguous: :observed (a test actually ran it — the only one meaning verified), :declared (a ^{:covers} marker names a path nothing can watch, which is how coverage that happens ACROSS A PROCESS BOUNDARY — an endpoint hit over a socket, a namespace mounted by quoted symbol — is stated), :static with :hops (some form in a test namespace reaches it in the call graph; at 3-4 hops that is nearly free), :off-platform, or :none. The summary's :evidence is that split over the whole list — read it before trusting the quiet rows. Run a test_run first or nothing is :observed. Drill in with query_slice."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"}
                                :limit {:type "integer"}}}}
@@ -75,31 +75,31 @@
     :inputSchema {:type "object"
                   :properties {:id {:type "string"}}
                   :required ["id"]}}
-   {:name "query_eval"
+   {:name "query_eval" :image-free false
     :description "Read-only REPL eval against the live image (the oracle) — the escape hatch for ARBITRARY expressions. For the common case (invoke one fn with data args) prefer query_call: it carries the reference so renames/moves/the unused gate see it. Questions ABOUT the codebase-as-data: query_store."
     :inputSchema {:type "object"
                   :properties {:code {:type "string"}}
                   :required ["code"]}}
-   {:name "query_call"
+   {:name "query_call" :image-free false
     :description "Observe-only INVOKE of one var in the live image: {sym \"app.core/f\", args [1 2]} — the structured face of query_eval's common case. The reference is CARRIED (visible to renames, moves, and the unused gate) instead of hidden in an eval string; args must be printable data."
     :inputSchema {:type "object"
                   :properties {:sym {:type "string"}
                                :args {:type "array"}}
                   :required ["sym"]}}
-   {:name "query_store"
+   {:name "query_store" :image-free false
     :description "The STORE-VALUE oracle: one read-only (fn [store] ...) evaluated over the current immutable store value — ad-hoc analysis ABOUT the codebase (form counts, metadata sweeps, custom aggregation) that no canned query covers. Fully-qualify everything (slopp.store/forms, slopp.store.render/render-ns, slopp.index.analyze/analyze ...); no effects/defs/interop/IO; results must print small. timeout_ms default 10000."
     :inputSchema {:type "object"
                   :properties {:code {:type "string"}
                                :timeout_ms {:type "integer"}}
                   :required ["code"]}}
-   {:name "query_observe"
+   {:name "query_observe" :image-free false
     :description "Capture args/returns of ns/name while running driver `code` — what actually flows through it."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :name {:type "string"}
                                :code {:type "string"}
                                :limit {:type "integer"}}
                   :required ["ns" "name" "code"]}}
-   {:name "query_macroexpand"
+   {:name "query_macroexpand" :image-free false
     :description "Macroexpansion (expand-1 + full)."
     :inputSchema {:type "object" :properties {:code {:type "string"}}
                   :required ["code"]}}
@@ -207,7 +207,7 @@
                                :verbose {:type "boolean"}}
                   :required ["ns" "name"]}}
    {:name "edit_subform"
-    :description "Small change INSIDE a big form. match = ONE exact subform or pair (a missed/ambiguous match returns :source-now — correct and resend, no read needed); text: true matches raw text (strings/docstrings) EXACTLY as :source-now shows it — no extra escaping, backslashes literal; where: {key value} addresses the unique MAP containing those entries (registry rows by :name — no exact text needed); OR after: a COMPLETE neighboring form/pair — source is INSERTED right behind it (the let-binding splice without shaping a half-open match); OR wrap: true, where source is a TEMPLATE and $1 is the matched form — `(let [n 1] $1)` NESTS what was there inside what you wrote, so introducing a binding around existing code costs the template instead of a retype of the whole enclosing form. The replacement may splice several forms."
+    :description "Small change INSIDE a big form. match = ONE exact subform or pair (a missed/ambiguous match returns :source-now — correct and resend, no read needed); text: true matches raw text (strings/docstrings) EXACTLY as :source-now shows it — no extra escaping, backslashes literal; where: {key value} addresses the unique MAP containing those entries (registry rows by :key or :name — no exact text needed), matched by the SPELLING each side answers to, so \"stored-name\" reaches a row stored as :stored-name and a miss names the values that key does take; OR after: a COMPLETE neighboring form/pair — source is INSERTED right behind it (the let-binding splice without shaping a half-open match); OR wrap: true, where source is a TEMPLATE and $1 is the matched form — `(let [n 1] $1)` NESTS what was there inside what you wrote, so introducing a binding around existing code costs the template instead of a retype of the whole enclosing form. The replacement may splice several forms."
     :inputSchema {:type "object"
                   :properties {:ns {:type "string"} :form {:type "string"}
                                :match {:type "string"} :source {:type "string"}
@@ -363,7 +363,7 @@
                                :code {:type "string"}
                                :limit {:type "integer"}}
                   :required ["ns" "name"]}}
-   {:name "help"
+   {:name "help" :read-only true :image-free true
     :description "The workflow cheat-sheet: which tool for what, how to read results."
     :inputSchema {:type "object" :properties {}}}
    {:name "restart"
@@ -434,15 +434,15 @@
                   :properties {:path {:type "string"}
                                :prompt {:type "string"}}
                   :required ["path"]}}
-   {:name "file_list"
+   {:name "file_list" :image-free true :read-only true
     :description "The files manifest: {path bytes}."
     :inputSchema {:type "object" :properties {}}}
-   {:name "file_get"
+   {:name "file_get" :image-free true :read-only true
     :description "A manifest file's content (optionally at a past delta/milestone via `at`)."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"} :at {:type "string"}}
                   :required ["path"]}}
-   {:name "file_history"
+   {:name "file_history" :image-free true :read-only true
     :description "A manifest file's tracked versions with provenance."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"}}
@@ -486,13 +486,13 @@
     :inputSchema {:type "object"
                   :properties {:lib {:type "string"}}
                   :required ["lib"]}}
-   {:name "deps_list"
+   {:name "deps_list" :image-free true :read-only true
     :description "The dependency manifest: {:deps {lib coord}}, plus :host-override for any declaration slopp's own process bundles at a different version and so cannot honor (inert; the host's copy wins). Note what is NOT here: slopp's web framework. slopp vendors it into every store that uses it, at the version slopp is, so it is never declared and never drifts."
     :inputSchema {:type "object" :properties {}}}
-   {:name "store_health"
+   {:name "store_health" :read-only true
     :description "What this store CARRIES, in bytes: the journal per op (heaviest first), the materialized state, the blob table, and the on-disk artifact cache. Cheap — SQLite LENGTH only, nothing parsed. full_check answers whether the store is CORRECT; this answers what it COSTS. Reach for it when a session feels slow to open, before growing what a delta carries, and periodically: a store can rot by GROWING, and nothing else measures that."
     :inputSchema {:type "object" :properties {}}}
-   {:name "store_doctor"
+   {:name "store_doctor" :read-only true
     :description "The LEGACY sweep: elements that predate a rule slopp now enforces and that no ordinary tool can reach — hand-written (declare …) the ordering pipeline cannot see, two elements in one namespace defining ONE name (a form-addressed edit cannot say which you mean, and the last wins at load), and metadata that looks like one of slopp's dials but is not (^:unusedok waives nothing while reading as though it does). Every finding carries the call that fixes it. A THIRD question: full_check asks whether the store is CORRECT, store_health what it COSTS in bytes, this what is in here that the current rules would never have let in. Reach for it right after adopting an existing codebase (git_clone / import), where every form predates every rule — a store written entirely through slopp is normally clean."
     :inputSchema {:type "object" :properties {}}}
    {:name "ui_serve"
@@ -558,10 +558,10 @@
 
 (def sync-tools
   "Git-sync tool descriptors: push/pull/clone/conflicts and remotes. (Q4: the registry is per-group \u2014 editable without touching a monolith.)"
-  [{:name "query_commits"
+  [{:name "query_commits" :image-free true :read-only true
     :description "Milestones, newest first — TITLE lines only (+ :more-lines); {commit \"dN\"} drills into ONE full description (targets plug into query_changes from/to). With a git remote configured, :alignment PROVES whether the slopp branch head is the latest milestone's projection — trust it; no worktree/sqlite cross-checks."
     :inputSchema {:type "object" :properties {:commit {:type "string"}}}}
-   {:name "query_git"
+   {:name "query_git" :image-free true :read-only true
     :description "This session's git view: the saved external remote and the clone base it grafts onto, or a refusal naming how to set one."
     :inputSchema {:type "object" :properties {}}}
    {:name "git_push"
@@ -588,6 +588,52 @@
     :description "Mark a pull conflict resolved (omit path = all). Unblocks git_push."
     :inputSchema {:type "object" :properties {:path {:type "string"}}}}])
 
+(defn classify
+  "`entries` with `k` resolved — `default?` unless an entry already states its
+  own.
+
+  The classification belongs to the GROUP because the group is already the
+  answer: `orientation-tools` is 20 reads, `edit-tools` is 23 writes. Measured
+  across all six for both facts it carries today, only NINE tools disagree with
+  their group about `:read-only` and TWELVE about `:image-free`, and those
+  state it on themselves.
+
+  Replaces a hand-kept set of name strings living three hundred lines from the
+  descriptors it classified. Such a set was measured correct and had no
+  mechanism keeping it so: adding a tool was two writes, and forgetting the
+  second is the quietest failure here — the tool works, nothing goes red, and
+  the client prompts for permission forever (`:read-only`) or waits for the
+  image boot (`:image-free`).
+
+  Takes the key rather than hardcoding one, because the second registry to
+  collapse would otherwise arrive as a second copy of this function — which is
+  the defect the first collapse was for."
+  [entries k default?]
+  (mapv #(update % k (fn [stated] (if (some? stated) stated default?))) entries))
+
+(def ^:private classified
+  "Every descriptor with its classifications resolved — the ONE list the wire
+  payload, [[read-only-tools]] and [[image-free-tools]] all derive from.
+
+  The group is the classification: orientation and history are reads that
+  answer from the store value, the other four are writes that need the image.
+  The tools that disagree carry the fact on themselves — NINE for
+  `:read-only`, TWELVE for `:image-free`. Nothing downstream restates a tool
+  name.
+
+  **Two dials, not one.** Their per-group defaults happen to coincide, and
+  their exceptions do not: `query_eval` is read-only (the observe gate blocks
+  redefinition) and is NOT image-free (it evals IN the image). Merging them
+  because today's defaults agree would put one switch on two facts."
+  (into []
+        cat
+        [(-> orientation-tools (classify :read-only true)  (classify :image-free true))
+         (-> history-tools     (classify :read-only true)  (classify :image-free true))
+         (-> edit-tools        (classify :read-only false) (classify :image-free false))
+         (-> flow-tools        (classify :read-only false) (classify :image-free false))
+         (-> env-tools         (classify :read-only false) (classify :image-free false))
+         (-> sync-tools        (classify :read-only false) (classify :image-free false))]))
+
 (def image-free-tools
   "Tools that answer from the STORE VALUE + in-process analysis alone — they
   touch neither the owned image nor a write path, so the MCP dispatch serves
@@ -595,45 +641,53 @@
   soon as the store loads; orientation and reading are instant). Everything
   else — the oracle tools (query_eval/query_call/query_observe/
   query_macroexpand/query_store, which eval in the image) and every write —
-  `api/await-image!`s the boot first. Being CONSERVATIVE is safe: a tool
-  wrongly excluded here merely waits for the boot; one wrongly included
-  would touch a not-yet-live image."
-  #{"session_brief" "query_project" "query_search" "query_source"
-    "query_brief" "query_slice" "query_depends" "query_history"
-    "query_changes" "query_commits" "query_git" "query_branches"
-    "query_routes" "query_capabilities" "query_rules" "query_rule_telemetry"
-    "query_vocabulary" "query_detail" "help" "report" "review_scan"
-    "file_get" "file_list" "file_history" "deps_list"})
+  `api/await-image!`s the boot first.
+
+  DERIVED from [[classified]], not maintained. It was a set of 25 name strings
+  living three hundred lines from the descriptors it classified: adding a
+  store-value read was TWO writes, and forgetting the second is silent — the
+  tool works and merely waits for a boot it never needed.
+
+  Being CONSERVATIVE is still safe and still the rule, but it is now stated per
+  tool rather than by omission: a tool marked `:image-free false` waits for the
+  boot; one wrongly marked true would touch a not-yet-live image. `store_doctor`
+  and `store_health` are deliberately NOT image-free even though they only read
+  — the conservative side of a judgement, which is worth being able to see on
+  the entry."
+  (into #{} (comp (filter :image-free) (map :name)) classified))
 
 (def read-only-tools
   "Tool names that never modify the STORE — advertised with the MCP
   readOnlyHint annotation so clients (Claude Code plan mode, permission
-  systems) can auto-permit them instead of prompting. query_eval and
-  query_observe qualify because the observe gate blocks redefinition —
-  the code they run cannot change the codebase (observation captures are
-  a metadata cache)."
-  #{"query_search" "query_source" "query_detail" "query_project"
-    "query_brief" "query_slice" "query_depends" "query_eval"
-    "query_observe" "query_macroexpand" "query_branches" "query_history"
-    "query_changes" "query_commits" "query_git" "session_brief" "report"
-    "review_scan" "query_store" "query_call" "query_vocabulary" "query_rules" "query_rule_telemetry"
-    "query_capabilities" "query_routes"
-    "help" "deps_list" "file_list" "file_get" "file_history"
-    ;; both only READ: health is SQLite LENGTH, doctor is a fold over the store
-    ;; value. Plan mode is exactly when someone assessing an adopted codebase
-    ;; reaches for them, and that is the mode where a prompt costs most.
-    "store_health" "store_doctor"})
+  systems) can auto-permit them instead of prompting.
+
+  DERIVED from [[classified]], not maintained. It was a set of 32 name strings
+  living three hundred lines from the descriptors it classified: adding a
+  read-only tool was TWO writes, and forgetting the second is the quietest
+  failure in this system — the tool works, no test goes red, and the client
+  prompts for permission forever, which is indistinguishable from behaving
+  correctly.
+
+  `query_eval` and `query_observe` qualify because the observe gate blocks
+  redefinition — the code they run cannot change the codebase (observation
+  captures are a metadata cache). That is a judgement, which is why the fact is
+  DECLARED on the tool rather than inferred from the dispatch."
+  (into #{} (comp (filter :read-only) (map :name)) classified))
 
 (def tools
-  "Every tool descriptor the server advertises — concatenated from the
-  per-group registries (Q4); read-only tools carry the MCP readOnlyHint
-  annotation so plan-mode clients auto-permit them."
-  (into []
-        (comp cat
-              (map #(cond-> %
-                      (read-only-tools (:name %))
-                      (assoc :annotations {:readOnlyHint true}))))
-        [orientation-tools history-tools edit-tools flow-tools env-tools sync-tools]))
+  "Every tool descriptor the server advertises — derived from [[classified]];
+  read-only tools carry the MCP readOnlyHint annotation so plan-mode clients
+  auto-permit them.
+
+  The classification markers are STRIPPED here. `slopp.mcp/handle!` answers
+  `tools/list` with this value serialized as-is, so a descriptor must carry no
+  key the protocol does not define — `:read-only` exists to produce the
+  annotation and `:image-free` to gate the dispatch during the async image
+  boot, and neither has any business on the wire."
+  (mapv (fn [t]
+          (cond-> (dissoc t :read-only :image-free)
+            (:read-only t) (assoc :annotations {:readOnlyHint true})))
+        classified))
 
 (def extra-accepted-arg-keys
   "Per-tool ALIASES the dispatch in slopp.mcp/call-tool! reads via

@@ -841,3 +841,146 @@
           (is (nil? (:stranded-pages r))
               "a standing stranding belongs to the declaration that caused it")))
       (finally (ops/close! sess)))))
+
+(deftest every-field-of-a-published-contract-can-say-what-it-IS
+  ;; From slopp-ui, 2026-08-08, and the finding is measured rather than
+  ;; aesthetic: every entry-property map in slopp's own published 9-endpoint
+  ;; document is `{:optional true}` and nothing else. A caller reads
+  ;; `:total :int` and cannot learn that it counts hits BEFORE the limit is
+  ;; applied — which is a term of the contract, is written down in the schema
+  ;; def's docstring, and does not travel, because a docstring is not a value.
+  ;;
+  ;; Malli property maps are open and already survive the wire, so this is a
+  ;; RULE and not a feature: nothing in the framework moves.
+  ;;
+  ;; The fixture is shaped like the real case rather than the easy one. All ten
+  ;; of slopp's own endpoints name their schema through an ALIAS, and simple-name
+  ;; resolution is not an option here — `timeline`, `module-index`, `form-view`,
+  ;; `change-view`, `ns-outline` and `module-detail` each exist in two or three
+  ;; namespaces of this store, so a name-matching resolver would skip most of
+  ;; the population it was written for and report clean.
+  (let [s (-> (store/empty-store)
+              (store/ingest 'dc.contracts
+                            (str "(ns dc.contracts)\n\n"
+                                 "(def row \"A row.\"\n"
+                                 "  [:map [:id {:doc \"the form id\"} :string] [:loc :int]])\n\n"
+                                 "(def listing \"A listing.\"\n"
+                                 "  [:map [:rows [:sequential row]]\n"
+                                 "        [:total {:description \"hits before the limit\"} :int]])\n"))
+              (store/ingest 'dc.api
+                            (str "(ns dc.api (:require [dc.contracts :as c]))\n\n"
+                                 "(defn ^{:web/method :get :web/path \"/l\" :web/auth :public"
+                                 " :web/response c/listing} listing \"L.\" [r] r)\n\n"
+                                 "(defn ^{:web/method :get :web/path \"/i\" :web/auth :public"
+                                 " :web/response [:map [:ok {:doc \"it worked\"} :boolean]"
+                                 " [:why :string]]} inline \"I.\" [r] r)\n")))
+        by (group-by :endpoint (web/undocumented-contract-fields s))]
+    (testing "a schema named through an alias is RESOLVED and walked — and the
+              walk follows :sequential into the second named schema, which is
+              where slopp's own worst case lives (:gaps on /api/modules is four
+              bare ints nested one level down)"
+      (is (= [{:endpoint 'dc.api/listing :schema :web/response
+               :fields [[:rows] [:rows :loc]]}]
+             (by 'dc.api/listing))))
+    (testing "an inline schema is walked the same way"
+      (is (= [{:endpoint 'dc.api/inline :schema :web/response
+               :fields [[:why]]}]
+             (by 'dc.api/inline))))
+    (testing "BOTH spellings count as prose — :doc is preferred and :description
+              is malli's JSON-Schema spelling, so an imported schema does not
+              fail a check for having documented itself in the other dialect"
+      (let [flat (set (mapcat :fields (web/undocumented-contract-fields s)))]
+        (is (not (contains? flat [:rows :id])) ":doc discharges it")
+        (is (not (contains? flat [:total])) ":description discharges it")
+        (is (not (contains? flat [:ok])))))
+    (testing "a doc BUILT with (str …) is prose. The rule reads source, not
+              values, so a computed doc arrives as a list — and (str …) is what
+              this codebase writes everywhere, because unlike a docstring a
+              schema doc is a VALUE and a multi-line literal ships its own
+              indentation to every consumer. The teach says so; the check has to
+              agree with it, and did not until this test."
+      (let [built (-> (store/empty-store)
+                      (store/ingest 'db.api
+                                    (str "(ns db.api)\n\n"
+                                         "(defn ^{:web/method :get :web/path \"/b\" :web/auth :public"
+                                         " :web/response [:map [:total {:doc (str \"hits before\""
+                                         " \" the limit\")} :int]]} b \"B.\" [r] r)\n")))]
+        (is (= [] (vec (web/undocumented-contract-fields built))))))
+    (testing "a fully documented contract reports NOTHING — without this every
+              assertion above is satisfied by a walker that returns every field"
+      (let [ok (-> (store/empty-store)
+                   (store/ingest 'dd.api
+                                 (str "(ns dd.api)\n\n"
+                                      "(defn ^{:web/method :get :web/path \"/d\" :web/auth :public"
+                                      " :web/response [:map [:n {:doc \"how many\"} :int]]}"
+                                      " d \"D.\" [r] r)\n")))]
+        (is (= [] (vec (web/undocumented-contract-fields ok))))))
+    (testing "the finding teaches the fix as a literal form, and says which
+              spelling it wants"
+      (let [f (first (web/web-undocumented-contract-check nil s nil))]
+        (is (re-find #":doc" (:teach f)) (pr-str f))
+        (is (re-find #"\[:rows \{:doc" (:teach f)) (pr-str f))))))
+
+(deftest a-field-that-constrains-NOTHING-is-not-a-declared-field
+  ;; slopp-ui, 2026-08-08, and they ranked it above the prose rule they had
+  ;; asked for the day before: an undocumented declared field costs a reader a
+  ;; lookup, an UNDECLARED one costs everyone the validation they think they
+  ;; have. Their `:diff` consumer broke when the shape moved from [String] to
+  ;; [[String String]]; the generated client validates every response on
+  ;; arrival and could not see it, because the schema said `[:sequential :map]`
+  ;; and a bare :map validates any map at all.
+  ;;
+  ;; The asymmetry that decides the teach: `:any` ADMITS it is saying nothing,
+  ;; and a bare `:map` looks like a type while saying the same thing. Both are
+  ;; reported; only one is misleading.
+  (let [s (-> (store/empty-store)
+              (store/ingest 'uc.contracts
+                            (str "(ns uc.contracts)\n\n"
+                                 "(def row \"A row.\" [:map [:id :string] [:body :map]])\n\n"
+                                 "(def listing \"A listing.\"\n"
+                                 "  [:map [:rows [:sequential row]] [:arc [:sequential :any]]])\n"))
+              (store/ingest 'uc.api
+                            (str "(ns uc.api (:require [uc.contracts :as c]))\n\n"
+                                 "(defn ^{:web/method :get :web/path \"/l\" :web/auth :public"
+                                 " :web/response c/listing} listing \"L.\" [r] r)\n\n"
+                                 "(defn ^{:web/method :get :web/path \"/k\" :web/auth :public"
+                                 " :web/response [:map [:ok :boolean]]} ok \"K.\" [r] r)\n")))
+        by (into {} (map (juxt :endpoint identity))
+                 (web/unconstrained-contract-fields s))]
+    (testing "a bare :map nested behind a named schema is found, with the PATH
+              that reaches it — and so is a bare :any, tagged so the teach can
+              tell a field that lies from one that abstains"
+      (is (= {:endpoint 'uc.api/listing :schema :web/response
+              :fields [{:path [:rows :body] :declares :map}
+                       {:path [:arc] :declares :any}]}
+             (by 'uc.api/listing))))
+
+    (testing "a fully constrained contract reports NOTHING — without this every
+              assertion above is satisfied by a check that flags every field"
+      (is (nil? (by 'uc.api/ok)))
+      (is (= 1 (count (web/unconstrained-contract-fields s)))))
+
+    (testing "the two rules ask DIFFERENT questions of the same field: :body is
+              unconstrained AND undocumented, and prose would discharge only one
+              of them — which is the whole reason this is a sibling and not a
+              widening"
+      (let [documented (store/ingest s 'uc.contracts
+                                     (str "(ns uc.contracts)\n\n"
+                                          "(def row \"A row.\"\n"
+                                          "  [:map [:id {:doc \"the id\"} :string]\n"
+                                          "        [:body {:doc \"the payload\"} :map]])\n\n"
+                                          "(def listing \"A listing.\"\n"
+                                          "  [:map [:rows {:doc \"the rows\"} [:sequential row]]\n"
+                                          "        [:arc {:doc \"the arc\"} [:sequential :any]]])\n"))]
+        (is (= [] (filterv #(= 'uc.api/listing (:endpoint %))
+                           (web/undocumented-contract-fields documented)))
+            "prose on THIS endpoint is now complete")
+        (is (= [{:path [:rows :body] :declares :map}
+                {:path [:arc] :declares :any}]
+               (:fields (first (web/unconstrained-contract-fields documented))))
+            "and the shape is still undeclared")))
+
+    (testing "the finding teaches what a bare :map costs, in the words that
+              matter: it is not a type, and the validator believes it"
+      (let [f (first (web/web-unconstrained-contract-check nil s nil))]
+        (is (re-find #"validat" (:teach f)) (pr-str f))))))

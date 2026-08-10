@@ -262,8 +262,18 @@
         t        (hiccup/tag node)
         a        (hiccup/attrs node)
         note     (handler-note node)
-        inline?  (fn [x] (or (string? x) (number? x)
-                             (and (vector? x) (contains? hiccup/inline-tags (hiccup/tag x)))))
+        ;; RECURSIVE on purpose. An inline TAG carrying a block child is not
+        ;; inline — `[:span "a" [:p "b"]]` is a span and is two lines, because
+        ;; a browser breaks there and a readout that does not disagrees with
+        ;; the page it is describing. Asking the tag alone was one root cause
+        ;; under three symptoms: a label glued its block child on, a span at
+        ;; block position did the same, and a heading's own (every? inline?)
+        ;; guard was answering the wrong question about its children.
+        inline?  (fn inline? [x]
+                   (or (string? x) (number? x)
+                       (and (vector? x)
+                            (contains? hiccup/inline-tags (hiccup/tag x))
+                            (every? inline? (hiccup/kids x)))))
         run      (fn [ks] (-> (str/join "" (map #(inline-str % opts) ks))
                               (str/replace #" {2,}" " ")
                               str/trim))
@@ -302,8 +312,17 @@
                   [(str (pad depth) "</slopp:region>")])))
 
       (#{:h1 :h2 :h3 :h4 :h5 :h6} t)
-      (let [s (hiccup/text node)]
-        [(str (pad depth) (if prose? s (str "<" (name t) ">" (escape s) "</" (name t) ">")))])
+      (let [ks (hiccup/kids node)]
+        (cond
+          prose?              [(str (pad depth) (hiccup/text node))]
+          ;; the common heading: words, and inline children that carry
+          ;; something — one line, joined the way a browser reads it
+          (every? inline? ks) [(str (pad depth) (page-tag t a note nil false)
+                                    (run ks) "</" (name t) ">")]
+          ;; a heading wrapping a CONTROL opens out rather than swallowing it
+          :else               (concat [(str (pad depth) (page-tag t a note nil false))]
+                                      (child-lines ks (inc depth))
+                                      [(str (pad depth) "</" (name t) ">")])))
 
       (= :svg t)
       [(str (pad depth) (svg-line node prose?))]
@@ -395,21 +414,40 @@
                     [(str (pad depth) "</form>")]))))
 
       (= :table t)
-      (let [trs (filter #(= :tr (hiccup/tag %)) (hiccup/nodes node))
-            row (fn [tr d]
-                  (let [cells (filter #(#{:th :td} (hiccup/tag %)) (hiccup/kids tr))]
-                    (if prose?
-                      (str (pad d) (str/join " " (map hiccup/text cells)))
-                      (str (pad d) "<tr>"
-                           (apply str (for [c cells]
-                                        (str "<" (name (hiccup/tag c)) ">"
-                                             (escape (hiccup/text c))
-                                             "</" (name (hiccup/tag c)) ">")))
-                           "</tr>"))))]
+      (let [trs   (filter #(= :tr (hiccup/tag %)) (hiccup/nodes node))
+            open  (fn [n] (page-tag (hiccup/tag n) (hiccup/attrs n) (handler-note n) nil false))
+            close (fn [n] (str "</" (name (hiccup/tag n)) ">"))
+            row   (fn [tr d]
+                    (let [cells (filter #(#{:th :td} (hiccup/tag %)) (hiccup/kids tr))
+                          flat? (every? #(every? inline? (hiccup/kids %)) cells)]
+                      (cond
+                        prose?
+                        [(str (pad d) (str/join " " (map hiccup/text cells)))]
+
+                        ;; the common row: every cell inline, so the whole row
+                        ;; rides one line — a wide table stays readable
+                        flat?
+                        [(str (pad d) (open tr)
+                              (apply str (for [c cells]
+                                           (str (open c) (run (hiccup/kids c)) (close c))))
+                              (close tr))]
+
+                        ;; a cell carrying block content opens out, the way an
+                        ;; <li> does — never flattened to its text, because a
+                        ;; silently dropped actionable tag is the one thing the
+                        ;; whitelist exists to prevent
+                        :else
+                        (concat [(str (pad d) (open tr))]
+                                (mapcat (fn [c]
+                                          (concat [(str (pad (inc d)) (open c))]
+                                                  (child-lines (hiccup/kids c) (+ d 2))
+                                                  [(str (pad (inc d)) (close c))]))
+                                        cells)
+                                [(str (pad d) (close tr))]))))]
         (if prose?
-          (map #(row % depth) trs)
-          (concat [(str (pad depth) "<table>")]
-                  (map #(row % (inc depth)) trs)
+          (mapcat #(row % depth) trs)
+          (concat [(str (pad depth) (page-tag :table a note nil false))]
+                  (mapcat #(row % (inc depth)) trs)
                   [(str (pad depth) "</table>")])))
 
       (= :pre t)
@@ -420,7 +458,7 @@
             ls  (str/split-lines (raw node))]
         (if prose?
           ls
-          (concat [(str (pad depth) "<pre>")]
+          (concat [(str (pad depth) (page-tag :pre a note nil false))]
                   (map escape ls)
                   [(str (pad depth) "</pre>")])))
 
@@ -430,16 +468,46 @@
         [(str (pad depth) (page-tag :img a note nil true))])
 
       (= :label t)
-      (let [content (run (hiccup/kids node))]
-        (if prose?
-          (when (seq content) [(str (pad depth) content)])
-          [(str (pad depth) (page-tag :label a note nil false)
-                content "</label>")]))
+      (let [ks (hiccup/kids node)]
+        (cond
+          prose?              (child-lines ks depth)
+          ;; the ordinary label: words and controls on one row
+          (every? inline? ks) [(str (pad depth) (page-tag :label a note nil false)
+                                    (run ks) "</label>")]
+          ;; a label carrying BLOCK content opens out, exactly as an li does —
+          ;; a browser breaks there, so a one-line readout would be describing
+          ;; a page that does not exist
+          :else               (concat [(str (pad depth) (page-tag :label a note nil false))]
+                                      (child-lines ks (inc depth))
+                                      [(str (pad depth) "</label>")])))
 
-      ;; an inline element standing at block position is its own one-line run
+      ;; an inline element standing at block position is its own one-line run —
+      ;; but only if it is inline ALL THE WAY DOWN
       (contains? hiccup/inline-tags t)
-      (let [s (str/trim (inline-str node opts))]
-        (when (seq s) [(str (pad depth) s)]))
+      (cond
+        (inline? node)
+        (let [s (str/trim (inline-str node opts))]
+          (when (seq s) [(str (pad depth) s)]))
+
+        ;; opening out is a STRUCTURED-mode decision. Prose makes no structural
+        ;; claims, so there is no tag for it to open — and leaving this guard
+        ;; off shipped `<a href>` into the one mode whose contract is sentences,
+        ;; unescaped, putting back exactly the characters prose exists to
+        ;; remove. Every sibling branch has this guard; this one did not.
+        prose? (child-lines (hiccup/kids node) depth)
+
+        :else
+        ;; it carries BLOCK content, so it opens out — and it KEEPS ITS TAG,
+        ;; like an li, a label and a table cell. Letting it fall through to the
+        ;; transparent container below reads as the tidier answer and is the
+        ;; dangerous one: `[:a {:aria-hidden "true"} [:pre …]]` would lose the
+        ;; anchor and the statement that it is not a control, which is the
+        ;; defect the whitelist exists to prevent, arriving by another route.
+        ;; Over-separation is ugly and readable; a dropped actionable tag is
+        ;; not — the same asymmetry `inline-tags` itself is chosen on.
+        (concat [(str (pad depth) (page-tag t a note nil false))]
+                (child-lines (hiccup/kids node) (inc depth))
+                [(str (pad depth) "</" (name t) ">")]))
 
       ;; every other tag is a transparent container — unless a handler gives
       ;; it a capability to carry, in which case the tag stays for slopp:on

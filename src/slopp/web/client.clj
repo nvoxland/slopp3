@@ -20,7 +20,7 @@
   drifts fails the suite it shares.
 
   This is the worked example of the pattern in
-  `ideas/isolating-the-external-world.md`: the namespace that IS the reaching
+  The reaches/is distinction: the namespace that IS the reaching
   gets a fake; the namespaces that merely REACH the world through it get their
   isolation by injection, and need no fake of their own."
   (:require [clojure.string :as str]))

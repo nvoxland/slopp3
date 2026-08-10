@@ -1692,7 +1692,11 @@ recompiled (session/after-write! session ns-sym)]
   (content-addressed). With `:text true` the match is RAW TEXT instead — the
   escape hatch for string literals and docstrings. With `:where {k v ...}` the
   target is the unique MAP containing those entries (registry-style edits
-  by key, no exact text needed) and `match` is ignored. Rides the full
+  by key, no exact text needed) and `match` is ignored. `:where` ADDRESSES
+  a row rather than asserting a value: both sides are compared by the
+  spelling they answer to, so `\"stored-name\"` reaches a row stored as
+  `:stored-name` — registry rows are keyed by keywords and the wire this
+  arrives over has none. Rides the full
   replace pipeline: dialect gate on the RESULTING form, rebase/conflict
   commit, verification, provenance.
 

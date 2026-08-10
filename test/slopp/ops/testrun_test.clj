@@ -10,7 +10,7 @@
   about whether the orphans died."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops.testrun :as testrun]))
+            [slopp.ops.testrun :as testrun] [slopp.ops.external :as external]))
 
 (deftest balance-shards-minimises-the-SLOWEST-shard-not-the-average
   ;; The external tier is 98.4% of a full_check (measured: 288s of 293s), and
@@ -126,3 +126,50 @@
                    (pr-str (mapv #(.pid %) (filter #(.isAlive %) kids)))))))
       (finally
         (.destroyForcibly proc)))))
+
+(deftest an-external-red-is-recorded-under-a-name-a-form-can-be-matched-to
+  ;; The qualification is the load-bearing step of the observation citizen, and
+  ;; it is the half a green run cannot prove: a green external run records
+  ;; `:failures []`, which exercises none of this.
+  ;;
+  ;; clojure.test prints `FAIL in (name)` and `parse-test-failures` carries
+  ;; that BARE name; `:assertions-never-red` compares `(str 'ns/name)`. Get
+  ;; this wrong and the observation lands, looks right in the journal, and
+  ;; matches nothing — the advisory stays unclearable while the delta makes it
+  ;; look fixed.
+  (let [st (store/ingest (store/empty-store) 'demo-t
+                         (str "(ns demo-t (:require [clojure.test :refer [deftest is]]))\n\n"
+                              "(deftest ^:external t (is (= 1 1)))"))]
+    (testing "a bare name is qualified against the store"
+      (is (= [{:test 'demo-t/t}]
+             (:failures (external/observation-of
+                         st {:status :red :ran 3
+                             :failing [{:test "t" :detail "FAIL in (t)"}]})))))
+    (testing "an already-qualified name is left alone"
+      (is (= [{:test 'other.ns/z}]
+             (:failures (external/observation-of
+                         st {:status :red :ran 1
+                             :failing [{:test "other.ns/z"}]})))))
+    (testing "a name the store cannot resolve stays BARE, so the advisory still fires"
+      ;; the safe direction for a rule that only ever asks: an unmatched name
+      ;; means the question gets asked again, never that it is silently closed
+      (is (= [{:test 'nosuch}]
+             (:failures (external/observation-of
+                         st {:status :red :ran 1 :failing [{:test "nosuch"}]})))))
+    (testing "the run's own facts ride along"
+      (let [o (external/observation-of st {:status :red :ran 3 :failing []})]
+        (is (= :external (:tier o)))
+        (is (= :red (:status o)))
+        (is (= 3 (:ran o)))))
+    (testing "a green run records no failures rather than omitting the key"
+      (is (= [] (:failures (external/observation-of
+                            st {:status :green :ran 9 :failing nil})))))
+    (testing "one test failing three assertions is ONE red test"
+      ;; measured on a real red run: clojure.test emits a FAIL block per
+      ;; failing assertion, so the same test arrived three times
+      (is (= [{:test 'demo-t/t}]
+             (:failures (external/observation-of
+                         st {:status :red :ran 1
+                             :failing [{:test "t" :detail "a"}
+                                       {:test "t" :detail "b"}
+                                       {:test "t" :detail "c"}]})))))))

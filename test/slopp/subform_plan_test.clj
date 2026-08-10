@@ -207,3 +207,53 @@
                 'sp.core 'h "m a?" "m (not a?)")]
       (is (:error plan) (pr-str plan))
       (is (re-find #"pair" (str (:error plan)))))))
+
+(deftest where-addresses-a-row-however-the-caller-spells-it
+  ;; `where` is an ADDRESSING mechanism, not a value assertion. JSON has no
+  ;; keyword, so a row keyed by one is unreachable over the wire unless every
+  ;; spelling of one name lands on the same row.
+  (let [reg (st (str "(ns sp.core)\n"
+                     "(def catalog\n"
+                     "  [{:key :stored-name :severity :warn}\n"
+                     "   {:key :key-typos :severity :error}\n"
+                     "   {:key \"literal\" :severity :info}\n"
+                     "   {:key 'quoted :severity :info}])\n"))
+        src (fn [where] (str (:new-form-src (refactor/keyed-replace-plan
+                                             reg 'sp.core 'catalog where "{:key :HIT}"))))
+        err (fn [where] (str (:error (refactor/keyed-replace-plan
+                                      reg 'sp.core 'catalog where "{}"))))]
+    (testing "every spelling of one name reaches the same row"
+      (doseq [spelling [{:key "stored-name"} {:key ":stored-name"} {:key :stored-name}]]
+        (is (re-find #":HIT" (src spelling)) (pr-str spelling))
+        ;; positive control: it reached THAT row, not the whole vector —
+        ;; a replace that ate every sibling would satisfy the line above
+        (is (re-find #":key-typos" (src spelling)) (pr-str spelling))
+        (is (not (re-find #"stored-name" (src spelling))) (pr-str spelling))))
+    (testing "a string value and a quoted symbol are addressed the same way"
+      (is (re-find #":HIT" (src {:key "literal"})))
+      (is (re-find #":HIT" (src {:key "quoted"}))))
+    (testing "a genuinely absent value still misses"
+      (is (re-find #"no map containing" (err {:key "no-such-rule"}))))
+    (testing "and the miss names the values that key DOES take"
+      (let [m (err {:key "no-such-rule"})]
+        (is (re-find #":stored-name" m) m)
+        (is (re-find #":key-typos" m) m)))
+    (testing "a key carried by no map says so, and names the keys that are there"
+      (let [m (err {:kind "regex"})]
+        (is (re-find #"no map here carries :kind" m) m)
+        (is (re-find #":severity" m) m)))
+    (testing "the wire keywordizes KEYS, so a string-keyed map is addressable too"
+      (let [rows (st (str "(ns sp.core)\n"
+                          "(def rows [{\"name\" \"alpha\"} {\"name\" \"beta\"}])\n"))
+            plan (refactor/keyed-replace-plan rows 'sp.core 'rows
+                                              {:name "beta"} "{\"name\" \"B2\"}")]
+        (is (nil? (:error plan)) (pr-str plan))
+        (is (re-find #"B2" (str (:new-form-src plan))))
+        (is (re-find #"alpha" (str (:new-form-src plan))))))
+    (testing "a long value list is capped and says how many there are"
+      (let [big (st (str "(ns sp.core)\n(def big ["
+                         (apply str (for [i (range 20)] (str "{:k :v" i "} ")))
+                         "])\n"))
+            m   (str (:error (refactor/keyed-replace-plan big 'sp.core 'big
+                                                          {:k "nope"} "{}")))]
+        (is (re-find #"20 total" m) m)))))

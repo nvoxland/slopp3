@@ -170,6 +170,27 @@
   room for false hope."
   3)
 
+(defn- one-cause
+  "The single edit every drifted row agrees on, as a clause — nil when they
+  disagree or none is recorded.
+
+  One write reloads a whole namespace, so every value captured from it falls
+  behind TOGETHER. That is what makes naming one edit for a whole list honest
+  rather than a guess, and it is also why the guard matters: rows that
+  disagree get no cause named, instead of the note confidently blaming
+  whichever sorted first.
+
+  Shared because `host-brief` and `host-warning` are one producer aimed at two
+  readers. Writing the clause into whichever surface you happened to be
+  looking at is how a staleness line ends up answering \"what\" in one place
+  and \"what and why\" in the other."
+  [drift]
+  (let [es (distinct (keep :behind-edit drift))]
+    (when (= 1 (count es))
+      (let [{:keys [delta prompt]} (first es)]
+        (str "they went behind at " delta
+             (when prompt (str " (\"" prompt "\")")))))))
+
 (defn ^:export host-brief
   "The serving host's code-currency section for session_brief, as data —
   pure assembly over the kernel's boot-info record (`info`), the count of
@@ -298,7 +319,9 @@
                                          (map #(str (:ns %) "/" (:form %)
                                                     " (" (name (:why %)) ")")
                                               (take 5 drift)))
-                               ". The `restart` tool builds a fresh verification"
+                               "."
+                               (when-let [c (one-cause drift)] (str " All " c "."))
+                               " The `restart` tool builds a fresh verification"
                                " image and clears this"))
 
                     (and (not failed) (= :snapshot (:mode info))
@@ -426,11 +449,20 @@
                       " again")
 
                  drifted?
+                 ;; Name the EDIT when the rows agree on one, because "why is
+                 ;; this stale" is the question and the answer is usually a
+                 ;; write the reader just made to a namespace they were not
+                 ;; thinking about. One distinct :behind-edit is the common
+                 ;; case: one write reloads a namespace and every value
+                 ;; captured from it falls behind together.
                  (str "this verdict was produced against a verification image"
                       " holding " (count drift) " form(s) the store has moved"
-                      " past — treat it as suspect. The `restart` tool builds a"
+                      " past — treat it as suspect."
+                      (when-let [c (one-cause drift)] (str " All " c "."))
+                      " The `restart` tool builds a"
                       " fresh verification image and clears this; the"
-                      " :oracle-drift list names the forms")
+                      " :oracle-drift list names each form, what it is behind,"
+                      " and the edit that re-evaluated it")
 
                  :else
                  (str "this verdict was produced by a host whose live-reload"

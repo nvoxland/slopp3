@@ -3,7 +3,7 @@
   sources — a generated gen-class launcher, a :native deps alias, and an
   executable build script. The actual native-image compile needs GraalVM and
   minutes of wall time, so these tests assert the emitted recipe, not the
-  compile (that path is exercised manually; see .context/operation-api.md)."
+  compile (that path is exercised manually)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]

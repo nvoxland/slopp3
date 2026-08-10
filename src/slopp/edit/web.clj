@@ -349,7 +349,8 @@
     gate fires on any `web.enabled` store, including one with `dev.server`
     false where no managed server boots at all. Told to that reader it
     asserts a behaviour that does not happen to them: a general truth
-    delivered in this store's voice, which is Core 9 one notch down. What is
+    delivered in this store's voice, which is a check reporting on a PROXY one
+  notch down. What is
     left says the same thing unconditionally — anything the builder allocates
     is new each time it RUNS.
 

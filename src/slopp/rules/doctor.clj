@@ -17,73 +17,7 @@
   Pure, so it runs over any store value. Every finding carries the call that
   fixes it — a finding without one is a complaint."
   (:require [slopp.store :as store]
-            [slopp.rules.markers :as markers] [clojure.string :as str]))
-
-(defn vocabulary-dead-ends
-  "Retired-vocabulary rows whose VALUE goes nowhere in this store.
-
-  The vocabulary (`config_file {path \"vocabulary\" key <old> value <new>}`) is
-  the machine-readable twin of the naming glossary, and TWO checks read it: the
-  `retired-vocabulary` done-advisory over store forms, and
-  `bin/check-shipped-prose.sh` over the skills and `docs/` — prose that SHIPS.
-  Neither validates it and nothing else does either, because `config_file` runs
-  no gate over its values. A row can point anywhere at all, and the failure is
-  silent in the worst place: a reader who looks up a retired name is answered
-  with another dead name.
-
-  Two ways a row goes wrong, reported apart because the fixes differ:
-
-  - **`:chained`** — the value is another row's KEY, so *where did it go?* is
-    answered with a name that also went somewhere. Phase 2 landed two of these
-    in one day (`slopp.ui-api → slopp.http-api`, while `slopp.http-api` was
-    itself being retired) and collapsed them by hand, which is exactly the
-    manual step this removes.
-  - **`:unresolved`** — the value occurs NOWHERE in the store. Measured on
-    slopp's own vocabulary the day this shipped: 66 rows, ZERO unresolved and
-    zero chained.
-
-  **That zero was earned twice, and the first attempt is the part worth
-  keeping.** The check's first run reported one finding —
-  the row mapping `:slopp.api/agent-id` to `:slopp.ops/agent-id` — and the
-  finding was WRONG.
-  `:slopp.ops/agent-id` is live: it is declared in the malli schema on
-  `slopp.ops.external/open!`. It hid because a schema lives in METADATA, and
-  `tree-seq coll? seq` over a form's sexpr does not descend into metadata — a
-  node's meta is not one of its children. So the blob this resolves against had
-  a hole shaped exactly like every declared contract in the store, and the
-  check's one finding was a name it could not see rather than a name that was
-  not there. `diagnose` walks metadata now, and the fixture below pins it.
-
-  A value with no DOT is skipped: a phrase row (`ui-hub → hub`) names a TERM
-  rather than a name and has nothing to resolve to.
-
-  Resolution is deliberately OCCURRENCE in `blob` — every namespace name,
-  qualified symbol, keyword and string literal in the store — rather than exact
-  lookup. A value that appears anywhere is a pointer a reader can follow, which
-  is all a glossary owes them. Exact lookup would flag `devserver →
-  webdev.live` for being a SUFFIX of `slopp.webdev.live`, and that row is
-  perfectly legible."
-  [st blob]
-  (let [voc   (get-in st [:config "vocabulary" :values])
-        keys* (set (map str (keys voc)))]
-    (vec (for [[k v] (sort-by (comp str key) voc)
-               :let [v   (str v)
-                     why (cond (contains? keys* v)         :chained
-                               (not (str/includes? v ".")) nil
-                               (str/includes? blob v)      nil
-                               :else                       :unresolved)]
-               :when why]
-           {:row (str k) :points-at v :why why
-            :fix (if (= :chained why)
-                   (str "point it at where " v " ENDED UP, not at " v
-                        " — a reader following this row lands on another"
-                        " retired name. config_file {path \"vocabulary\" key "
-                        (pr-str (str k)) " value \"…\"}")
-                   (str v " occurs nowhere in this store, so this row answers"
-                        " \"where did " k " go?\" with a name that is not here."
-                        " Either the rename did not land or the row names the"
-                        " wrong replacement. config_file {path \"vocabulary\" key "
-                        (pr-str (str k)) " value \"…\"} to correct it"))}))))
+            [slopp.rules.markers :as markers]))
 
 (defn ^:export diagnose
   "Scan `st` for elements that predate a rule slopp now enforces and that no
@@ -113,10 +47,6 @@
   - **`:unknown-markers`** — metadata that looks like one of slopp's dials and
     is not (`^:unusedok` for `^:unused-ok`). It waives nothing while reading
     exactly as though it does, which is the worst of both.
-  - **`:vocabulary-dead-ends`** — a retired-vocabulary row whose replacement
-    goes nowhere in this store, or points at another row's KEY. `config_file`
-    runs no gate over its values, so nothing has ever checked the mapping that
-    the `retired-vocabulary` rule and `bin/check-shipped-prose.sh` both trust.
 
   Every finding carries `:fix` — the call that resolves it. A finding without
   one is a complaint."
@@ -151,33 +81,9 @@
                                        " marker slopp knows, so it waives nothing while"
                                        " reading as though it does. query_rules lists"
                                        " the real ones")}))
-        ;; every name and every piece of text this store holds, in one string.
-        ;; The vocabulary's values are tested for OCCURRENCE against it rather
-        ;; than looked up, because a value a reader can FIND is a pointer they
-        ;; can follow — see vocabulary-dead-ends for why exact lookup is worse.
-        blob      (str/join "\n"
-                            (concat (map str (keys (:namespaces st)))
-                                    (for [{:keys [sexpr]} rows
-                                          :when sexpr
-                                          ;; METADATA is not a child, so a plain
-                                          ;; `tree-seq coll? seq` walks past it —
-                                          ;; and a malli schema on a var lives
-                                          ;; exactly there. `slopp.ops.external/
-                                          ;; open!` declares :slopp.ops/agent-id
-                                          ;; that way, so without this the
-                                          ;; vocabulary row naming it reads as a
-                                          ;; dead end.
-                                          top (tree-seq coll? seq sexpr)
-                                          n   (cons top (when-let [m (meta top)]
-                                                          (tree-seq coll? seq m)))
-                                          :when (or (string? n)
-                                                    (and (or (symbol? n) (keyword? n))
-                                                         (namespace n)))]
-                                      (str n))))
-        vocab     (vocabulary-dead-ends st blob)]
-    {:scanned              (count rows)
-     :unmanaged-declares   declares
-     :duplicate-names      dupes
-     :unknown-markers      unknown
-     :vocabulary-dead-ends vocab
-     :healthy              (every? empty? [declares dupes unknown vocab])}))
+        ]
+    {:scanned            (count rows)
+     :unmanaged-declares declares
+     :duplicate-names    dupes
+     :unknown-markers    unknown
+     :healthy            (every? empty? [declares dupes unknown])}))

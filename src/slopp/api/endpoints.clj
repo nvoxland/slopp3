@@ -139,8 +139,9 @@
   it to the one place that must never build markup by concatenation."
   [req]
   (let [{:keys [ns name]} (:path-params req)]
-    (if-let [src (:source (:web/reads req))]
-      {:status 200 :body {:ns (str ns) :name (str name) :source src}}
+    (if-let [{:keys [form-id source]} (:source (:web/reads req))]
+      {:status 200 :body {:ns (str ns) :name (str name)
+                          :form-id form-id :source source}}
       {:status 404 :body {:error "no such form"}})))
 
 (defn ^{:web/method :get :web/path "/api/modules" :web/auth :public
