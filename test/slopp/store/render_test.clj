@@ -15,7 +15,7 @@
   render twice, get the same bytes, so a no-op push shows no diff."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.store.render :as store.render]))
+            [slopp.store.render :as store.render] [clojure.string :as str]))
 
 (deftest test-namespaces-route-to-a-test-dir
   ;; Synthetic namespaces on purpose. This tests the ROUTING RULE, and an
@@ -95,3 +95,23 @@
     (is (= "app/widget.cljs" (store.render/ns-path 'app.widget :cljs)))
     (is (= "app/shared.cljc" (store.render/ns-path 'app.shared :cljc)))
     (is (= "app/core.clj" (store.render/ns-path 'app.core)))))
+
+(deftest every-root-source-path-can-return-is-declared
+  ;; `source-roots` is what a pruner deletes, and `source-path`'s `cond` is
+  ;; what fills those roots. Two hand-kept halves of one layout is the drift
+  ;; this store has a cluster about, so drive one against the other rather
+  ;; than trusting them to agree.
+  (let [combos (for [nsx      '[app.core app.core-test]
+                     platform [:jvm :cljc :cljs]
+                     role     [:product :instrument]]
+                 (store.render/source-path nsx platform role))
+        roots  (into #{} (map #(first (str/split % #"/"))) combos)]
+    (is (seq combos) "the drive produced paths — an empty population proves nothing")
+    (is (= roots (set (filter roots store.render/source-roots)))
+        (str "every root source-path returned must be declared: " (pr-str roots)))
+    (testing "and nothing declared is imaginary — each root is reachable"
+      ;; the other direction: a root nobody can produce would be deleted by a
+      ;; pruner for no reason, and would read as covered here forever
+      (is (= store.render/source-roots roots)
+          (str "declared but unreachable: "
+               (pr-str (remove roots store.render/source-roots)))))))

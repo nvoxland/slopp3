@@ -231,8 +231,13 @@
                   ;; read as :never-loaded forever — and nothing derived from
                   ;; it could ever be judged stale, because staleness is only
                   ;; meaningful for a form the image is known to hold.
-                  (doseq [e (store/elements candidate ns-sym)]
-                    (image.currency/stamp! (:image @session) (:id e) (n/string (:node e)))))
+                  ;; bookkeeping, caught at the CALL — see `hot-load-form!` for why the
+                  ;; catch cannot live inside `stamp!`
+                  (try (doseq [e (store/elements candidate ns-sym)]
+                         (image.currency/stamp! (:image @session) (:id e)
+                                                (n/string (:node e))))
+                       (catch Throwable t
+                         (image.currency/note-failure! (:image @session) t))))
                 (let [edited  (into #{}
                                     (keep (fn [e]
                                             (when (:name e)

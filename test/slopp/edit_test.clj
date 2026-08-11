@@ -17,7 +17,7 @@
             [slopp.store.render :as store.render]
             [slopp.image.repl :as repl]
             [slopp.image :as image]
-            [slopp.edit :as edit] [slopp.index.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str]))
+            [slopp.edit :as edit] [slopp.index.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str] [slopp.image.currency :as image.currency]))
 
 (def src "(ns demo)\n(defn add [x y]\n  (+ x y))\n(def z 1)\n")
 
@@ -410,3 +410,48 @@
                    sym)]
         (is (empty? bare)
             (str "denylisted symbols whose refusal teaches nothing: " (vec bare)))))))
+
+(deftest ^:external bookkeeping-cannot-veto-the-write-it-records
+  ;; `hot-load-form!` loads a form and then STAMPS what it loaded. The stamp is
+  ;; a diagnostic — `slopp.image.currency` is in-process bookkeeping with no
+  ;; store and no IO — and on 2026-08-10 a change to its signature made every
+  ;; stamp throw. The write pipeline runs this function, so that threw on every
+  ;; write, including the write that would fix it, and including `restart`,
+  ;; `undo` and `edit_revert`. The store could not boot; the repair had to come
+  ;; from a plain JVM outside the session.
+  ;;
+  ;; The property: a form that LOADED must commit, whatever the bookkeeping
+  ;; does. An image with no `:currency` record is the honest stand-in — `stamp!`
+  ;; throws for it exactly as a wrong arity would, and a try/catch at the call
+  ;; site catches both.
+  (let [img (repl/start!)
+        st  (store/ingest (store/empty-store) 'bk.core
+                          "(ns bk.core)\n\n(defn f \"F.\" [] 1)\n")
+        fid (:id (store/form-named st 'bk.core 'f))]
+    (try
+      ;; the NAMESPACE first: `hot-load-form!` only does `(in-ns …)`, which
+      ;; makes a bare namespace with no `clojure.core` refer, so a lone
+      ;; per-form load cannot resolve `defn` and fails for reasons that have
+      ;; nothing to do with the subject
+      (is (nil? (image/load-ns! img st 'bk.core)) "fixture: the namespace loads")
+      (is (some? (image.currency/stamped img fid)) "fixture: and it stamped")
+
+      (testing "a broken stamp is not a load failure"
+        (let [st2 (store/ingest st 'bk.core
+                                "(ns bk.core)\n\n(defn f \"F.\" [] 2)\n")
+              f2  (:id (store/form-named st2 'bk.core 'f))]
+          (is (nil? (hotload/hot-load-form! (dissoc img :currency) st2 f2)))
+          (testing "and the form really is in the image, not merely un-refused"
+            (is (= [2] (repl/eval! img "(bk.core/f)"))))))
+
+      (testing "a working image still stamps, so the catch did not disable it"
+        ;; positive control: a stamp! that silently did nothing would satisfy
+        ;; every assertion above
+        (let [st3 (store/ingest st 'bk.core
+                                "(ns bk.core)\n\n(defn f \"F.\" [] 3)\n")
+              f3  (:id (store/form-named st3 'bk.core 'f))
+              before (:seq (image.currency/stamped img fid))]
+          (is (nil? (hotload/hot-load-form! img st3 f3)))
+          (is (< before (:seq (image.currency/stamped img f3)))
+              "the healthy path advanced the record")))
+      (finally (repl/stop! img)))))

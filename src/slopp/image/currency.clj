@@ -80,6 +80,32 @@
   [src]
   (hash (str src)))
 
+(defn ^:export note-failure!
+  "Record that BOOKKEEPING failed for `image`, and disarm its record.
+
+  Called from a catch block on the write path, so it is TOTAL: an image with
+  no record is not an error here, it is the case being reported.
+
+  Disarming is the whole design. `snapshot` answers nil for an unarmed record
+  and every currency surface already reads that as \"nobody measured this\" —
+  so a stamp that did not happen degrades to the honest unknown rather than to
+  a false green about what the image holds. The alternative, letting the
+  throw escape, is worse than either: the stamp runs on the write path, so a
+  broken one vetoes every write, including the one that would fix it."
+  [image why]
+  (when-let [r (:currency image)]
+    (swap! r assoc :armed? false :broken (str why)))
+  nil)
+
+(defn ^:export broken
+  "Why `image`'s record is unreliable, or nil.
+
+  `snapshot` answers nil both for a record nothing has filled yet and for one
+  whose stamping threw — the same honest \"not measured\", reached two ways.
+  This tells them apart, so a surface can say which without guessing."
+  [image]
+  (:broken (some-> (:currency image) deref)))
+
 (defn ^:export stamp!
   "Record that `form-id`'s source was just evaluated into `image`.
 

@@ -44,7 +44,16 @@
                            (apply str (repeat (- row 2) "\n")) src)
                       (str "(in-ns '" ns-sym ") " src))
             err     (:err (repl/load-checked! image padded (store.render/ns-path ns-sym)))]
-        (when-not err (image.currency/stamp! image form-id src))
+        ;; The stamp is BOOKKEEPING and must not be able to veto a load that
+        ;; succeeded. Caught HERE rather than inside `stamp!`, which is what
+        ;; makes it survive a change to `stamp!`'s own signature: an
+        ;; ArityException is thrown by the CALL, so only the caller's try can
+        ;; see it. Not hypothetical — it happened, and because this function is
+        ;; on the write path it vetoed every write, taking `restart`, `undo`
+        ;; and `edit_revert` with it.
+        (when-not err
+          (try (image.currency/stamp! image form-id src)
+               (catch Throwable t (image.currency/note-failure! image t))))
         err))))
 
 (defn ^:export apply-replace!

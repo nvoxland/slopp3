@@ -60,6 +60,22 @@
   [ns-sym]
   (str/ends-with? (str ns-sym) "-test"))
 
+(def ^:export source-roots
+  "Every root `source-path` can put a namespace under.
+
+  Exists so a pruner can make a materialized tree EQUAL the store: `build!`
+  writes what the store HAS, and removing what it no longer has means knowing
+  which subtrees are slopp's to remove. Deriving that set from the store's
+  CURRENT namespaces would be wrong in the one case that matters — retire the
+  last `:cljs` namespace and `cljs-src/` would not be in the derived set, so
+  it would linger with its contents forever.
+
+  A second hand-kept copy of this list is the drift this store has a whole
+  cluster about, so it is pinned: a test drives `source-path` over every
+  (test?, platform, role) combination and asserts the root it returns is a
+  member. Add a root there and the test names it here."
+  #{"src" "test" "cljs-src" "cljs-test" "instruments"})
+
 (defn ^:export source-path
   "The materialized file path for a namespace, rooted by convention: production
   code under `src/`, test namespaces under `test/`. e.g. `app.core` →

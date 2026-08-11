@@ -998,3 +998,49 @@
         (is (empty? (:image-load-failures @sess))
             "a namespace that loads again leaves the failure set"))
       (finally (ops/close! sess)))))
+
+(deftest ^:external a-materialization-equals-the-store-not-a-superset-of-it
+  ;; `build!` spits one file per namespace the store HAS. It never removed one
+  ;; the store no longer has, so the tree accumulated: `slopp.mcp.http` was
+  ;; deleted, green and milestoned, and `slopp/mcp/http.clj` still shipped in
+  ;; the jar hours later, sitting beside freshly-rewritten siblings.
+  ;;
+  ;; A jarred namespace is not dead weight — it is on the classpath, it can be
+  ;; required, and with `:web/` metadata a served store ROUTES to it. A build
+  ;; from a store that deleted a login handler still shipped the login handler.
+  ;;
+  ;; `uber`'s staleness guard cannot catch this: it discriminates on presence
+  ;; and mtime, and materializing ON TOP of an older tree leaves the directory
+  ;; present with a fresh timestamp on every file anyone would think to check.
+  ;; The stale one is the file nobody rewrote.
+  (let [sess (external/open!)
+        dir  (str (java.nio.file.Files/createTempDirectory
+                   "slopp-prune" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (ops/create-ns! sess 'pr.keep :source "(ns pr.keep)\n\n(defn k \"K.\" [] 1)\n")
+      (ops/create-ns! sess 'pr.gone :source "(ns pr.gone)\n\n(defn g \"G.\" [] 2)\n")
+      (external/build! sess dir)
+      (is (.exists (io/file dir "src/pr/gone.clj")) "fixture: it was materialized")
+
+      ;; `delete-ns!` retires an EMPTY namespace, so the form goes first — and
+      ;; both results are checked, because a fixture that silently failed to
+      ;; delete anything would make the assertion below pass for the wrong
+      ;; reason and then fail for the right-looking one
+      (is (nil? (:error (ops/delete-form! sess 'pr.gone 'g :prompt "retire it"))))
+      (is (nil? (:error (ops/delete-ns! sess 'pr.gone :prompt "retire it"))))
+      (is (nil? (get (:namespaces (:store @sess)) 'pr.gone))
+          "fixture: the store really no longer has it")
+      (external/build! sess dir)
+      (is (not (.exists (io/file dir "src/pr/gone.clj")))
+          "a namespace the store no longer has must not survive in the tree")
+      (testing "and everything the store DOES have is still there"
+        ;; the whole risk of pruning is over-deleting, so this is the half that
+        ;; a too-eager fix fails
+        (is (.exists (io/file dir "src/pr/keep.clj")))
+        (is (.exists (io/file dir "src" boot/head-resource-path))
+            "including the generated resources that live under the same root")
+        (is (.exists (io/file dir "deps.edn"))))
+      (finally
+        (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
+          (rm! (io/file dir)))
+        (ops/close! sess)))))

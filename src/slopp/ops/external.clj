@@ -92,6 +92,45 @@
                 :refill (artifacts/refill-instruction (str path) (:recipe r))})))
          (:artifacts st))))
 
+(defn- clear-source-roots!
+  "Delete the materialized source roots under `target` so the tree about to be
+  written EQUALS the store rather than accumulating. Returns nil when it
+  cleared (or had nothing to clear), or a REASON string when it declined.
+
+  **Attested by the head stamp**, never assumed. `build!` takes an arbitrary
+  absolute directory, so deleting `src/` on trust would delete a directory
+  somebody else owns. `src/META-INF/slopp/head.edn` is written by `build!` and
+  by nothing else, so its presence is proof this tree is a materialization.
+  No source root at all is the other safe case: a fresh directory.
+
+  **Deletes rather than swapping into place.** A swap would be atomic, and the
+  cost of not having it is a crash mid-build leaving a partial tree — which
+  `uber` already refuses, loudly, because the head stamp is gone with it. A
+  silent wrong jar is the failure worth engineering against; a loud missing
+  one is not.
+
+  Only the roots in `store.render/source-roots`, only under `target`, and only
+  after `build!`'s existing guards have established that `target` is absolute
+  and does not enclose the running process."
+  [^java.io.File target]
+  (let [roots   (map #(io/file target %) store.render/source-roots)
+        present (filter #(.exists ^java.io.File %) roots)
+        stamp   (io/file target "src" boot/head-resource-path)]
+    (cond
+      (empty? present) nil
+      (not (.exists stamp))
+      (str "left " (count present) " existing source root(s) in place: no "
+           (str "src/" boot/head-resource-path) " to attest this tree was"
+           " materialized by build!. A namespace deleted from the store may"
+           " still be sitting there — build into a fresh directory, or remove"
+           " the roots by hand")
+      :else
+      (letfn [(rm! [^java.io.File f]
+                (when (.isDirectory f) (run! rm! (.listFiles f)))
+                (.delete f))]
+        (run! rm! present)
+        nil))))
+
 (defn ^:export build!
   "C1/C6 explicit build: materialize a runnable project under `dir` —
   `src/<ns-path>.clj` per namespace plus a minimal `deps.edn` (F8). Guarded
@@ -172,7 +211,8 @@ client-deps (merge (:client-deps st) (:client provided))
        :native-incompatible (vec incompat)}
 
       :else
-      (do (doseq [ns-sym (keys (:namespaces st))]
+      (let [unpruned (clear-source-roots! target)]
+          (doseq [ns-sym (keys (:namespaces st))]
     (let [file (io/file target (store.render/source-path ns-sym
                                                    (store/platform-for st ns-sym)
                                                    (store/role-for st ns-sym)))]
@@ -234,7 +274,11 @@ client-deps (merge (:client-deps st) (:client provided))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps instr?)))
           (cond-> (let [missing (materialize-artifacts! session st target)]
                         (cond-> {:built (str target)}
-                          (seq missing) (assoc :missing-artifacts missing)))
+                          (seq missing) (assoc :missing-artifacts missing)
+                          ;; the tree is a SUPERSET of the store when this is
+                          ;; set — say so, because the whole failure mode is
+                          ;; that nothing does
+                          unpruned (assoc :unpruned unpruned)))
             main
             (assoc :native
                    (let [an    (analyze/analyze (store.render/render-ns st entry-ns))
@@ -1115,6 +1159,16 @@ client-deps (merge (:client-deps st) (:client provided))
                                       " husk; adding a form is the other honest"
                                       " answer, and it is why this is reported"
                                       " rather than refused"))
+      (image.currency/broken (:image @session))
+      (assoc :currency-broken (image.currency/broken (:image @session))
+             :currency-broken-note
+             (str "the verification image's currency record stopped being"
+                  " maintained, so every currency answer about it is now"
+                  " \"not measured\" rather than a claim. Bookkeeping is caught"
+                  " on the write path deliberately — a stamp that throws must"
+                  " not veto a load that succeeded — so this is the report that"
+                  " would otherwise be a silent gap. `restart` builds a fresh"
+                  " image and clears it; the message names what threw"))
       (seq aliasdrift)    (assoc :alias-drift aliasdrift
                                  :alias-drift-note
                                  (str (count aliasdrift) " require(s) name a store"

@@ -44,9 +44,12 @@
       (repl/eval! image
                   (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
                           ns-sym))
+      ;; bookkeeping, caught at the CALL — see `hot-load-form!` for why the
+      ;; catch cannot live inside `stamp!`
       (when-not (:err res)
-        (doseq [e (store/elements store ns-sym)]
-          (image.currency/stamp! image (:id e) (n/string (:node e)))))
+        (try (doseq [e (store/elements store ns-sym)]
+               (image.currency/stamp! image (:id e) (n/string (:node e))))
+             (catch Throwable t (image.currency/note-failure! image t))))
       (:err res))))
 
 ^:reads (defn test-run
