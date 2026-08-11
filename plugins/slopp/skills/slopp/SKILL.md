@@ -666,6 +666,16 @@ same defect solved seven different ways.
 keyword, a module? `query_depends {on X}` answers relations between those, so if
 both ends qualify you are on the easy path.
 
+**Never enumerate call sites with a search — ask `query_depends {on "ns/var"}`.**
+It is alias-blind because the reference graph is kondo-resolved, and a text
+search is not: one namespace is routinely required under several `:as` names,
+so a grep for `alias/name` silently covers a subset. Measured on this codebase:
+five aliases each resolve to more than one namespace (one to THREE), and a
+signature change swept by grep twice reported every caller migrated while two
+were still broken — found minutes later by the whole-store check. The wrong
+method LOOKS thorough, because a search that misses a hit is shaped exactly
+like a search that found them all.
+
 | both ends addressable? | what you need | do this |
 |---|---|---|
 | **yes** | a rename must rewrite it | nothing — the reference graph already carries it. `rename_sweep` / `ns_rename` move it, and `:left-behind` reports what they could not |

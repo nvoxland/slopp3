@@ -398,6 +398,28 @@ The oracle must never return a false verdict. Everything here serves that.
    Quiet is load-bearing: a clean `:live` host lags by up to one poll interval
    by design, so it warns about nothing — a finding on every done is a finding
    nobody reads.
+   **WHOSE image (2026-08-10, `ideas/projection/` item 1).** The currency
+   record used to be ONE process-global atom, so "does the image hold this
+   form's current source" had an implied subject — the oracle — and the app
+   server's second image had to be kept out of it by loading through a
+   deliberately non-stamping door. The record now hangs on the image HANDLE
+   (`repl/start!` mints it), every verb takes the image, and `drift` /
+   `stale-after` do too. The two loaders collapsed back into one `load-ns!`.
+   **Correctness stopped depending on callers choosing correctly**, which was
+   the whole complaint: a keyed registry would have needed an identity and an
+   eviction rule invented for it, while a record on the handle is minted with
+   the image and garbage with it.
+   **`forget-all!` survives with exactly one caller, and it is not the obvious
+   one.** `repl/reset-to-baseline!` — the single point where a RECYCLED image
+   changes tenant while keeping its handle. `park!`/`unpark!` hand that same
+   handle to the next session, so without emptying there, the new tenant
+   inherits stamps for a store it never loaded. `fresh-image!` and
+   `boot-image!` no longer reset anything: a new image is born empty.
+   **Three doors stamp, and the third hid behind a second ALIAS.**
+   `edit.hotload/hot-load-form!`, `image/load-ns!` and `ops/ingest!` — the last
+   two reached through `registry/` rather than `currency/`, so two sweeps for
+   `currency/…` came back clean while live callers still used the old arity.
+   Adding a fourth door means stamping there too.
    **WHY it is suspect, not only that it is (2026-08-09, `ideas/projection/`
    item 2).** A `:derived-stale` row said which form went behind and which
    form it was behind, and neither is the question a reader has. It now

@@ -1530,6 +1530,107 @@ premise.** Re-measure the premise before building the fix — it costs one query
 and it is the difference between closing an item and shipping a confident
 falsehood.
 
+### Sharpening (2026-08-10): a second ALIAS makes a call-site sweep report clean while callers are broken
+
+Core 2's rot is usually about a relationship nothing can see. This is narrower
+and cheaper to guard: a relationship the tools CAN see, that a human search
+misses because the same namespace is reached under two names.
+
+`slopp.image.currency` was aliased `currency` in three namespaces and
+`registry` in two. Changing its arities, a grep for `currency/(stamp!|arm!|…)`
+came back showing every caller migrated — twice, at two different stages — and
+both times `ops/ingest!` and `ops.external/boot-image!` were still calling the
+old signature under `registry/`. The whole-store check found them; the sweep
+that read as complete did not.
+
+**Discipline. Do not grep for call sites at all — ask the graph.**
+`query_depends {on "ns/var"}` returns every caller, alias-blind, because the
+reference graph is kondo-resolved. Run on the actual case afterwards it
+returned all six callers including `ops/ingest!`, the one two greps missed.
+A text search for `alias/name` cannot do this and a search for the bare name
+only accidentally can.
+
+Worth stating plainly because the wrong method LOOKS thorough: a grep that
+returns five hits and misses a sixth is indistinguishable from a grep that
+returns all six, and the difference only shows up in the whole-store check
+minutes later. This is the absence-shaped answer again — the search reported
+what it found, not what was there.
+
+**Measured 2026-08-10, and the alias population is worse than one namespace:**
+five aliases each resolve to more than one store namespace (`web` to THREE —
+`slopp.web`, `slopp.rules.web`, `slopp.edit.web`), covering 90 require sites,
+plus 18 aliases that resemble their namespace not at all, mostly residue from
+renames (`ui` for `slopp.api.server`, `bench` for `slopp.lab`, `session` for
+`slopp.ops.engine`). So `modules/module-surface` in one slice and another
+name different code, and nothing says so. That is a READING defect rather than
+a sweep defect — the graph was never confused — and it is the same shape as
+qualifying `:behind`: a bare name that costs a lookup every time it is read.
+
+**And the codebase had already written the lesson down, in the docstring of
+the very function this happened to.** `load-ns!` carried *"there are THREE
+doors, not two … an enumeration that reads as complete stops anyone
+counting"*, recording that `ingest!` went unstamped for a release. The fix for
+that enumeration problem missed the same door, for the same reason, one alias
+over.
+
+### Sharpening (2026-08-10): when the write pipeline is the SUBJECT, no order of edits works
+
+`stamp!` is called by `hot-load-form!`, which every write runs. Changing its
+arity meant the write that would fix the caller had to hot-load through the
+caller it was fixing. That is not a hard ordering problem — it has no
+solution: `edit_revert`, `undo`, `restart` and a fresh `slopp --call` all
+failed the same way, because each of them loads code through the broken path.
+The store could not boot.
+
+**The repair route is worth knowing before you need it:** a plain JVM off the
+jar, using `slopp.store` + `slopp.store.db` (`load-store`, `apply-changeset`,
+`persist!`). No session, no image. The store is a value plus a journal and
+both are reachable without booting anything.
+
+**The technique that avoids it:** give the changed fn BOTH shapes first, move
+every call site under full verification, then drop the old one. Every
+intermediate state loads. It must be done BEFORE the first breaking write —
+afterwards, adding the scaffold is itself a write.
+
+Filed as `ideas/logs/restructure-wave-frictions.md` #68. It generalizes past
+this one function: **anything the write pipeline itself calls cannot be
+changed by an ordinary write**, and nothing marks which forms those are.
+
+### Sharpening (2026-08-10): ABSENCE is not a value to match on — `nil` is not a name
+
+Core 1 is about a check whose empty result and unrun result share a
+representation. The same conflation reaches ADDRESSING, and there it is one
+character of code.
+
+`store/forms-named` resolves a form by `(or (contains? (:names %) nm)
+(= nm (:name %)))`, with an id fallback below. A `defmethod` has `:name nil`.
+So asking for a nil name matched EVERY nameless form in the namespace — the
+first filter came back non-empty, **the id fallback never ran**, and a caller
+holding only an id was told its form was ambiguous with every other nameless
+one. `(= nm (:name %))` turns *"this form has no name"* into *"this form
+answers to the absence of a name"*.
+
+**Every symptom followed from that, which is the part worth remembering.** The
+refusal said *"4 forms bear on  (a legacy declare beside its definition) —
+cleanup retires the declare"*. The 4 was the count of nameless forms. The
+declare is the only ambiguity a NAME collision can produce, so the message was
+right about its own branch and wrong about which branch it was in. And the
+recommended `cleanup` reported `:declares 0` and changed nothing — so a reader
+runs the remedy, sees green, retries, and gets the identical refusal.
+
+That last part is Core 10's worst shape: not a remedy the reader cannot
+perform, but one they CAN perform, that succeeds, and leaves them exactly where
+they were. **A misdiagnosis is worse than a bad sentence, because the sentence
+is fine.** Do not fix the wording of a refusal until you have checked that it
+fired for the reason it says.
+
+**Discipline.** Before matching on a field, ask what the field being ABSENT
+means, and whether absence is a legal query. Where it is not — a name, an id,
+a key — exclude it explicitly rather than letting equality decide. The tell is
+a matcher with a fallback that never runs: if an earlier clause can match on
+emptiness, everything after it is unreachable for exactly the inputs it was
+written for.
+
 ## Core 9 — a check computed over a PROXY reports on the proxy, in the real thing's voice
 
 **Root.** Named 2026-07-31 by slopp-ui, after the third instance in one
