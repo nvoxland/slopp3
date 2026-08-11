@@ -24,7 +24,7 @@
             [slopp.index.derive :as derive]
             [slopp.store :as store]
             [slopp.store.fields :as fields]
-            [slopp.store.render :as render]))
+            [slopp.store.render :as store.render]))
 
 (defn ^:export canonical-tier
   "Canonical spelling of a purity tier — delegates to the registry's ONE
@@ -90,7 +90,7 @@
   A MIGRATION aid: the end state is these violations being refused at write
   time, at which point a standing report has no one left to inform."
   [store ns-sym]
-  (let [analysis (analyze/analyze (render/render-ns store ns-sym))
+  (let [analysis (analyze/analyze (store.render/render-ns store ns-sym))
         dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
         eff-any  (derive/effectful-vars analysis dep-nses (:dep-pure store))
         eff-ext  (derive/externally-effectful-vars analysis dep-nses (:dep-pure store))
@@ -143,7 +143,7 @@
   [candidate ns-sym form-name]
   (let [tier (tier-for candidate ns-sym)]
     (when (not= tier :external)
-      (let [analysis (analyze/analyze (render/render-ns candidate ns-sym))
+      (let [analysis (analyze/analyze (store.render/render-ns candidate ns-sym))
             dep-nses (into #{} (mapcat identity) (vals (:dep-ns candidate)))
             eff      (if (= tier :pure)
                        (derive/effectful-vars analysis dep-nses (:dep-pure candidate))

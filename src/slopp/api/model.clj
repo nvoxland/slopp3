@@ -20,8 +20,8 @@
   core→shell dependency full_check's tier-layering check refuses."
   (:require [slopp.store :as store]
             [slopp.read.query :as query]
-            [slopp.read.history :as history] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
-            [slopp.read.modules :as read.modules] [slopp.edit.tiers :as tiers] [slopp.store.render :as render]))
+            [slopp.read.history :as history] [slopp.edit.modules :as edit.modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [rewrite-clj.node :as n] [clojure.string :as str]
+            [slopp.read.modules :as read.modules] [slopp.edit.tiers :as tiers] [slopp.store.render :as store.render]))
 
 (defn ^:export change-view
   "What changed between two milestones, grouped module → namespace → form
@@ -58,7 +58,7 @@
                                  ;; the wire is this layer's job, not its producer's.
                                  :status  (name status)
                                  :ns      (str ns-sym)
-                                 :module  (modules/module-of ns-sym)
+                                 :module  (edit.modules/module-of ns-sym)
                                  :diff    (mapv (fn [[k text]] [(name k) text])
                                                 (history/diff-lines was now))
                                  :callers (count (distinct (map (juxt :from-ns :from-var)
@@ -299,7 +299,7 @@
                                             :when q]
                                         (merge {:form-id i :form (str q)
                                                 :ns (namespace q)
-                                                :module (modules/module-of (symbol (namespace q)))}
+                                                :module (edit.modules/module-of (symbol (namespace q)))}
                                                (select-keys
                                                 (json-card
                                                  (orient/form-card session
@@ -363,7 +363,7 @@
                        (let [e (store/form-named st ns- var-)]
                          (cond-> {:form   (str (symbol (str ns-) (str var-)))
                                   :ns     (str ns-)
-                                  :module (modules/module-of ns-)}
+                                  :module (edit.modules/module-of ns-)}
                            ;; ids are the permalink, so every edge on the page
                            ;; is one — a name would break the moment it changes
                            e (assoc :form-id (:id e)))))
@@ -408,7 +408,7 @@
                          :form    (str qsym)
                          :name    (str nm)
                          :ns      (str ns-sym)
-                         :module  (modules/module-of ns-sym)
+                         :module  (edit.modules/module-of ns-sym)
                          :view    (or view "clojure")
                          :views   (vec (sort fidelities))
                          :source  (n/string (:node e))
@@ -454,7 +454,7 @@
         covered (into #{} (mapcat val) tmap)]
     (into {}
           (for [n (keys (:namespaces store))
-                :when (not (render/test-ns? n))]
+                :when (not (store.render/test-ns? n))]
             [n (reduce (fn [acc e]
                          (cond-> (update acc :forms inc)
                            (nil? (store/form-docstring (:node e))) (update :no-doc inc)
@@ -490,21 +490,21 @@
 gaps    (gaps-by-ns st (:test-map @session))
         module  (str module)
         test?   #(str/ends-with? (str %) "-test")
-        member? #(and (not (test? %)) (= module (modules/module-of %)))
+        member? #(and (not (test? %)) (= module (edit.modules/module-of %)))
         members (into (sorted-set) (filter member?) (keys (:namespaces st)))]
     (when (seq members)
       (let [edges  (into #{} (comp (remove #(test? (:from-ns %)))
                                    (map (juxt :from-ns :to))
                                    (remove (fn [[f t]] (= f t))))
-                         (modules/module-usage-rows st))
+                         (edit.modules/module-usage-rows st))
             inside (filter (fn [[f t]] (and (members f) (members t))) edges)
             out    (sort-by (juxt :from :to)
                             (for [[f t] edges :when (and (members f) (not (members t)))]
                               {:from (str f) :to (str t)
-                               :to-module (modules/module-of t)}))
+                               :to-module (edit.modules/module-of t)}))
             in     (sort-by (juxt :from :to)
                             (for [[f t] edges :when (and (not (members f)) (members t))]
-                              {:from (str f) :from-module (modules/module-of f)
+                              {:from (str f) :from-module (edit.modules/module-of f)
                                :to (str t)}))
             by-ns  (reduce (fn [m [f t]] (update m f (fnil conj #{}) t))
                            (into {} (map (juxt identity (constantly #{}))) members)
@@ -565,11 +565,11 @@ gaps    (gaps-by-ns st (:test-map @session))
         nses       (sort (keys (:namespaces st)))
         test?      #(str/ends-with? (str %) "-test")
         prod       (remove test? nses)
-        by-module  (group-by modules/module-of prod)
-        home       (into {} (map (juxt identity modules/module-of)) prod)
+        by-module  (group-by edit.modules/module-of prod)
+        home       (into {} (map (juxt identity edit.modules/module-of)) prod)
         ;; a test counts for every module it reaches into, plus its own
         reach      (fn [t] (conj (set (keep home (store/ns-requires st t)))
-                                 (modules/module-of t)))
+                                 (edit.modules/module-of t)))
         test-tally (frequencies (mapcat reach (filter test? nses)))
         tiers      (:module-tiers st)
         ;; summed over the module's OWN namespaces, which is exactly the list
@@ -669,7 +669,7 @@ gaps    (gaps-by-ns st (:test-map @session))
         eff      (query/ns-effectful-vars store sym)
         inward   (refs/refs-by-target store)
         call?    #(not= :declared (:via %))
-        test-ns? #(not= (str %) (str (modules/fold-test-ns %)))
+        test-ns? #(not= (str %) (str (edit.modules/fold-test-ns %)))
         outside  (fn [q from-ns?]
                    (into #{}
                          (comp (filter call?)
@@ -699,7 +699,7 @@ gaps    (gaps-by-ns st (:test-map @session))
               :callers-out      (count (outside q (complement test-ns?)))
               :callers-out-test (count (outside q test-ns?))
               :effectful?       (contains? eff q)
-              :exported?        (boolean (modules/export-level store sym nm))}]))))
+              :exported?        (boolean (edit.modules/export-level store sym nm))}]))))
 
 (def ^:export search-limits
   "`GET /api/search`'s row budget: the `:default` when a caller sends no
@@ -789,14 +789,14 @@ gaps    (gaps-by-ns st (:test-map @session))
             ;; nothing declares and nobody can descend into
             mods     (sort (distinct (for [ns-sym nses
                                            :when  (not (str/ends-with? (str ns-sym) "-test"))]
-                                       (modules/module-of ns-sym))))
+                                       (edit.modules/module-of ns-sym))))
             ns-doc   (fn [ns-sym]
                        (some #(when (= (str (:name %)) (str ns-sym))
                                 (store/form-docstring (:node %)))
                              (store/forms store ns-sym)))
             hits     (concat
                       (keep #(row {:kind "module"} % nil nil nil) mods)
-                      (keep #(row {:kind "namespace" :module (modules/module-of %)
+                      (keep #(row {:kind "namespace" :module (edit.modules/module-of %)
                                    :ns (str %)}
                                   % (ns-doc %) nil nil)
                             nses)
@@ -813,9 +813,9 @@ gaps    (gaps-by-ns st (:test-map @session))
                                     ;; fifth place that knew which heads define
                                     ;; a fn; the knowledge moved to the one
                                     ;; function that has to know.
-                                    sig (modules/fn-arglists sx)
+                                    sig (edit.modules/fn-arglists sx)
                                     r   (row (cond-> {:kind "form"
-                                                      :module (modules/module-of ns-sym)
+                                                      :module (edit.modules/module-of ns-sym)
                                                       :ns (str ns-sym)
                                                       :form-id (str (:id e))}
                                                (seq sig) (assoc :sig (mapv pr-str sig)))

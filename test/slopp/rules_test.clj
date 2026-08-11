@@ -17,7 +17,7 @@
   Mostly `^:external`: a done-advisory's input is an episode, which needs a
   real session with a real baseline and real verification deltas behind it."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as web] [slopp.edit.gates :as gates] [slopp.project.capabilities :as caps] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.store.fields :as fields] [rewrite-clj.parser :as p]))
+            [slopp.rules :as rules] [slopp.store :as store] [slopp.ops :as ops] [clojure.set :as set] [slopp.ops.external :as external] [slopp.rules.catalog :as catalog] [slopp.edit.web :as edit.web] [slopp.edit.gates :as gates] [slopp.project.capabilities :as capabilities] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.store.fields :as fields] [rewrite-clj.parser :as p]))
 
 (deftest done-advisory-registry-and-severity
   (testing "the registry carries every done-time advisory with a key, severity, and check"
@@ -84,7 +84,7 @@
         ;; project, whatever kind) have no `slopp.<module>.<owner>` namespace
         ;; and are correctly not types. Derived, so app type #2 is picked up by
         ;; existing here rather than by being added to a list.
-        app-types (set (for [t     (keys caps/owners)
+        app-types (set (for [t     (keys capabilities/owners)
                              :when (some #(re-matches (re-pattern (str "slopp\\..+\\." t)) %) loaded)]
                          t))
         owner-of  (fn [ns-sym]
@@ -142,7 +142,7 @@
   ;; require at all, which is precisely what `spa-consequences-check` did. This
   ;; catches the reach, not the vocabulary.
   (let [loaded    (set (map (comp str ns-name) (all-ns)))
-        app-types (set (for [t     (keys caps/owners)
+        app-types (set (for [t     (keys capabilities/owners)
                              :when (some #(re-matches (re-pattern (str "slopp\\..+\\." t)) %) loaded)]
                          t))
         reaching  (for [[_ dep] (ns-aliases (find-ns 'slopp.rules))
@@ -441,7 +441,7 @@
                                         (str "(ns st.api)\n\n"
                                              "(defn ^{:web/method :post :web/path \"/o\""
                                              " :web/request st.c/a :web/response " resp "} make [r] r)\n"))))
-        old-sig (web/client-signature (mk "st.c/a"))]
+        old-sig (edit.web/client-signature (mk "st.c/a"))]
     (testing "a recorded sig that no longer matches the current endpoints fires the advisory"
       (let [drifted (first (store/record-config-put (mk "st.c/b") "client" :manifest
                                                     "generated-sig" old-sig))]
@@ -449,7 +449,7 @@
     (testing "a matching sig is quiet"
       (let [fresh-store (mk "st.c/b")
             fresh (first (store/record-config-put fresh-store "client" :manifest
-                                                  "generated-sig" (web/client-signature fresh-store)))]
+                                                  "generated-sig" (edit.web/client-signature fresh-store)))]
         (is (empty? (rules.web/web-stale-client-check nil fresh nil)))))
     (testing "never generated (no recorded sig) → never nags"
       (is (empty? (rules.web/web-stale-client-check nil (mk "st.c/a") nil))))))

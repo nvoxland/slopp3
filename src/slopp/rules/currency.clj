@@ -36,7 +36,7 @@
   data instead of staged in a live process."
   (:require [slopp.store :as store]
             [slopp.index.refs :as refs]
-            [slopp.image.currency :as currency]
+            [slopp.image.currency :as image.currency]
             [rewrite-clj.node :as n]))
 
 (defn- captures-at-load?
@@ -107,7 +107,7 @@
                          :when (store/jvm-loadable? store ns-sym)
                          e (store/elements store ns-sym)]
                      (assoc e :ns ns-sym)))
-        source (fn [e] (currency/hash-of (n/string (:node e))))
+        source (fn [e] (image.currency/hash-of (n/string (:node e))))
         moved  (vec (for [e els
                           :let [got (get stamps (:id e))]
                           :when (or (nil? got) (not= (source e) (:hash got)))]
@@ -139,23 +139,29 @@
     (into moved behind)))
 
 (defn ^:export drift
-  "`drift-of` against the LIVE image's registry — what this process is actually
-  holding, compared to what the store says. **nil** when the registry has not
-  been armed, i.e. when nothing has measured this image.
+  "`drift-of` against `image`'s own record — what that image is actually
+  holding, compared to what the store says. **nil** when the record has not
+  been armed, i.e. when nothing has measured that image.
+
+  The image is named rather than implied. While the record was one
+  process-global atom this took only a store, and \"the image\" meant the
+  oracle by convention — which is exactly the assumption that broke when a
+  second image started running on purpose.
 
   That nil travels: `host-brief` and `host-warning` read it as \"not looked\"
   and keep their cautious wording, rather than treating an absent record as a
   clean bill of health. An empty vector — armed, and nothing drifted — is the
   positive claim, and only a loader that stamped what it loaded can produce
   it."
-  [store]
-  (when-let [stamps (currency/snapshot)]
+  [image store]
+  (when-let [stamps (image.currency/snapshot image)]
     (drift-of store stamps)))
 
 (defn ^:export stale-after
-  "The forms this image holds at a value computed BEFORE `form-id` was last
-  evaluated — the write-time slice of `drift-of`'s `:derived-stale` class, as a
-  vector of qualified symbols. Nil when currency was never armed.
+  "The forms `image` holds at a value computed BEFORE `form-id` was last
+  evaluated there — the write-time slice of `drift-of`'s `:derived-stale`
+  class, as a vector of qualified symbols. Nil when that image's record was
+  never armed.
 
   `drift-of` answers the whole-store question and pays a full walk for it,
   which is the wrong price on every write. Here the candidates are only the
@@ -167,17 +173,17 @@
   holding a captured value, that form is stamped AFTER the edited one, and a
   comparison-free check would go on reporting it forever.
 
-  Deliberately does NOT name the edit the way `drift-of`'s rows do. There the
-  reader is holding a verdict and asking why; here they have just made the
-  write that caused it, so naming it back at them is noise. The asymmetry is
-  the point, not an oversight.
-
   A form is a candidate only if it was stamped (never-loaded is a different
   and louder problem, reported elsewhere) and only if it CAPTURES at load: a
   `defn` reaching the same var resolves it at call time and is not stale,
-  which is what keeps this quiet on nearly every write."
-  [store form-id]
-  (when-let [stamps (and form-id (currency/snapshot))]
+  which is what keeps this quiet on nearly every write.
+
+  Deliberately does NOT name the edit the way `drift-of`'s rows do. There the
+  reader is holding a verdict and asking why; here they have just made the
+  write that caused it, so naming it back at them is noise. The asymmetry is
+  the point, not an oversight."
+  [image store form-id]
+  (when-let [stamps (and form-id (image.currency/snapshot image))]
     (let [target (get-in stamps [form-id :seq])]
       (when target
         (vec

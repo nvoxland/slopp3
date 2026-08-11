@@ -10,69 +10,69 @@
   rather than on any one consumer's reading of it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.project.capabilities :as caps] [clojure.string :as str]))
+            [slopp.project.capabilities :as capabilities] [clojure.string :as str]))
 
 (deftest registry-declares-and-resolves-keys
   (testing "every registry entry carries key, type, default slot, and doc"
-    (is (seq caps/registry))
-    (doseq [e caps/registry]
+    (is (seq capabilities/registry))
+    (doseq [e capabilities/registry]
       (is (string? (:key e)) (pr-str e))
       (is (vector? (:type e)) (pr-str e))
       (is (string? (:doc e)) (pr-str e))))
   (testing "exact keys resolve"
-    (is (= "web.port" (:key (caps/find-entry "web.port"))))
-    (is (= "web.enabled" (:key (caps/find-entry "web.enabled")))))
+    (is (= "web.port" (:key (capabilities/find-entry "web.port"))))
+    (is (= "web.enabled" (:key (capabilities/find-entry "web.enabled")))))
   (testing "wildcard keys: a trailing * is a prefix (one or more segments), a mid * is one segment"
-    (is (= "web.static.*" (:key (caps/find-entry "web.static./assets"))))
-    (is (= "web.auth.static.*" (:key (caps/find-entry "web.auth.static.users.alice"))))
-    (is (= "web.auth.groups.*.members" (:key (caps/find-entry "web.auth.groups.admin.members")))))
+    (is (= "web.static.*" (:key (capabilities/find-entry "web.static./assets"))))
+    (is (= "web.auth.static.*" (:key (capabilities/find-entry "web.auth.static.users.alice"))))
+    (is (= "web.auth.groups.*.members" (:key (capabilities/find-entry "web.auth.groups.admin.members")))))
   (testing "an unknown key resolves to nothing"
-    (is (nil? (caps/find-entry "http.prot")))
+    (is (nil? (capabilities/find-entry "http.prot")))
     ;; the mid-`*` pattern still demands its tail. Left as `groups.admin.member`
     ;; this would have gone on passing after the family moved under web.auth —
     ;; green because NO `groups.` key resolves any more, which is not what it
     ;; was written to observe.
-    (is (nil? (caps/find-entry "web.auth.groups.admin.member")))
-    (is (some? (caps/find-entry "web.auth.groups.admin.members")))))
+    (is (nil? (capabilities/find-entry "web.auth.groups.admin.member")))
+    (is (some? (capabilities/find-entry "web.auth.groups.admin.members")))))
 
 (deftest values-check-and-take-effect
   (testing "check-value: nil when the string suits the type, a teaching string when not"
-    (is (nil? (caps/check-value (caps/find-entry "web.port") "8080")))
-    (is (string? (caps/check-value (caps/find-entry "web.port") "banana")))
-    (is (string? (caps/check-value (caps/find-entry "web.port") "70000")))
-    (is (nil? (caps/check-value (caps/find-entry "web.enabled") "true")))
-    (is (string? (caps/check-value (caps/find-entry "web.enabled") "yes")))
-    (is (nil? (caps/check-value (caps/find-entry "web.adapter") "jdk")))
-    (is (string? (caps/check-value (caps/find-entry "web.adapter") "jetty")))
-    (is (nil? (caps/check-value (caps/find-entry "app.main") "app.core/-main")))
-    (is (string? (caps/check-value (caps/find-entry "app.main") "not a symbol")))
-    (is (nil? (caps/check-value (caps/find-entry "web.auth.providers") "static,bearer")))
-    (is (string? (caps/check-value (caps/find-entry "web.auth.providers") "static,ldap"))))
+    (is (nil? (capabilities/check-value (capabilities/find-entry "web.port") "8080")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "web.port") "banana")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "web.port") "70000")))
+    (is (nil? (capabilities/check-value (capabilities/find-entry "web.enabled") "true")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "web.enabled") "yes")))
+    (is (nil? (capabilities/check-value (capabilities/find-entry "web.adapter") "jdk")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "web.adapter") "jetty")))
+    (is (nil? (capabilities/check-value (capabilities/find-entry "app.main") "app.core/-main")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "app.main") "not a symbol")))
+    (is (nil? (capabilities/check-value (capabilities/find-entry "web.auth.providers") "static,bearer")))
+    (is (string? (capabilities/check-value (capabilities/find-entry "web.auth.providers") "static,ldap"))))
   (testing "effective: the declared default when unset, the parsed value when set"
     (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")]
-      (is (false? (caps/effective s0 "web.enabled")))
+      (is (false? (capabilities/effective s0 "web.enabled")))
       ;; web.port carries no registry default any more — serve! owns the 8080
     ;; and the dev server derives; see
     ;; an-unset-port-does-not-report-a-number-nothing-binds
-    (is (nil? (caps/effective s0 "web.port")))
-      (is (= :http-kit (caps/effective s0 "web.adapter")))
-      (is (= :deny (caps/effective s0 "web.auth.default-policy")))
+    (is (nil? (capabilities/effective s0 "web.port")))
+      (is (= :http-kit (capabilities/effective s0 "web.adapter")))
+      (is (= :deny (capabilities/effective s0 "web.auth.default-policy")))
       (let [s (-> s0
                   (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
                   (store/record-config-put "capabilities" :manifest "web.port" "7357") first
                   (store/record-config-put "capabilities" :manifest "web.auth.providers" "static,bearer") first)]
-        (is (true? (caps/effective s "web.enabled")))
-        (is (= 7357 (caps/effective s "web.port")))
-        (is (= #{:static :bearer} (caps/effective s "web.auth.providers")))
+        (is (true? (capabilities/effective s "web.enabled")))
+        (is (= 7357 (capabilities/effective s "web.port")))
+        (is (= #{:static :bearer} (capabilities/effective s "web.auth.providers")))
         (testing "an unset key still falls back beside set ones"
-          (is (= :http-kit (caps/effective s "web.adapter"))))))))
+          (is (= :http-kit (capabilities/effective s "web.adapter"))))))))
 
 (deftest report-shows-every-setting-with-provenance
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
         s  (-> s0
                (store/record-config-put "capabilities" :manifest "web.enabled" "true") first
                (store/record-config-put "capabilities" :manifest "web.auth.groups.admin.members" "alice,bob") first)
-        rep (caps/report s)
+        rep (capabilities/report s)
         row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
     (testing "every concrete registry key is a row with default, effective, and doc"
       (let [port (row "web.port")]
@@ -96,18 +96,18 @@
 
 (deftest secret-literals-refuse-in-capabilities
   (testing "a literal secret in a web.auth.* credential key refuses"
-    (is (re-find #"env:" (str (caps/config-refusal
+    (is (re-find #"env:" (str (capabilities/config-refusal
                                "web.auth.bearer.tokens.ci"
                                "{:secret \"hunter2\" :groups [\"ci\"]}"))))
-    (is (re-find #"env:" (str (caps/config-refusal
+    (is (re-find #"env:" (str (capabilities/config-refusal
                                "web.auth.oidc.client-secret" "abc123")))))
   (testing "an env: indirection passes"
-    (is (nil? (caps/config-refusal
+    (is (nil? (capabilities/config-refusal
                "web.auth.bearer.tokens.ci"
                "{:secret \"env:CI_TOKEN\" :groups [\"ci\"]}")))
-    (is (nil? (caps/config-refusal "web.auth.oidc.client-secret" "env:OIDC_SECRET"))))
+    (is (nil? (capabilities/config-refusal "web.auth.oidc.client-secret" "env:OIDC_SECRET"))))
   (testing "a password HASH is the safe form, not a secret literal"
-    (is (nil? (caps/config-refusal
+    (is (nil? (capabilities/config-refusal
                "web.auth.static.users.alice"
                "{:password-hash \"9f86d08...\" :groups [\"admin\"]}"))))
   (testing "the credential check is anchored to the auth family, not to the word"
@@ -116,7 +116,7 @@
     ;; reason — which is right, and worth pinning so a later widening of the
     ;; prefix match does not quietly re-admit it.
     (is (re-find #"is not a capability"
-                 (str (caps/config-refusal "auth.oidc.client-secret" "abc123"))))))
+                 (str (capabilities/config-refusal "auth.oidc.client-secret" "abc123"))))))
 
 (deftest the-hub-port-is-the-only-port-setting-slopp-itself-owns
   ;; D-hub, then phase 2 (2026-08-03). There used to be two `slopp.*` port
@@ -135,16 +135,16 @@
   (testing "the retired key is governed by nothing — not by a lingering entry"
     ;; a removed capability that still resolves is worse than one that never
     ;; left: `config_file` would go on accepting writes to a key no code reads
-    (is (nil? (caps/find-entry "slopp.api.port"))))
+    (is (nil? (capabilities/find-entry "slopp.api.port"))))
   ;; The well-known port belongs to the HUB, and the hub is started by a
   ;; human. This default is the one number both halves read: the project uses
   ;; it to find a hub, the hub CLI uses it to bind. It is configurable
   ;; precisely because it is an INPUT — an address to reach out to, chosen by
   ;; whoever runs the hub — which is the distinction the retired key failed.
-  (let [entry (caps/find-entry "slopp.hub.port")]
+  (let [entry (capabilities/find-entry "slopp.hub.port")]
     (is (= "slopp.hub.port" (:key entry)))
-    (is (= 7359 (caps/effective (store/empty-store) "slopp.hub.port")))
-    (is (nil? (caps/check-value entry "0"))
+    (is (= 7359 (capabilities/effective (store/empty-store) "slopp.hub.port")))
+    (is (nil? (capabilities/check-value entry "0"))
         "0 is legal and means: this project registers with no hub")))
 
 (deftest an-unset-port-does-not-report-a-number-nothing-binds
@@ -169,18 +169,18 @@
   ;; server's own derivation could no longer be told apart from a pin.
   (let [s0 (store/empty-store)]
     (testing "unset reports UNSET, so nothing downstream is bound by it"
-      (is (nil? (caps/effective s0 "web.port")))
-      (is (not (caps/stored? s0 "web.port"))))
+      (is (nil? (capabilities/effective s0 "web.port")))
+      (is (not (capabilities/stored? s0 "web.port"))))
     (testing "a pin still wins, and is reported as pinned"
       (let [s (first (store/record-config-put s0 "capabilities" :manifest
                                               "web.port" "9000"))]
-        (is (= 9000 (caps/effective s "web.port")))
-        (is (caps/stored? s "web.port"))))
+        (is (= 9000 (capabilities/effective s "web.port")))
+        (is (capabilities/stored? s "web.port"))))
     (testing "the DOC has to carry what unset means, since the value no
               longer can"
       ;; a nil effective value is only honest if the reader can find out what
       ;; happens instead — otherwise it trades a wrong number for no answer
-      (let [doc (:doc (caps/find-entry "web.port"))]
+      (let [doc (:doc (capabilities/find-entry "web.port"))]
         (is (re-find #"(?i)unset" doc) doc)
         (is (re-find #"8080" doc) doc)))))
 
@@ -200,7 +200,7 @@
                 (put "web.enabled" "true")
                 (put "http.enabled" "true")
                 (put "http.static./assets" "public"))
-        rep (caps/report s)]
+        rep (capabilities/report s)]
     (testing "a stored key with no registry row is reported, with its value"
       (is (= #{"http.enabled" "http.static./assets"}
              (set (map :key (:orphaned rep))))
@@ -216,7 +216,7 @@
         (is (true? (:set en)) (pr-str en))
         (is (true? (:effective en)) (pr-str en))))
     (testing "nothing orphaned says so by absence, like :debt does"
-      (is (nil? (:orphaned (caps/report (put (store/empty-store) "web.enabled" "true"))))))))
+      (is (nil? (:orphaned (capabilities/report (put (store/empty-store) "web.enabled" "true"))))))))
 
 (deftest ^{:correspondence "every key in capabilities/registry vs the owner segments declared in capabilities/owners — R6: a key belonging to nobody means app type #2 has to edit a generic vector"}
   every-capability-key-declares-its-owner
@@ -233,20 +233,20 @@
   ;; its keys under that segment; a key belonging to nobody fails here.
   (testing "every registry key's first segment is a declared owner"
     (let [segment #(first (str/split (str %) #"\."))
-          stray (remove #(contains? caps/owners (segment (:key %))) caps/registry)]
+          stray (remove #(contains? capabilities/owners (segment (:key %))) capabilities/registry)]
       (is (empty? (map :key stray))
           "a capability key under an undeclared owner — add the owner to caps/owners, or move the key under an existing one")))
   (testing "the owners each say what they are, since query_capabilities shows them"
-    (is (every? (comp seq val) caps/owners))
-    (is (contains? caps/owners "web") "the web app type owns its own keys")
-    (is (contains? caps/owners "slopp") "R1: the framework prefix is reserved"))
+    (is (every? (comp seq val) capabilities/owners))
+    (is (contains? capabilities/owners "web") "the web app type owns its own keys")
+    (is (contains? capabilities/owners "slopp") "R1: the framework prefix is reserved"))
   (testing "auth and groups are web's, and the names say so"
-    (is (some #(= "web.auth.providers" (:key %)) caps/registry))
-    (is (= "web.auth.static.*" (:key (caps/find-entry "web.auth.static.users.alice"))))
-    (is (= "web.auth.groups.*.members" (:key (caps/find-entry "web.auth.groups.admin.members"))))
-    (is (nil? (caps/find-entry "auth.providers"))
+    (is (some #(= "web.auth.providers" (:key %)) capabilities/registry))
+    (is (= "web.auth.static.*" (:key (capabilities/find-entry "web.auth.static.users.alice"))))
+    (is (= "web.auth.groups.*.members" (:key (capabilities/find-entry "web.auth.groups.admin.members"))))
+    (is (nil? (capabilities/find-entry "auth.providers"))
         "the retired spelling resolves to nothing — no backwards compatibility")
-    (is (nil? (caps/find-entry "groups.admin.members")))))
+    (is (nil? (capabilities/find-entry "groups.admin.members")))))
 
 (deftest the-report-says-who-owns-each-setting
   ;; The R6 complaint was not only that the names lied — it was that every
@@ -259,7 +259,7 @@
   ;; and the owner vocabulary says what that means, so fourteen settings read
   ;; as one feature.
   (let [s0 (store/ingest (store/empty-store) 'app.core "(ns app.core)\n(defn f [x] x)\n")
-        rep (caps/report s0)
+        rep (capabilities/report s0)
         row (fn [k] (some #(when (= k (:key %)) %) (:settings rep)))]
     (testing "every settings row and every pattern names its owner"
       (is (seq (:settings rep)))
@@ -271,5 +271,5 @@
       (is (= "app" (:owner (row "app.name"))))
       (is (= "slopp" (:owner (row "slopp.hub.port")))))
     (testing "the report carries the vocabulary, not just the labels"
-      (is (= caps/owners (:owners rep)))
+      (is (= capabilities/owners (:owners rep)))
       (is (string? (get (:owners rep) "web"))))))

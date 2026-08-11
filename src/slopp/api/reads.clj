@@ -13,7 +13,7 @@
   slopp.api.model, which is where a static JSON sink would attach."
   (:require [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract] [slopp.edit.modules :as modules] [slopp.edit.tiers :as tiers]))
+            [slopp.api.model :as model] [clojure.string :as str] [slopp.web.contract :as contract] [slopp.edit.modules :as edit.modules] [slopp.edit.tiers :as tiers]))
 
 (defn ^{:web/read :browse/namespaces} namespaces-read
   "Read performer: `{:ns sym :forms n}` rows for every namespace, sorted."
@@ -130,7 +130,7 @@
         head (when (seq? s) (first s))
         kind (str head)
         nm   (when (seq? s) (second s))
-        args (modules/fn-arglists s)]
+        args (edit.modules/fn-arglists s)]
     {:kind     kind
      :sig      (when (seq args) (mapv pr-str args))
      :private? (boolean (or (= "defn-" kind) (:private (meta nm))))

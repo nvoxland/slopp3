@@ -12,7 +12,7 @@
             [rewrite-clj.node :as n]
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [clojure.string :as str] [clojure.set :as set] [slopp.index.refs :as refs] [slopp.index.analyze :as analyze] [slopp.edit.modules :as edit.modules] [slopp.edit :as edit]))
 
 (defn- sites-in-analysis
@@ -567,11 +567,11 @@
                 elems    (store/elements store ns-sym)
                 idx      (first (keep-indexed
                                  (fn [i el] (when (= (:id e) (:id el)) i)) elems))
-                [fr fc]  (nth (render/element-offsets store ns-sym) idx)
+                [fr fc]  (nth (store.render/element-offsets store ns-sym) idx)
                 abs      (fn [[rr cc]] [(+ fr rr -1) (if (= rr 1) (+ fc cc -1) cc)])
                 a-start  (abs [r c])
                 a-end    (abs [er ec])
-                an       (analyze/analyze-with-locals (render/render-ns store ns-sym))
+                an       (analyze/analyze-with-locals (store.render/render-ns store ns-sym))
                 defs     (into {} (map (juxt :id identity)) (:locals an))
                 params   (->> (:local-usages an)
                               (filter #(inside? a-start a-end [(:row %) (:col %)]))
@@ -745,14 +745,14 @@
          (fn [acc ns-sym]
            (if (:error acc)
              acc
-             (let [an      (analyze/analyze (render/render-ns store ns-sym))
+             (let [an      (analyze/analyze (store.render/render-ns store ns-sym))
                    sites   (distinct
                             (for [u (:var-usages an)
                                   :when (and (= def-ns (:to u))
                                              (= fn-name (:name u)))]
                               [(or (:name-row u) (:row u))
                                (or (:name-col u) (:col u))]))
-                   offsets (render/element-offsets store ns-sym)
+                   offsets (store.render/element-offsets store ns-sym)
                    elems   (store/elements store ns-sym)]
                (reduce
                 (fn [acc [idx ss]]
@@ -787,9 +787,9 @@
   [store def-ns old-name new-name]
   (into {}
         (mapcat (fn [ns-sym]
-                  (let [an      (analyze/analyze (render/render-ns store ns-sym))
+                  (let [an      (analyze/analyze (store.render/render-ns store ns-sym))
                         sites   (sites-in-analysis an def-ns old-name (= ns-sym def-ns))
-                        offsets (render/element-offsets store ns-sym)
+                        offsets (store.render/element-offsets store ns-sym)
                         elems   (store/elements store ns-sym)]
                     (for [[idx ss] (group-by #(owner-idx offsets %) sites)
                           :let [e (nth elems idx)]]
@@ -1049,7 +1049,7 @@
         to-ns    (symbol (str to-ns))
         from-ns  (symbol (str from-ns))
         new-ns?  (not (contains? (:namespaces store) to-ns))
-        analyze* (fn [nsx] (:var-usages (analyze/analyze (render/render-ns store nsx))))
+        analyze* (fn [nsx] (:var-usages (analyze/analyze (store.render/render-ns store nsx))))
         rows     (analyze* from-ns)
         moved-rows (filter #(moved (:from-var %)) rows)
         
@@ -1539,9 +1539,7 @@
 
         :else (recur (z/next z))))))
 
-(defn ^{:export true
-        :breaking-ok "from-ns is REQUIRED, not optional: which entry the rewrite matches is the whole correctness question, and a defaulted from would let a caller re-create the bug by omission. Both callers moved with it, and nothing outside this store calls it."}
-  requalify-keys
+(defn ^:export requalify-keys
   "Move the single key named `key-name` from the `from-ns`-qualified
   destructuring entry to the `to-ns`-qualified one, leaving every other key in
   the vector where it is. Either side may be blank, which is the unqualified
@@ -1958,7 +1956,10 @@
                           :sites (qualified-site-count (:node e) old)
                           :strings (strings-mentioning src pat)})]
               {:steps (vec (for [{:keys [e node']} rows :when node']
-                             {:action :replace :ns ns-sym :name (:name e)
+                             ;; addressed by NAME when it has one and by ID when it does not — a
+                             ;; `defmethod` has a dispatch value rather than a name, and
+                             ;; `nil` is not an address. `forms-named` takes either.
+                             {:action :replace :ns ns-sym :name (or (:name e) (:id e))
                               :source (n/string node')}))
                :sites (reduce + 0 (map :sites rows))
                :lib (:lib held)

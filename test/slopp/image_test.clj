@@ -5,12 +5,12 @@
   `^:external` by nature: what is worth checking is that a load actually
   reached a JVM, which no fake can tell you. They cover the two properties
   the rest of the system trusts blindly — that a store namespace becomes
-  loadable despite having no classpath presence, and that only the ORACLE's
-  door stamps the currency registry."
+  loadable despite having no classpath presence, and that an image's currency
+  record describes THAT image and no other."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.image :as image]
-            [slopp.image.currency :as currency]
+            [slopp.image.currency :as image.currency]
             [slopp.image.repl :as repl]))
 
 (def target
@@ -40,31 +40,39 @@
       (finally (repl/stop! h)))))
 
 (deftest ^:external a-second-image-loads-without-claiming-the-oracle-holds-it
-  ;; `currency/stamps` is ONE global atom, and `load-ns!` stamps into it
-  ;; unconditionally. `webdev.live` boots a SECOND image on purpose — the
-  ;; oracle is cycled by ordinary editing (fresh-image! is on the path of
-  ;; edit-replace!, rename!, move-forms!, deps-add!, merge-into-session!) and
-  ;; so cannot host a running app. Loading that image through the stamping
-  ;; door would file the APP image's loads as the ORACLE's, and every
-  ;; currency surface would then report forms as current in a process that
-  ;; never saw them — the false green the registry exists to prevent,
-  ;; measured against the wrong image.
+  ;; This used to pin a WORKAROUND. `currency/stamps` was one global atom, so
+  ;; `webdev.live`'s second image had to be loaded through `load-ns-into!` —
+  ;; a door that deliberately did not stamp — or its loads would be filed as
+  ;; the oracle's and every currency surface would report forms as current in
+  ;; a process that never saw them.
+  ;;
+  ;; The record is now the image's own, so there is one loader and the
+  ;; property holds by construction rather than by choosing a door. Same
+  ;; guarantee, asserted where it can no longer be got wrong: TWO real images,
+  ;; both stamped through the same function, neither able to see the other.
   (let [s   (-> (store/empty-store)
                 (store/ingest 'zz.app "(ns zz.app)\n(defn hello \"H.\" [] :hi)\n")
                 (store/ingest 'zz.user
                               (str "(ns zz.user (:require [zz.app :as a]))\n"
                                    "(defn go \"G.\" [] (a/hello))\n")))
-        img (repl/start!)]
+        a   (repl/start!)
+        b   (repl/start!)]
     (try
-      (currency/forget-all!)
-      (currency/arm!)
-      (let [before (currency/snapshot)]
-        (testing "it is a real load, not a no-op that happens not to stamp"
-          (is (nil? (image/load-ns-into! img s 'zz.app)))
-          ;; the dependent could not compile if zz.app were absent — this is
-          ;; also what proves the *loaded-libs* marking happened, since a
-          ;; store namespace has no classpath presence to fall back on
-          (is (nil? (image/load-ns-into! img s 'zz.user))))
-        (testing "and the oracle's record of ITSELF did not move"
-          (is (= before (currency/snapshot)))))
-      (finally (repl/stop! img)))))
+      (testing "it is a real load, not a no-op that happens not to stamp"
+        (is (nil? (image/load-ns! a s 'zz.app)))
+        ;; the dependent could not compile if zz.app were absent — this is
+        ;; also what proves the *loaded-libs* marking happened, since a store
+        ;; namespace has no classpath presence to fall back on
+        (is (nil? (image/load-ns! a s 'zz.user))))
+      (image.currency/arm! a)
+      (image.currency/arm! b)
+      (testing "a holds what it loaded"
+        (is (= 4 (count (image.currency/snapshot a)))
+            "two namespaces, two forms each — ns form and defn"))
+      (testing "and b, which loaded nothing, says so rather than inheriting it"
+        ;; armed and empty is the POSITIVE claim, and it is the one the global
+        ;; could never make about a second image
+        (is (= {} (image.currency/snapshot b)))
+        (doseq [e (concat (store/elements s 'zz.app) (store/elements s 'zz.user))]
+          (is (nil? (image.currency/stamped b (:id e))) (str (:id e)))))
+      (finally (repl/stop! a) (repl/stop! b)))))

@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.api.server :as server]
             [slopp.store :as store]
-            [slopp.web :as web] [clojure.edn :as edn] [slopp.web.client :as client] [clojure.set :as set] [clojure.string :as str]))
+            [slopp.web :as slopp.web] [clojure.edn :as edn] [slopp.web.client :as web.client] [clojure.set :as set] [clojure.string :as str]))
 
 (deftest ^:external ui-serve-serves-the-callers-own-session
   ;; The listener serves the CALLER's session rather than opening one. A
@@ -36,7 +36,7 @@
           ;; this session appears, so this session is what is being served.
           (is (re-find #"demo\.only\.here"
                        (:http/body
-                        (client/request
+                        (web.client/request
                          {:http/url (str "http://127.0.0.1:" (:port r)
                                          "/api/namespaces")}))))))
       (finally (server/stop!)))))
@@ -55,7 +55,7 @@
               "the tracked server is the live one")
           (is (= :unreachable
                      (:http/error
-                      (try (client/request
+                      (try (web.client/request
                             {:http/url (str "http://127.0.0.1:" (:port a) "/store")})
                            nil
                            (catch clojure.lang.ExceptionInfo e (ex-data e)))))
@@ -65,7 +65,7 @@
                said no are different facts, and only one of them is this")))
       (finally (server/stop!))))
   (testing "a port someone else holds is reported as a sentence, not a stack trace"
-    (let [held (web/serve! {:web/namespaces [] :web/port 0})]
+    (let [held (slopp.web/serve! {:web/namespaces [] :web/port 0})]
       (try
         (let [r (server/serve! (atom {:store (store/empty-store)}) (:port held))]
           ;; the same sentence every listener uses — slopp.web/bind-diagnosis writes
@@ -74,7 +74,7 @@
           ;; production), which is the disagreement this consolidates.
           (is (= (str "port " (:port held) " is already in use") (:error r)))
           (is (nil? (server/running)) "a failed bind leaves nothing tracked"))
-        (finally (web/stop! held) (server/stop!))))))
+        (finally (slopp.web/stop! held) (server/stop!))))))
 
 (deftest the-ui-port-is-derived-from-the-dir-and-the-formula-is-frozen
   (testing "stable across calls, so a url that worked last session still does"
@@ -134,7 +134,7 @@
       (let [r   (server/serve! sess 0)
             doc (edn/read-string
                  (:http/body
-                  (client/request
+                  (web.client/request
                    {:http/url (str "http://127.0.0.1:" (:port r) "/api/contracts")})))
             paths (set (map :path (:endpoints doc)))]
         (is (= 1 (:slopp/contract-version doc)))

@@ -12,7 +12,7 @@
   lands for that operation. Four gates were once hand-pasted at four write
   sites because the chokepoint was not used, and every later fix to them had
   to be applied four times."
-  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.rules.web :as rules.web] [slopp.index.refs :as refs] [slopp.image.currency :as currency] [slopp.kernel.boot :as boot] [clojure.java.io :as io] [slopp.edit.web :as web]))
+  (:require [clojure.edn :as edn] [clojure.set :as set] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.store.db :as db] [slopp.edit :as edit] [slopp.image :as image] [slopp.store.render :as store.render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.edit.hotload :as hotload] [slopp.edit.lintgate :as lintgate] [rewrite-clj.parser :as p] [slopp.rules.web :as rules.web] [slopp.index.refs :as refs] [slopp.image.currency :as image.currency] [slopp.kernel.boot :as boot] [clojure.java.io :as io] [slopp.edit.web :as edit.web]))
 
 (def ^{:export "slopp.concurrency"} ^:dynamic *pre-commit-hook*
   "Test seam (item 4): invoked between an op's hot-load and its commit CAS to
@@ -73,7 +73,7 @@
     (when (and (seq files)
                (not-any? web? nses)
                (or (some (fn [n] (some web? (store/ns-require-libs store n))) nses)
-                   (some (fn [n] (some #(:web/page (web/web-name-meta %))
+                   (some (fn [n] (some #(:web/page (edit.web/web-name-meta %))
                                        (store/forms store n)))
                          nses)))
       files)))
@@ -297,7 +297,7 @@
         missing (vec (distinct
                       (concat
                        (for [t tests
-                             u (:var-usages (analyze/analyze (render/render-ns candidate t)))
+                             u (:var-usages (analyze/analyze (store.render/render-ns candidate t)))
                              :when (and (contains? nses (:to u)) (:name u)
                                         (not (store/form-named candidate (:to u) (:name u))))]
                          (symbol (str (:to u)) (str (:name u))))
@@ -473,20 +473,19 @@
     (repl/stop! image)
     (swap! session assoc :image fresh :spare nil)
     (start-spare! session)
-    ;; the new image holds NOTHING yet — carrying the old image's stamps would
-    ;; claim it does, which is exactly the false green the registry exists to
-    ;; prevent. The load loop below re-stamps everything it succeeds on, so a
-    ;; namespace that fails to load stays absent rather than inheriting a
-    ;; stamp from the image that just died.
-    (currency/forget-all!)
+    ;; No reset call: the new image carries its OWN record, minted empty by
+    ;; `repl/start!`. This used to be `(currency/forget-all!)` against a
+    ;; process-global atom, with a comment explaining that carrying the dead
+    ;; image's stamps would claim the new one holds them. A record that cannot
+    ;; outlive its image cannot make that claim.
     (let [{:keys [store image]} @session
           fails (load-all-namespaces! image store)]
       (swap! session assoc :image-load-failures (not-empty fails))
       ;; the loop above stamped every namespace it loaded, so the record is now
       ;; complete and a form without a stamp is real news. Arming only here —
-      ;; never on a stamp — is what stops a half-filled registry reporting the
+      ;; never on a stamp — is what stops a half-filled record reporting the
       ;; whole store as never-loaded.
-      (currency/arm!))))
+      (image.currency/arm! image))))
 
 (defn load-error-message
   "The message to report for a `hot-load-all!` result — nil when it loaded.
@@ -794,7 +793,7 @@
                                             (into (vec (rest queue)) (reqs n))))
                        false)))]
     (->> known
-         (filter render/test-ns?)
+         (filter store.render/test-ns?)
          (filter reaches?)
          sort
          vec)))
@@ -1365,7 +1364,7 @@
   rather than once per closure that contains it."
   [store scope]
   (let [needed (into #{} (mapcat #(store/ns-closure store %)) scope)
-        per-ns (into {} (map (juxt identity #(sha256 (str (render/render-ns store %))))) needed)
+        per-ns (into {} (map (juxt identity #(sha256 (str (store.render/render-ns store %))))) needed)
         deps   (sha256 (pr-str (:deps store)))]
     (into {} (for [n scope]
                [n (sha256 (str/join "|" (cons deps (map #(get per-ns % "?")

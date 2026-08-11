@@ -15,7 +15,7 @@
   worse than no check, and these are the checks that guard the checks."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.image.repl :as repl]
-            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.kernel.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image] [slopp.ops.engine :as session]))
+            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [slopp.image.testmain :as testmain] [slopp.kernel.rt :as rt] [slopp.store :as store] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.image :as image] [slopp.ops.engine :as engine]))
 
 (def target
   (str "(ns vdemo\n  (:require [clojure.test :refer [deftest is]]))\n"
@@ -360,7 +360,7 @@
           ;; literal: a recorded key a later reader cannot reproduce is worse
           ;; than no key, and a literal here would agree with a private second
           ;; derivation just as happily as with the real one.
-          (is (= (session/closure-hashes st '[tt.core]) (:closure d))
+          (is (= (engine/closure-hashes st '[tt.core]) (:closure d))
               (pr-str (:closure d)))))
       (finally (ops/close! sess)))))
 

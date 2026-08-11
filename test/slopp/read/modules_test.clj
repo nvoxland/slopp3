@@ -11,7 +11,7 @@
   asserts the unexempted case alongside it: a report that had simply stopped
   finding anything would satisfy the first half on its own."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as ops] [slopp.read.modules :as modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.ops.external :as external] [slopp.edit.modules :as edit.modules] [slopp.read.graph :as graph]))
+            [slopp.ops :as ops] [slopp.read.modules :as read.modules] [slopp.store :as store] [slopp.index.refs :as refs] [slopp.ops.external :as external] [slopp.edit.modules :as edit.modules] [slopp.read.graph :as graph]))
 
 (deftest ^:external the-module-surface-is-browsable
   (let [sess (external/open!)]
@@ -30,7 +30,7 @@
       (ops/ingest! sess 'mb.app
                    (str "(ns mb.app (:require [ma.core :as core]))\n"
                         "(defn go \"Runs.\" [x] (core/shared x))\n"))
-      (let [r     (modules/module-surface sess "ma.core")
+      (let [r     (read.modules/module-surface sess "ma.core")
             names (into #{} (map (juxt :ns :name)) (:surface r))]
         (testing "public fns and exported deep vars ride; private and hidden don't"
           (is (contains? names ['ma.core 'shared]) (pr-str r))
@@ -55,11 +55,11 @@
             (is (nil? (:sig rates)) (pr-str rates))
             (is (= "Known rates." (:doc rates)) "the docstring still reads")))
         (testing "deps and consumers come from the manifest"
-          (is (= ["ma.core"] (:deps (modules/module-surface sess "mb.app")))
+          (is (= ["ma.core"] (:deps (read.modules/module-surface sess "mb.app")))
               "mb.app declares ma.core")
           (is (= ["mb.app"] (:consumers r)))))
       (testing "an unknown module teaches the list"
-        (is (re-find #"modules true" (str (:error (modules/module-surface sess "zz.nope"))))))
+        (is (re-find #"modules true" (str (:error (read.modules/module-surface sess "zz.nope"))))))
       (testing "the graph view: layers, and drift toward DEAD edges is named"
         (ops/module-dep! sess "mb.app" "mc.ghost" :prompt "declared, never used")
         (let [r (graph/query-depends sess nil :modules true)]
@@ -106,8 +106,8 @@
               (pr-str (:test-edges r))))
         (testing "and it is DECLARED, so the fixture's call is not standing debt"
           ;; the must-not-flag half: classifying must permit, not merely relabel
-          (is (nil? (modules/module-debt (:store @sess)))
-              (pr-str (modules/module-debt (:store @sess)))))
+          (is (nil? (read.modules/module-debt (:store @sess)))
+              (pr-str (read.modules/module-debt (:store @sess)))))
         (testing "the production graph is acyclic — no false cycle in the view"
           (is (nil? (:cycles r)) (pr-str (:cycles r))))
         (testing "layers reflect production: pa.core sits below pb.app"
@@ -134,14 +134,14 @@
                              (str "(ns cr.driver)\n\n"
                                   "(defn drive \"D.\" [sess]\n"
                                   "  (query-call sess 'cr.core/helper 1))\n"))
-            r  (modules/unused-report st '[cr.core])]
+            r  (read.modules/unused-report st '[cr.core])]
         (is (= '[cr.core/orphan] (:unused r)) (pr-str r))))
     (testing "without the carrier, the same quoted symbol is just data"
       (let [st (store/ingest base 'cr.driver
                              (str "(ns cr.driver)\n\n"
                                   "(defn drive \"D.\" [_]\n"
                                   "  ['cr.core/helper 1])\n"))
-            r  (modules/unused-report st '[cr.core])]
+            r  (read.modules/unused-report st '[cr.core])]
         (is (= '[cr.core/helper cr.core/orphan] (:unused r)) (pr-str r))))))
 
 (deftest a-covers-declaration-is-coverage-not-liveness
@@ -155,7 +155,7 @@
                (store/ingest 'cd.core-test
                              (str "(ns cd.core-test (:require [clojure.test :refer [deftest is]]))\n"
                                   "(deftest ^{:covers \"cd.core/dispatched — via dispatch\"} t (is true))\n")))
-        r  (modules/unused-report st '[cd.core])]
+        r  (read.modules/unused-report st '[cd.core])]
     (is (= '[cd.core/dispatched] (:unused r))
         (str "a :covers declaration must not exempt from the unused gate: " (pr-str r)))))
 
@@ -168,7 +168,7 @@
                                   "(defn loops \"L.\" [s] (query-call s 'cs.core/loops 1))\n\n"
                                   "(defn dead \"D.\" [x] x)\n")))]
     (is (= '[cs.core/dead cs.core/loops]
-           (:unused (modules/unused-report st '[cs.core]))))))
+           (:unused (read.modules/unused-report st '[cs.core]))))))
 
 (deftest method-bodies-feed-the-reference-graph
   ;; kondo RESOLVES the usages inside defmethod/defrecord/extend-* bodies —
@@ -184,8 +184,8 @@
                                   "(defmulti area :shape)\n\n"
                                   "(defmethod area :square [s] (helper (:side s)))\n")))]
     (testing "a defn called ONLY from a defmethod body is NOT unused"
-      (is (= [] (:unused (modules/unused-report st '[g.core])))
-          (pr-str (modules/unused-report st '[g.core]))))
+      (is (= [] (:unused (read.modules/unused-report st '[g.core])))
+          (pr-str (read.modules/unused-report st '[g.core]))))
     (testing "the edge is attributed to the method's FORM (it has no var)"
       (let [rs (refs/refs-to st 'g.core/helper)
             m  (first (filter #(nil? (:name %)) (store/forms st 'g.core)))]
@@ -231,19 +231,19 @@
                         "(defn ^:unused-ok add \"A.\" [a b] (+ a b))\n"
                         "(defn ^:unused-ok ^:private hidden \"H.\" [x] x)\n"))
       (testing "a MODULE still answers with its whole surface"
-        (let [r (modules/module-surface sess "sg.core")]
+        (let [r (read.modules/module-surface sess "sg.core")]
           (is (some #(= 'top (:name %)) (:surface r)) (pr-str r))))
       (testing "a NAMESPACE answers with just its own surface"
-        (let [r (modules/module-surface sess "sg.core.calc")]
+        (let [r (read.modules/module-surface sess "sg.core.calc")]
           (is (nil? (:error r)) (pr-str r))
           (is (= '[add] (mapv :name (:surface r))) (pr-str r))
           (is (not-any? #(= 'top (:name %)) (:surface r))
               "the parent's forms are not this namespace's surface")))
       (testing "private stays out at either grain"
         (is (not-any? #(= 'hidden (:name %))
-                      (:surface (modules/module-surface sess "sg.core.calc")))))
+                      (:surface (read.modules/module-surface sess "sg.core.calc")))))
       (testing "and a name matching nothing still says so"
-        (is (:error (modules/module-surface sess "sg.nope"))))
+        (is (:error (read.modules/module-surface sess "sg.nope"))))
       (finally (ops/close! sess)))))
 
 (deftest purity-standing-accepts-canonical-tier-spellings
@@ -260,11 +260,11 @@
                         first))]
     (testing "a canonical :internal declaration ranks instead of crashing"
       (is (= {:declared :internal :supports :pure}
-             (get-in (modules/purity-standing (with-tier :internal))
+             (get-in (read.modules/purity-standing (with-tier :internal))
                      [:could-tighten "cv.core"]))))
     (testing "a legacy :reads declaration reads back canonical"
       (is (= {:declared :internal :supports :pure}
-             (get-in (modules/purity-standing (with-tier :reads))
+             (get-in (read.modules/purity-standing (with-tier :reads))
                      [:could-tighten "cv.core"]))))))
 
 (deftest ^:external module-tier-records-canonical-spelling
@@ -320,8 +320,8 @@
                                   "(defn ^{:generated \"app.orders/create-order\"} create-order! [x] x)\n\n"
                                   "(defn orphan [x] x)\n")))]
     (testing "dead-surface skips a ^:generated public defn, keeps the real orphan"
-      (is (= '[gc.client/orphan] (:unused (modules/unused-report st '[gc.client])))
-          (pr-str (modules/unused-report st '[gc.client]))))
+      (is (= '[gc.client/orphan] (:unused (read.modules/unused-report st '[gc.client])))
+          (pr-str (read.modules/unused-report st '[gc.client]))))
     (testing "missing-doc skips a ^:generated public defn, keeps the undocumented real one"
       (is (nil? (edit.modules/missing-doc-warning st 'gc.client 'create-order!)))
       (is (some? (edit.modules/missing-doc-warning st 'gc.client 'orphan))))))
@@ -385,20 +385,20 @@
       ;; without this, the assertions below would pass on a report that had
       ;; simply stopped finding anything
       (is (= '[mw.core/f]
-             (:unused (modules/unused-report (ing "(ns mw.core)\n(defn f \"F.\" [x] x)\n")
+             (:unused (read.modules/unused-report (ing "(ns mw.core)\n(defn f \"F.\" [x] x)\n")
                                              '[mw.core])))))
     (testing "the bare keyword discharges, as it always has"
-      (is (= [] (:unused (modules/unused-report
+      (is (= [] (:unused (read.modules/unused-report
                           (ing "(ns mw.core)\n(defn ^:unused-ok f \"F.\" [x] x)\n")
                           '[mw.core])))))
     (testing "and the map form carrying a WHY discharges identically"
-      (is (= [] (:unused (modules/unused-report
+      (is (= [] (:unused (read.modules/unused-report
                           (ing (str "(ns mw.core)\n"
                                     "(defn ^{:unused-ok \"library surface for external consumers\"}\n"
                                     "  f \"F.\" [x] x)\n"))
                           '[mw.core])))))
     (testing "the same for ^:entry-point, the other keep-alive dial"
-      (is (= [] (:unused (modules/unused-report
+      (is (= [] (:unused (read.modules/unused-report
                           (ing (str "(ns mw.core)\n"
                                     "(defn ^{:entry-point \"boot --call dispatch\"}\n"
                                     "  f \"F.\" [x] x)\n"))
@@ -407,7 +407,7 @@
       ;; the stale-marker check reads the same dial, so the richer form must
       ;; not become a permanent silent opt-out
       (is (= '[mw.core/f]
-             (:stale (modules/unused-report
+             (:stale (read.modules/unused-report
                       (ing (str "(ns mw.core)\n"
                                 "(defn ^{:unused-ok \"nobody calls this\"} f \"F.\" [x] x)\n"
                                 "(defn ^:unused-ok g \"G.\" [x] (f x))\n"))
@@ -434,32 +434,32 @@
                               "(defn plain \"P.\" [x] x)\n"))
         row (fn [nm] {:to 'pe.deep.core :to-name nm :to-export true})]
     (testing "a planned export that IS on the committed form reports nothing"
-      (is (= [] (modules/unlanded-exports st [(row 'landed)]))))
+      (is (= [] (read.modules/unlanded-exports st [(row 'landed)]))))
     (testing "a planned export the store does not carry is REPORTED"
       ;; the meta-wrapped name — the exact shape the marker pass skipped
       (is (= '[pe.deep.core/*missed*]
-             (modules/unlanded-exports st [(row '*missed*)]))))
+             (read.modules/unlanded-exports st [(row '*missed*)]))))
     (testing "several rows report every miss, not just the first"
       (is (= '[pe.deep.core/*missed* pe.deep.core/plain]
-             (modules/unlanded-exports st [(row 'landed) (row '*missed*) (row 'plain)]))))
+             (read.modules/unlanded-exports st [(row 'landed) (row '*missed*) (row 'plain)]))))
     (testing "rows that planned NO export are not this check's business"
-      (is (= [] (modules/unlanded-exports
+      (is (= [] (read.modules/unlanded-exports
                  st [{:to 'pe.deep.core :to-name 'plain :to-export nil}]))))
     (testing "a subtree export (a string level) counts as planned too"
       (is (= '[pe.deep.core/plain]
-             (modules/unlanded-exports
+             (read.modules/unlanded-exports
               st [{:to 'pe.deep.core :to-name 'plain :to-export "pe.other"}]))))))
 
 (deftest substrate-bands-sinks-that-many-modules-depend-on
   (testing "a sink two or more modules depend on is foundation"
     (is (= #{"lib"}
-           (modules/substrate {"a" ["lib"] "b" ["lib"] "lib" []}))))
+           (read.modules/substrate {"a" ["lib"] "b" ["lib"] "lib" []}))))
   (testing "a sink only ONE module depends on stays an ordinary node"
     (is (= #{}
-           (modules/substrate {"a" ["lib"] "lib" []}))))
+           (read.modules/substrate {"a" ["lib"] "lib" []}))))
   (testing "a depended-on module that itself reaches a non-substrate module is not foundation"
     (is (= #{"lib"}
-           (modules/substrate {"a" ["mid" "lib"] "b" ["mid"] "mid" ["lib" "a"] "lib" []})))))
+           (read.modules/substrate {"a" ["mid" "lib"] "b" ["mid"] "mid" ["lib" "a"] "lib" []})))))
 
 (def slopp-production
   "slopp's own production module manifest as of 2026-07-26 — 14 modules,
@@ -499,7 +499,7 @@
   ;; The names here are the DATED ones `slopp-production` carries and must
   ;; keep — see its docstring. A sweep that renames them renames one half of
   ;; a fixture whose two halves are compared against each other.
-  (let [band  (modules/substrate slopp-production)
+  (let [band  (read.modules/substrate slopp-production)
         edges (for [[m ds] slopp-production d ds] [m d])]
     (testing "the foundation is the three widely-used sinks plus the store hub"
       (is (= #{"slopp.boot" "slopp.cache" "slopp.web" "slopp.store"} band)))
@@ -517,10 +517,10 @@
 
 (deftest a-fully-entangled-graph-has-no-foundation-to-name
   (testing "no sinks means no band, and every edge gets drawn — the honest picture"
-    (is (= #{} (modules/substrate {"a" ["b"] "b" ["c"] "c" ["a"]}))))
+    (is (= #{} (read.modules/substrate {"a" ["b"] "b" ["c"] "c" ["a"]}))))
   (testing "a single god-module everything calls is still found"
     (is (= #{"god"}
-           (modules/substrate {"a" ["god"] "b" ["god"] "c" ["god"] "god" []})))))
+           (read.modules/substrate {"a" ["god"] "b" ["god"] "c" ["god"] "god" []})))))
 
 (deftest ^:external a-merge-cycle-note-judges-production-edges
   ;; The merge's cycle warning was the ONE surface still judging the
@@ -561,10 +561,10 @@
               "precondition: the declared manifest carries the fixture edge")
           (is (some? (store/modules-cycle (:modules st)))
               "precondition: judged as DECLARED, this graph is cyclic")
-          (is (nil? (modules/merge-production-cycle before st))
+          (is (nil? (read.modules/merge-production-cycle before st))
               (pr-str (:modules st))))
         (testing "a merge that gained NO module edge reports nothing"
-          (is (nil? (modules/merge-production-cycle st st))))
+          (is (nil? (read.modules/merge-production-cycle st st))))
         (testing "and adoption did not put it there in the first place"
           ;; the same fact from the other side: what the fixture crosses is
           ;; declared, but as a TEST edge, so :modules never carried a
@@ -585,7 +585,7 @@
       (ops/adopt-modules! sess)
       (testing "a cycle in PRODUCTION code is still reported"
         (let [st (:store @sess)]
-          (is (some? (modules/merge-production-cycle (assoc st :modules {}) st))
+          (is (some? (read.modules/merge-production-cycle (assoc st :modules {}) st))
               (pr-str (:modules st)))))
       (finally (ops/close! sess)))))
 
@@ -648,16 +648,16 @@
                                             "(defn -main [] (core/f))\n")))
         with (first (store/record-module-role st "pv.lab" :instrument))]
     (testing "the fixture is real — undeclared, pv.lab IS on the view and depends on pv.core"
-      (let [m (modules/production-manifest st)]
+      (let [m (read.modules/production-manifest st)]
         (is (contains? m "pv.lab") (pr-str m))
         (is (= #{"pv.core"} (get m "pv.lab")) (pr-str m))))
     (testing "declared :instrument, the module leaves the view entirely"
-      (let [m (modules/production-manifest with)]
+      (let [m (read.modules/production-manifest with)]
         (is (not (contains? m "pv.lab")) (pr-str m))
         (is (contains? m "pv.core") "the module it MEASURED is still product code")))
     (testing "and it stops contributing edges, so it cannot sit above what it measures"
       (is (= [["pv.core"]]
-             (:layers (store/module-layers (modules/production-manifest with))))
+             (:layers (store/module-layers (read.modules/production-manifest with))))
           "one layer, not two — the harness was the apex"))))
 
 (deftest a-namespace-with-nothing-left-in-it-is-named
@@ -677,14 +677,14 @@
         alive (store/ingest (store/empty-store) 'app.alive
                             "(ns app.alive \"Why it exists.\")\n\n(defn f [] 1)\n")]
     (testing "a namespace holding only its own ns form is named"
-      (is (= '[app.husk] (modules/empty-namespaces husk))))
+      (is (= '[app.husk] (read.modules/empty-namespaces husk))))
     (testing "a namespace with any form at all is not"
       ;; the unexempted case beside the exempted one, per this ns's own rule:
       ;; a report that had stopped finding anything satisfies the first half
-      (is (= [] (modules/empty-namespaces alive))))
+      (is (= [] (read.modules/empty-namespaces alive))))
     (testing "the husk is found among populated neighbours, not only alone"
       (let [mixed (store/ingest alive 'app.gone "(ns app.gone)\n")]
-        (is (= '[app.gone] (modules/empty-namespaces mixed)))))))
+        (is (= '[app.gone] (read.modules/empty-namespaces mixed)))))))
 
 (deftest ^:external a-husk-is-named-by-the-whole-store-check
   ;; The WIRING half, split from the derivation above so a future failure
@@ -722,3 +722,40 @@
             (is (= :green (:status r))
                 (pr-str (select-keys r [:status :empty-namespaces]))))))
       (finally (ops/close! sess)))))
+
+(deftest an-alias-that-names-two-namespaces-is-reported
+  ;; The reference graph is alias-blind, so a rename or a signature sweep was
+  ;; never confused by this. A READER is: `modules/module-surface` resolves to
+  ;; different code depending on which namespace you are looking at, and the
+  ;; slice that shows it says nothing. Measured on slopp's own store when this
+  ;; was written: five aliases each naming more than one namespace, one of them
+  ;; naming three.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'al.read.modules "(ns al.read.modules)\n(defn r \"R.\" [] 1)\n")
+               (store/ingest 'al.edit.modules "(ns al.edit.modules)\n(defn e \"E.\" [] 2)\n")
+               (store/ingest 'al.solo "(ns al.solo)\n(defn s \"S.\" [] 3)\n"))]
+    (testing "the canonical alias is the shortest tail that is unambiguous"
+      ;; a SYMBOL, because that is what an `:as` is — returning a string would
+      ;; make every caller convert before it could compare
+      (is (= 'solo (read.modules/canonical-alias st 'al.solo))
+          "a last segment nobody else claims is the whole answer")
+      (is (= 'read.modules (read.modules/canonical-alias st 'al.read.modules)))
+      (is (= 'edit.modules (read.modules/canonical-alias st 'al.edit.modules))
+          "both widen — neither is more entitled to the short name"))
+    (testing "a require using a non-canonical alias is reported, with the fix"
+      (let [st2 (store/ingest st 'al.user
+                              (str "(ns al.user (:require [al.read.modules :as modules]\n"
+                                   "                      [al.solo :as solo]))\n"
+                                   "(defn go \"G.\" [] (modules/r))\n"))
+            rows (read.modules/alias-drift st2)]
+        (is (= 1 (count rows)) (pr-str rows))
+        (is (= {:ns 'al.user :lib 'al.read.modules :as 'modules :canonical 'read.modules}
+               (first rows))
+            (pr-str rows))))
+    (testing "a store whose aliases are all canonical reports nothing"
+      ;; the positive control: an empty result must mean CHECKED-AND-CLEAN,
+      ;; and the assertion above passes just as well against a broken walk
+      (let [ok (store/ingest st 'al.ok
+                             (str "(ns al.ok (:require [al.solo :as solo]))\n"
+                                  "(defn go \"G.\" [] (solo/s))\n"))]
+        (is (= [] (read.modules/alias-drift ok)))))))

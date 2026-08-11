@@ -20,7 +20,7 @@
   which is exactly what `ambient-state` did for its entire life."
   (:require [slopp.store :as store]
             [slopp.rules.schema :as schema]
-            [slopp.rules.keywords :as attrs]
+            [slopp.rules.keywords :as keywords]
             [slopp.rules.breakage :as breakage] [slopp.edit.modules :as edit.modules] [rewrite-clj.node :as n] [clojure.string :as str] [slopp.rules.web :as rules.web] [slopp.rules.catalog :as catalog] [slopp.index.refs :as refs] [slopp.rules.shape :as shape] [rewrite-clj.parser :as p] [slopp.rules.markers :as markers] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates]))
 
 (defn- changed-qsyms
@@ -42,7 +42,7 @@
 (defn key-typos-check
   "Done-advisory check: near-duplicate-key typos among the episode's changes."
   [_session st* changed]
-  (attrs/near-duplicate-keys st* changed))
+  (keywords/near-duplicate-keys st* changed))
 
 (defn breaking-check
   "Done-advisory check: contract narrowing (arity breakage) among the changes."
@@ -258,7 +258,7 @@
                   typo  (when-not moved
                           (first (for [f     (store/forms st* ns-sym)
                                        :when (:name f)
-                                       :when (attrs/edit-1? nm (str (:name f)))]
+                                       :when (keywords/edit-1? nm (str (:name f)))]
                                    (str ns-sym "/" (:name f)))))]
               {:form (symbol (str (store/ns-of-form-id st* fid))
                              (str (or (:name e) (:id e))))

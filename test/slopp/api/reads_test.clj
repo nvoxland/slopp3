@@ -5,7 +5,7 @@
   store source."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.api.reads :as pages]))
+            [slopp.api.reads :as reads]))
 
 (deftest a-defs-value-is-not-its-docstring
   ;; Pattern 1, alive in the shipped UI. `form-doc` read `(nth sx 2 nil)` and
@@ -23,7 +23,7 @@
                                "(def ^:ambient-ok counter \"How many.\" (atom 0))\n"
                                "(defn f \"F does a thing.\" [x] x)\n"
                                "(defn g [x] x)\n"))
-        doc (fn [nm] (#'pages/form-doc (store/form-named st 'fd.core nm)))]
+        doc (fn [nm] (#'reads/form-doc (store/form-named st 'fd.core nm)))]
     (testing "a def with a string VALUE and no docstring has no docstring"
       (is (nil? (doc 'greeting))))
     (testing "a def that really is documented still reports it"

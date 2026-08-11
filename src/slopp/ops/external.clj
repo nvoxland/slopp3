@@ -14,7 +14,7 @@
   reach passes on a population of zero, which is indistinguishable from
   passing on the truth."
   (:require [clojure.java.shell :as sh]
-            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as modules] [slopp.rules :as rules] [slopp.ops.engine :as session] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as currency] [slopp.image.currency :as registry] [slopp.edit.tiers :as tiers] [slopp.kernel.boot :as boot]))
+            [clojure.string :as str] [slopp.store.db :as db] [clojure.java.io :as io] [rewrite-clj.node :as n] [slopp.ops :as ops] [slopp.project.deps :as project.deps] [slopp.ops.done :as done] [slopp.read.history :as history] [slopp.read.modules :as read.modules] [slopp.rules :as rules] [slopp.ops.engine :as engine] [slopp.ops.testrun :as testrun] [slopp.build :as build] [slopp.edit :as edit] [slopp.edit.modules :as edit.modules] [slopp.index :as index] [slopp.store.render :as store.render] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.index.analyze :as analyze] [slopp.ops.branch :as branch] [slopp.project.capabilities :as capabilities] [slopp.read.orient :as orient] [slopp.index.crossings :as crossings] [slopp.store.artifacts :as artifacts] [slopp.rules.currency :as rules.currency] [slopp.image.currency :as image.currency] [slopp.edit.tiers :as tiers] [slopp.kernel.boot :as boot]))
 
 ^:reads (defn ^:export git-config-value
   "`git config <k>` as git would resolve it in `dir` (local then global), or
@@ -121,9 +121,9 @@
         ;; reason: the tree gets slopp/web/** and the pom that used to supply
         ;; garden/hiccup/cheshire/http-kit is gone. A built app would fail inside
         ;; slopp.web.css exactly as an image did.
-        deps     (merge (session/image-deps st) (:runtime provided))
+        deps     (merge (engine/image-deps st) (:runtime provided))
 client-deps (merge (:client-deps st) (:client provided))
-        has-tests? (boolean (or (some render/test-ns? (keys (:namespaces st)))
+        has-tests? (boolean (or (some store.render/test-ns? (keys (:namespaces st)))
                                 (some (fn [nsx]
                                         (some #(re-find #"^\(deftest\b"
                                                         (n/string (:node %)))
@@ -138,7 +138,7 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; nothing would otherwise put a `:paths` entry in deps.edn with no
         ;; directory under it. The tree describes what was materialized.
         instr?   (boolean (some #(and (= :instrument (store/role-for st %))
-                                      (not (render/test-ns? %)))
+                                      (not (store.render/test-ns? %)))
                                 (keys (:namespaces st))))
         ours?    #(contains? #{(build/deps-edn false deps has-tests? traced? client-deps instr?)
                                (build/deps-edn true deps has-tests? traced? client-deps instr?)}
@@ -173,11 +173,11 @@ client-deps (merge (:client-deps st) (:client provided))
 
       :else
       (do (doseq [ns-sym (keys (:namespaces st))]
-    (let [file (io/file target (render/source-path ns-sym
+    (let [file (io/file target (store.render/source-path ns-sym
                                                    (store/platform-for st ns-sym)
                                                    (store/role-for st ns-sym)))]
       (io/make-parents file)
-      (spit file (render/render-ns st ns-sym))))
+      (spit file (store.render/render-ns st ns-sym))))
   (doseq [[path entry] (:files st)]
     (let [file (io/file target (str path))]
       (io/make-parents file)
@@ -191,8 +191,8 @@ client-deps (merge (:client-deps st) (:client provided))
           (io/copy bs file))
         (spit file entry))))
   (doseq [[path entry] (cond-> (:config st)
-                               (modules/modules-config-entry st)
-                               (assoc "modules" (modules/modules-config-entry st)))]
+                               (read.modules/modules-config-entry st)
+                               (assoc "modules" (read.modules/modules-config-entry st)))]
     (let [file (io/file target (str path))]
       (io/make-parents file)
       (spit file (store/render-config entry))))
@@ -217,8 +217,8 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; the code, so without this a consumer sees every namespace of a
           ;; published library as undeclared — hence :external — and its own
           ;; correct functions get !-flagged for calling them.
-          (when-let [tiers (modules/tiers-resource st)]
-            (let [tf (io/file target "src" modules/tiers-resource-path)]
+          (when-let [tiers (read.modules/tiers-resource st)]
+            (let [tf (io/file target "src" read.modules/tiers-resource-path)]
               (io/make-parents tf)
               (spit tf (pr-str tiers))))
           ;; THE FRAMEWORK, copied in rather than named (D-framework-injection
@@ -228,7 +228,7 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; else. Vendored, the tree is self-contained and needs no repository
           ;; at all. Same call the oracle image makes, so the app is built
           ;; against the framework it was developed against.
-          (session/vendor-framework! st target)
+          (engine/vendor-framework! st target)
           (when (or main (not (.exists de)))
             (when has-tests? (.mkdirs (io/file target "test")))
             (spit de (build/deps-edn (boolean main) deps has-tests? traced? client-deps instr?)))
@@ -237,7 +237,7 @@ client-deps (merge (:client-deps st) (:client provided))
                           (seq missing) (assoc :missing-artifacts missing)))
             main
             (assoc :native
-                   (let [an    (analyze/analyze (render/render-ns st entry-ns))
+                   (let [an    (analyze/analyze (store.render/render-ns st entry-ns))
                          vdef  (first (filter #(and (= entry-ns (:ns %))
                                                     (= (symbol (name main)) (:name %)))
                                               (:var-definitions an)))
@@ -319,10 +319,10 @@ client-deps (merge (:client-deps st) (:client provided))
   the parts that can be WRONG are all in there."
   [session scope result]
   (let [st (:store @session)]
-    (session/commit-appended!
+    (engine/commit-appended!
      session
      #(store/record-observation % scope (observation-of st result)
-                                (session/closure-hashes st scope))
+                                (engine/closure-hashes st scope))
      []))
   result)
 
@@ -379,7 +379,7 @@ client-deps (merge (:client-deps st) (:client provided))
 
                        (and (nil? ns) (empty? only))
                        (or (:selected aff)
-                           (vec (sort (filter #(session/test-ns? (:store @session) %)
+                           (vec (sort (filter #(engine/test-ns? (:store @session) %)
                                               (keys (:namespaces (:store @session))))))))
             par (cond (some? parallel) parallel
                       (nil? full-set)  1
@@ -521,7 +521,7 @@ client-deps (merge (:client-deps st) (:client provided))
                 ;; the only place an ^:external test ever runs, so a trace missed
                 ;; here is missed forever. nil when the build carried no runner, so
                 ;; untraced stores behave exactly as before.
-                (session/absorb-trace! session (testrun/read-traces dir))
+                (engine/absorb-trace! session (testrun/read-traces dir))
                 ;; and the run itself is EVIDENCE — the same argument as the
                 ;; trace one line up: this is the only tier that ever runs an
                 ;; ^:external test, so a red missed here is missed forever, and
@@ -546,15 +546,20 @@ client-deps (merge (:client-deps st) (:client provided))
   current.
 
   That guard is also what makes it safe to COMPARE rather than count. An
-  empty currency registry honestly means \"this image loaded nothing\", which
-  is true and useless in a plain test JVM; gating on the boot record means
-  drift is only ever computed where an empty registry would be news."
-  [st]
+  empty record honestly means \"this image loaded nothing\", which is true and
+  useless in a plain test JVM; gating on the boot record means drift is only
+  ever computed where an empty record would be news.
+
+  `image` is the one whose record is being read. It used to be implied,
+  because the record was a process-global atom and \"the image\" meant the
+  oracle by convention — the assumption that broke the day a second image
+  started running on purpose."
+  [image st]
   (when-let [info (try ((store/late-ref 'slopp.kernel.boot/current-boot-info))
                        (catch Throwable _ nil))]
     (orient/host-warning info
                          (orient/code-deltas-since st (:booted-at info 0))
-                         (currency/drift st))))
+                         (rules.currency/drift image st))))
 
 (def ^:export external-slice-cap
   "How many impacted `^:external` tests `done` will run before deferring to
@@ -702,7 +707,7 @@ client-deps (merge (:client-deps st) (:client provided))
                      ;; can become dead because THIS episode deleted its last
                      ;; caller, so the store-wide sweep is real — it is just
                      ;; `full_check`'s job, not every done point's.
-                     (modules/unused-report
+                     (read.modules/unused-report
                       st* (distinct (keep #(store/ns-of-form-id st* %) changed))))
         lint (done/with-unused-gate lint unused-rep)
         ;; NEW warnings (on forms this episode touched) report in full;
@@ -753,11 +758,11 @@ client-deps (merge (:client-deps st) (:client provided))
                                             (keys (:namespaces st*)))))
                 ;; nil affected => every test in main-ns; :edited still powers
                 ;; the red :implicated correlation
-                s        (session/run-verification! session main-ns nil
+                s        (engine/run-verification! session main-ns nil
                                             :edited qsyms
                                             :include-integration? true
                                             :boundary? true)]  ; M5
-            (session/commit-appended! session
+            (engine/commit-appended! session
                               #(store/record-verification % main-ns s) [])
             s))
         ;; the tier is an implementation detail: ^:external tests the episode's
@@ -772,7 +777,7 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; evidence was already computed a few lines up and thrown away.
         iso (when (and external? (seq changed))
               (let [st*      (:store @session)
-                    iso-only (session/impacted-external session st* changed)]
+                    iso-only (engine/impacted-external session st* changed)]
                 ;; #132: impacted-external is never silent — an untraced form expands
                 ;; to its own namespace's reach — so the old closure fallback is
                 ;; gone with the collapse that needed it. Run exactly the named
@@ -888,7 +893,7 @@ client-deps (merge (:client-deps st) (:client provided))
     ;; about it, and the investigation that followed eliminated four correct
     ;; mechanisms in rt first. Nil unless there is genuinely something to
     ;; doubt, so it never becomes noise the reader learns to skip.
-    (host-warning-now st*) (assoc :host-stale (host-warning-now st*))
+    (host-warning-now (:image @session) st*) (assoc :host-stale (host-warning-now (:image @session) st*))
     ;; what the done-point COST, persisted on the boundary delta. done is the
     ;; most frequently called verdict, so its cost dominates by repetition
     ;; rather than by any single call being slow — a product the log could
@@ -897,7 +902,7 @@ client-deps (merge (:client-deps st) (:client provided))
         cid (if standing
               (:done standing)
               (let [v (volatile! nil)]
-                (session/commit-appended! session
+                (engine/commit-appended! session
                                   (fn [base]
                                     (let [[st2 c] (store/record-done base label
                                                                      :agent agent
@@ -937,7 +942,7 @@ client-deps (merge (:client-deps st) (:client provided))
   journal is append-only and a red full_check's lint rows can be large."
   [res session nses t0]
   (let [res (assoc res :ms (- (System/currentTimeMillis) t0))]
-    (session/commit-appended!
+    (engine/commit-appended!
      session
      #(store/record-verification
        % (vec nses)
@@ -991,10 +996,10 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; and teach it callees-first — the same "deps first" order every loader
         ;; uses — so nothing is judged against a fact not yet refreshed
         lint  (vec (for [n (store/ns-dependency-order st)
-                         :let [src (render/render-ns st n)]
+                         :let [src (store.render/render-ns st n)]
                          f (index/lint src (store/kondo-lang st n))]
                      (-> f (dissoc :row :col) (assoc :ns n))))
-        rep   (modules/unused-report st nses)
+        rep   (read.modules/unused-report st nses)
         ;; tier LAYERING — a whole-graph property, so it lives here rather
         ;; than at a declaration: core must not depend on shell. This is the
         ;; check effect-reachability cannot make, since that sees a cross-ns
@@ -1023,7 +1028,7 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; violations stood on this store through a green check before it was
         ;; wired in (friction #19); `module-debt` itself already existed and
         ;; was asked only by the graph view and by `module_dep`.
-        mods  (modules/module-debt st)
+        mods  (read.modules/module-debt st)
         ;; the RULE CATALOG, and the identical argument one layer up. A
         ;; `:grain :done` rule fires over forms an EPISODE changed, so a
         ;; violation older than the rule is invisible to `done` — and stays
@@ -1048,10 +1053,11 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; forms is in neither and no rule can reach it however it is
         ;; written. slopp.web-rules-test survived two days and a green
         ;; check here after the R6 rules move emptied it.
-        husks (modules/empty-namespaces st)
+        husks (read.modules/empty-namespaces st)
+        aliasdrift (read.modules/alias-drift st)
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
-        tests (session/run-verification! session (vec nses) nil
+        tests (engine/run-verification! session (vec nses) nil
                                          :include-integration? true
                                          :boundary? true)
         ;; ONLY this tier narrows. Measured: the external suite is ~187s of a
@@ -1059,8 +1065,8 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; layering + the in-image suite together are ~5-7s. Narrowing the
         ;; cheap half would buy nothing and cost exactly the coverage
         ;; full_check exists for.
-        iso   (when (seq (session/external-test-nses
-                          st (filter #(session/test-ns? st %) nses)))
+        iso   (when (seq (engine/external-test-nses
+                          st (filter #(engine/test-ns? st %) nses)))
                 (external-test-run! session :affected affected))
         red?  (or (seq errs) (seq (:unused rep)) (seq (:stale rep))
                   (seq layer)                ; core→shell is a failure, not a note
@@ -1109,6 +1115,24 @@ client-deps (merge (:client-deps st) (:client provided))
                                       " husk; adding a form is the other honest"
                                       " answer, and it is why this is reported"
                                       " rather than refused"))
+      (seq aliasdrift)    (assoc :alias-drift aliasdrift
+                                 :alias-drift-note
+                                 (str (count aliasdrift) " require(s) name a store"
+                                      " namespace by something other than its"
+                                      " canonical alias — the shortest trailing"
+                                      " segments naming exactly one namespace here."
+                                      " Harmless to the TOOLS, because the reference"
+                                      " graph is alias-blind and renames and"
+                                      " query_depends were never confused by it."
+                                      " Costly to a READER: when one alias names two"
+                                      " namespaces, x/f in a slice is two different"
+                                      " functions and the page does not say which."
+                                      " It is also the one way a hand sweep can be"
+                                      " wrong where the graph is right. ns_realias"
+                                      " is the remedy, one namespace at a time;"
+                                      " reported and never refused, because most of"
+                                      " it is residue from renames that moved a"
+                                      " namespace and left the :as behind"))
       (seq layer)         (assoc :tier-layering layer
                                  :tier-layering-note
                                  (str (count layer) " core→shell dependency(ies):"
@@ -1148,7 +1172,7 @@ client-deps (merge (:client-deps st) (:client provided))
       iso                 (assoc :external iso)
       ;; friction #10: a whole-store green is exactly the verdict an agent
       ;; commits on, so a host running superseded code has to say so HERE.
-      (host-warning-now st) (assoc :host-stale (host-warning-now st))
+      (host-warning-now (:image @session) st) (assoc :host-stale (host-warning-now (:image @session) st))
       ;; slopp-ui friction #5, bitten twice: a restyled page passed
       ;; full_check, compile_client and a bundle copy, and the SERVED
       ;; stylesheet was still the old one. Markup that has moved on from its
@@ -1205,7 +1229,7 @@ client-deps (merge (:client-deps st) (:client provided))
   [session description & {:keys [agent force target extra]}]
   (let [mark! (fn [target status result-extra delta-extra]
                 (let [v (volatile! nil)]
-                  (session/commit-appended!
+                  (engine/commit-appended!
                    session
                    (fn [base]
                      (let [[st2 d] (store/record-commit base description
@@ -1297,10 +1321,10 @@ client-deps (merge (:client-deps st) (:client provided))
                      (cond-> (or extra {})
                        (seq (:deps st))  (assoc :deps (:deps st))
                        (seq (:files st)) (assoc :files (:files st))
-                       (or (seq (:config st)) (modules/modules-config-entry st))
+                       (or (seq (:config st)) (read.modules/modules-config-entry st))
                             (assoc :config (cond-> (:config st)
-                                             (modules/modules-config-entry st)
-                                             (assoc "modules" (modules/modules-config-entry st)))))))))))))
+                                             (read.modules/modules-config-entry st)
+                                             (assoc "modules" (read.modules/modules-config-entry st)))))))))))))
 
 (defn ^:export config!
   "Read or set store config (the meta k/v side-table): keys `user.name` /
@@ -1365,11 +1389,11 @@ client-deps (merge (:client-deps st) (:client provided))
           ;; session boots reuses it, which is what makes a restart work. A
           ;; private dir here is exactly why restart booted without the
           ;; framework at all.
-          vdir  (session/framework-dir! session store)
-          image (or (when-not vdir (repl/unpark! (session/image-deps store)))
-                    (session/start-image! session store))]
+          vdir  (engine/framework-dir! session store)
+          image (or (when-not vdir (repl/unpark! (engine/image-deps store)))
+                    (engine/start-image! session store))]
       (swap! session assoc :image image)
-      (session/start-spare! session)
+      (engine/start-spare! session)
       (let [t      (java.util.Timer. "slopp-branch-reaper" true)
             period (long (max 1000 (quot ttl 3)))]
         (.schedule t
@@ -1378,10 +1402,10 @@ client-deps (merge (:client-deps st) (:client provided))
                                   (catch Throwable _))))
                    period period)
         (swap! session assoc :reaper t))
-      ;; a recycled image was swept back to baseline and a fresh one holds
-      ;; nothing — either way the stamps this registry already carries
-      ;; describe an image that no longer exists
-      (registry/forget-all!)
+      ;; No reset: a fresh image is minted with an empty record and a recycled
+      ;; one was emptied by `reset-to-baseline!`, which is where its handle
+      ;; changed tenant. This used to reset a process-global atom, because the
+      ;; stamps it carried described an image that no longer existed.
       ;; note-and-continue, kernel-host parity: a namespace that fails to load
       ;; is RECORDED, not thrown. The throw parked its Throwable in
       ;; :image-ready and await-image! rethrew it in front of every non-read
@@ -1389,14 +1413,14 @@ client-deps (merge (:client-deps st) (:client provided))
       ;; consumer's wedge, 2026-08-06). Process-level failures still throw
       ;; through the outer catch; a per-namespace compile failure is the
       ;; store's business, and the store stays open to fix it.
-      (let [fails (session/load-all-namespaces! image store)]
+      (let [fails (engine/load-all-namespaces! image store)]
         (swap! session assoc :image-load-failures (not-empty fails)))
       ;; ARM only now, with everything stamped: from here an unstamped form
       ;; means never-loaded rather than not-yet-looked-at. Without this the
       ;; registry stayed unarmed for a whole session and every currency
       ;; surface honestly reported "not measured" — correct, and useless,
       ;; because only a restart (through fresh-image!) ever armed it.
-      (registry/arm!)
+      (image.currency/arm! image)
       ;; module adoption: a populated store from a pre-module db (:modules
       ;; nil) gets its manifest derived from reality, once — fresh stores
       ;; are born with {} and enforcement already on
@@ -1526,9 +1550,9 @@ client-deps (merge (:client-deps st) (:client provided))
          (swap! session assoc
                 :store store
                 :data-version (some-> conn db/data-version)
-                :test-map (or (session/load-trace conn store) {})
-                :observed (session/load-observations conn)
-                :agent-id (or agent-id (session/session-identity))
+                :test-map (or (engine/load-trace conn store) {})
+                :observed (engine/load-observations conn)
+                :agent-id (or agent-id (engine/session-identity))
                 :env-agent? (boolean (not-empty (System/getenv "SLOPP_AGENT")))
                 :branch-image-ttl-ms ttl
                 :warm-spare? (boolean warm-spare?))
@@ -1570,7 +1594,7 @@ client-deps (merge (:client-deps st) (:client provided))
   [session & {:keys [ns only fresh]}]
   (let [st       (:store @session)
         ns-sym   (some-> ns symbol)
-        tiers    (memoize (fn [tns] (session/test-var-tiers st tns)))
+        tiers    (memoize (fn [tns] (engine/test-var-tiers st tns)))
         qual     (fn [o] (let [s (str o)]
                            (if (str/includes? s "/")
                              (symbol s)

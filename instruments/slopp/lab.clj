@@ -7,14 +7,14 @@
   the one defining form, whereas grep-and-read forces reading the surrounding file
   to understand context. It grows with the size of the surrounding code."
   (:require [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.read.query :as query] [slopp.read.graph :as graph]))
+            [slopp.store.render :as store.render] [slopp.read.query :as query] [slopp.read.graph :as graph]))
 
 (defn reference-query-cost
   "Compare payloads for a 'where is `sym` referenced + show its def' query."
   [session ns-sym sym]
   (let [refs   (vec (graph/query-references session ns-sym sym))
         symi   (query/query-symbol session ns-sym sym)
-        source (render/render-ns (:store @session) ns-sym)
+        source (store.render/render-ns (:store @session) ns-sym)
         grep   (->> (str/split-lines source)
                     (filter #(str/includes? % (str sym)))
                     (str/join "\n"))

@@ -22,7 +22,7 @@
   crossed back."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [clojure.set :as set] [slopp.edit.tiers :as tiers]))
+            [slopp.store :as store] [slopp.edit.modules :as edit.modules] [slopp.index.refs :as refs] [slopp.read.orient :as orient] [clojure.set :as set] [slopp.edit.tiers :as tiers]))
 
 (def ^:export tiers-resource-path
   "Where a build writes its purity tiers and where `deps_add` looks for them.
@@ -55,7 +55,7 @@
   showed only production would read as the whole manifest and quietly hide
   the declarations that permit a fixture to cross."
   [store]
-  (let [test-edges (modules/module-test-manifest store)]
+  (let [test-edges (edit.modules/module-test-manifest store)]
     (when (or (seq (:modules store)) (seq test-edges))
       {:format :manifest
        :values (into (sorted-map)
@@ -88,15 +88,15 @@
   screen draws this graph — back when the operation surface lived in this same
   module and needed no marker to reach it. The regroup put the two callers in
   different subtrees, and a scoped export names exactly one."
-  ([store] (production-manifest store (modules/module-usage-rows store)))
+  ([store] (production-manifest store (edit.modules/module-usage-rows store)))
   ([store rows]
    (let [prod? #(and (not (str/ends-with? (str %) "-test"))
                      (not= :instrument (store/role-for store %)))
-         base  (into {} (map (fn [n] [(modules/module-of n) #{}]))
+         base  (into {} (map (fn [n] [(edit.modules/module-of n) #{}]))
                      (filter prod? (keys (:namespaces store))))]
      (reduce (fn [m {:keys [from-ns to]}]
                (if (prod? from-ns)
-                 (let [a (modules/module-of from-ns) b (modules/module-of to)]
+                 (let [a (edit.modules/module-of from-ns) b (edit.modules/module-of to)]
                    (if (= a b) m (update m a (fnil conj #{}) b)))
                  m))
              base rows))))
@@ -111,9 +111,9 @@
   off entirely — [[modules/store-violations]] answers that from `:modules`
   being nil, so this asks about the store rather than holding a manifest of
   its own."
-  ([store] (module-debt store (modules/module-usage-rows store)))
+  ([store] (module-debt store (edit.modules/module-usage-rows store)))
   ([store rows]
-   (when-let [vs (modules/store-violations store rows)]
+   (when-let [vs (edit.modules/store-violations store rows)]
      {:rows (vec (take 20 (map #(select-keys % [:from-ns :from-var :target-ns :rule]) vs)))
       :count (count vs)})))
 
@@ -138,10 +138,10 @@
   [session m]
   (let [st       (:store @session)
         m        (str m)
-        manifest (or (modules/modules-manifest st) {})
+        manifest (or (edit.modules/modules-manifest st) {})
         module?  (<= (count (str/split m #"\.")) 2)
         nses     (if module?
-                   (filter #(= m (modules/module-of %)) (keys (:namespaces st)))
+                   (filter #(= m (edit.modules/module-of %)) (keys (:namespaces st)))
                    (filter #(or (= m (str %)) (str/starts-with? (str %) (str m ".")))
                            (keys (:namespaces st))))
         rows     (for [nsx  (sort nses)
@@ -164,7 +164,7 @@
                              ;; itself as taking two arguments — on the very view
                              ;; whose job is the cheap browse before calling in.
                              sig (let [as (when (#{"defn" "defn-" "defmacro"} (str (first s)))
-                                            (modules/fn-arglists s))]
+                                            (edit.modules/fn-arglists s))]
                                    (cond (= 1 (count as)) (first as)
                                          (seq as)         (vec as)))
                              ex  (:export (meta (second s)))]]
@@ -182,7 +182,7 @@
                                                            (when (contains? deps m) k))
                                                          manifest))))
         (not module?) (assoc :tier   (tiers/tier-for st (symbol m))
-                             :within (modules/module-of (symbol m)))))))
+                             :within (edit.modules/module-of (symbol m)))))))
 
 (defn ^:export unused-report
   "PUBLIC defn/def vars in `nses` with NO references in THE graph
@@ -245,7 +245,7 @@
         prod   (remove #(str/ends-with? (str %) "-test")
                        (keys (:namespaces store)))
         tiers  (:module-tiers store)
-        by-mod (group-by modules/module-of prod)]
+        by-mod (group-by edit.modules/module-of prod)]
     {:declared (into (sorted-map)
                      (map (fn [[m t]] [m (tiers/canonical-tier t)]))
                      tiers)
@@ -286,7 +286,7 @@
   [store rows]
   (vec (sort (for [{:keys [to to-name to-export]} rows
                    :when to-export
-                   :when (not (modules/export-level store to to-name))]
+                   :when (not (edit.modules/export-level store to to-name))]
                (symbol (str to) (str to-name))))))
 
 (defn ^:export substrate
@@ -372,19 +372,97 @@
 
   `module_dep {.. test_only true}` then `{.. remove true}` states it honestly.
   Rows are sorted `[module dep]` pairs."
-  ([store] (overstated-edges store (modules/module-usage-rows store)))
+  ([store] (overstated-edges store (edit.modules/module-usage-rows store)))
   ([store rows]
    (let [prod   (production-manifest store rows)
          actual (into #{}
                       (map (fn [{:keys [from-ns to]}]
-                             [(modules/module-of from-ns) (modules/module-of to)]))
+                             [(edit.modules/module-of from-ns) (edit.modules/module-of to)]))
                       rows)]
-     (vec (for [[m ds] (sort (modules/modules-manifest store))
+     (vec (for [[m ds] (sort (edit.modules/modules-manifest store))
                 d      (sort ds)
                 :when  (and (contains? prod m)
                             (contains? actual [m d])
                             (not (contains? (get prod m #{}) d)))]
             [m d])))))
+
+(defn ^:export canonical-alias
+  "The one alias `ns-sym` should be required under: its shortest trailing
+  segments that name exactly ONE namespace in this store, as a symbol.
+
+  `slopp.lab` → `lab`. `slopp.read.modules` → `read.modules`, because
+  `slopp.edit.modules` claims the same last segment and neither is more
+  entitled to it — they BOTH widen, which is what makes the answer
+  deterministic rather than a tiebreak somebody has to remember.
+
+  DERIVED, deliberately, rather than declared per namespace. A declared alias
+  is a second name for a thing that already has one, kept by hand, free to
+  drift from what it describes — and a rename would have to carry it. A
+  derivation cannot be wrong about a namespace it is computed from.
+
+  The store is the scope, so external libs are not governed: `clojure.string
+  :as str` is a convention slopp does not own and should not restate."
+  [store ns-sym]
+  (let [nses (map str (keys (:namespaces store)))
+        sg   (str/split (str ns-sym) #"\.")]
+    (symbol
+     (loop [k 1]
+       (let [tail (str/join "." (take-last k sg))
+             claims (filter #(or (= % tail) (str/ends-with? % (str "." tail))) nses)]
+         (if (or (= 1 (count claims)) (>= k (count sg)))
+           tail
+           (recur (inc k))))))))
+
+(defn ^:export alias-drift
+  "Every `:require` of a STORE namespace under something other than its
+  `canonical-alias` — `[{:ns :lib :as :canonical}]`, sorted.
+
+  Why this is worth a check when the tools are immune to it: the reference
+  graph is kondo-resolved and alias-blind, so renames, sweeps and
+  `query_depends` were never confused. A READER is. When `modules` names
+  `slopp.edit.modules` in one namespace and `slopp.read.modules` in another,
+  `modules/module-surface` in a slice is two different functions and nothing
+  on the page says which. Measured when this was written: five aliases each
+  naming more than one store namespace, one of them naming three — plus
+  aliases resembling their namespace not at all, nearly all residue from
+  renames that moved the namespace and left the `:as` behind.
+
+  It also removes the one way a hand sweep can be wrong where the graph is
+  right: enumerating call sites by searching for `alias/name` covers a subset
+  when the namespace answers to several aliases, and the search reports what
+  it found rather than what is there.
+
+  **Reads the `ns` FORM, never the rendered text.** The first version scanned
+  source with a regex and matched `[lib :as x]` inside STRING literals — a
+  test fixture's own `(ns … (:require …))` — so it reported aliases that do
+  not exist in any ns form, and `ns_realias` correctly refused them. A
+  fixture's source is data; this is the same trap `ns_realias`'s
+  `:left-behind` exists to report rather than rewrite.
+
+  Namespace-grained and whole-store, like `empty-namespaces`: an `:as` is a
+  relationship between two namespaces rather than a property of a form, and
+  the drift is usually OLDER than any episode that would carry it to a
+  done-advisory. `ns_realias` is the remedy, one namespace at a time.
+
+  External libs are excluded — `clojure.string :as str` is not slopp's
+  convention to police."
+  [store]
+  (vec
+   (sort-by (juxt (comp str :ns) (comp str :lib))
+            (for [ns-sym (keys (:namespaces store))
+                  :let [e (store/form-named store ns-sym ns-sym)
+                        sx (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
+                  :when (seq? sx)
+                  clause (rest sx)
+                  :when (and (seq? clause) (= :require (first clause)))
+                  spec (rest clause)
+                  :when (and (vector? spec) (symbol? (first spec)))
+                  :let [lib (first spec)
+                        as  (second (drop-while #(not= :as %) spec))]
+                  :when (and as (contains? (:namespaces store) lib))
+                  :let [want (canonical-alias store lib)]
+                  :when (not= as want)]
+              {:ns ns-sym :lib lib :as as :canonical want}))))
 
 (defn ^:export empty-namespaces
   "Namespaces holding nothing but their own `ns` form, sorted.

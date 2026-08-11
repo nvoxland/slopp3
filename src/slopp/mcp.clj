@@ -9,7 +9,7 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [slopp.ops :as ops]
-            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as ui] [slopp.project.capabilities :as caps] [slopp.rules.doctor :as doctor] [slopp.hub :as hb] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph] [slopp.webdev.screen :as wscreen]))
+            [slopp.store.db :as db] [slopp.sync :as sync] [clojure.edn :as edn] [slopp.mcp.tools :as tools] [slopp.mcp.smells :as smells] [slopp.ops.branch :as branch] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [slopp.webdev.cljs :as cljs] [slopp.rules :as rules] [slopp.api.server :as server] [slopp.project.capabilities :as capabilities] [slopp.rules.doctor :as doctor] [slopp.hub :as hub] [slopp.webdev.live :as live] [slopp.read.history :as history] [slopp.read.graph :as graph] [slopp.webdev.screen :as webdev.screen]))
 
 (def ^:private protocol-version "2024-11-05")
 
@@ -347,11 +347,11 @@
    "ui_serve"
    (fn [session a _sym]
      (text! (if (:stop a)
-              {:stopped (boolean (ui/stop!))}
-              (ui/serve! session (ui/preferred-port (:dir @session) (:port a))))))
+              {:stopped (boolean (server/stop!))}
+              (server/serve! session (server/preferred-port (:dir @session) (:port a))))))
 "screen"
    (fn [session a _sym]
-     (text! (wscreen/screen! session
+     (text! (webdev.screen/screen! session
                              :steps (:steps a)
                              :region (:region a)
                              :detail (:detail a)
@@ -701,19 +701,19 @@
   implementation detail they should never have to type."
   [session dir url]
   (try
-    (let [port (caps/effective (:store @session) "slopp.hub.port")]
+    (let [port (capabilities/effective (:store @session) "slopp.hub.port")]
       (when (and dir port (pos? (long port)))
-        (let [hub    (hb/hub-url port)
-              handle (hb/start! hub
-                                #(hb/payload (:store @session) dir url)
-                                #(let [at (hb/hub-address hub %)]
+        (let [hub    (hub/hub-url port)
+              handle (hub/start! hub
+                                #(hub/payload (:store @session) dir url)
+                                #(let [at (hub/hub-address hub %)]
                                    (cond
                                      at (swap! session assoc :hub at
                                                :hub-refused nil)
                                      ;; a hub that answered and said NO is the
                                      ;; drift alarm — keep it, or the brief
                                      ;; reports absence about a running hub
-                                     (hb/refused? %)
+                                     (hub/refused? %)
                                      (swap! session assoc :hub-refused %
                                             :hub nil)
                                      :else (swap! session assoc :hub nil
@@ -754,8 +754,8 @@
   ([session] (start-ui! session nil))
   ([session explicit-port]
    (let [dir  (:dir @session)
-         want (ui/preferred-port dir explicit-port)
-         try! (fn [p] (try (ui/serve! session p)
+         want (server/preferred-port dir explicit-port)
+         try! (fn [p] (try (server/serve! session p)
                            (catch Throwable t {:error (or (.getMessage t) (str t))})))
          r0   (try! want)
          ;; a derived port is a PREFERENCE: something else already holding it
@@ -834,7 +834,7 @@
   at its own speed."
   [session]
   (let [dir (:dir @session)]
-    (if (and dir (live/managed? (:store @session) ui/served-namespaces))
+    (if (and dir (live/managed? (:store @session) server/served-namespaces))
       (locking session
         (try (live/refresh! session (:store @session) dir)
              (catch Throwable t
@@ -852,7 +852,7 @@
          ;; `managed?` is false for two different reasons now, and a stopped
          ;; server that names the wrong one sends someone to change the
          ;; wrong thing
-         :reason (if (live/self-served? (:store @session) ui/served-namespaces)
+         :reason (if (live/self-served? (:store @session) server/served-namespaces)
                    (str "this session already serves this store's surface — the"
                         " managed app server was stopped, because a second one"
                         " would serve a staler copy of the same pages")
@@ -1519,8 +1519,8 @@
       (finally
         ;; deregister BEFORE the listener goes: the hub should learn we are
         ;; leaving from us, not by ageing us out thirty seconds later.
-        (hb/stop! (:hub-heartbeat @session))
-        (ui/stop!)
+        (hub/stop! (:hub-heartbeat @session))
+        (server/stop!)
         ;; the app image is a CHILD JVM. Its watchdog would reap it when we
         ;; die anyway, but leaving that to a watchdog means the port stays
         ;; bound for as long as the reap takes — and the next server to start

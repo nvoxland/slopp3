@@ -16,7 +16,7 @@
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store :as store] [slopp.store.fields :as fields] [slopp.edit.modules :as modules]))
+            [slopp.store :as store] [slopp.store.fields :as fields] [slopp.edit.modules :as edit.modules]))
 
 (defn ^:export snip
   "Cap `s` at `n` chars with an ellipsis — composites (brief/report) carry
@@ -89,7 +89,7 @@
           ;; Single arity stays unwrapped (`[cents rate]`, not `[[cents rate]]`)
           ;; because that is what every reader of this key already renders.
           sig     (let [as (when (#{"defn" "defn-" "defmacro"} (str (first (or body ()))))
-                             (modules/fn-arglists body))]
+                             (edit.modules/fn-arglists body))]
                     (cond (= 1 (count as)) (first as)
                           (seq as)         (vec as)))
           why     (get (store/prompt-by-form (:store @session)) (:id e))

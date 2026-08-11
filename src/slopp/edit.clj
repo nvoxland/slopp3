@@ -8,8 +8,8 @@
             [rewrite-clj.node :as n]
             [rewrite-clj.zip :as z]
             [slopp.store :as store]
-            [slopp.store.render :as render]
-            [slopp.edit.modules :as modules] [slopp.index.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.edit.gates :as gates]))
+            [slopp.store.render :as store.render]
+            [slopp.edit.modules :as edit.modules] [slopp.index.refs :as refs] [clojure.set :as set] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.edit.gates :as gates]))
 
 (def ^:private banned-heads
   "D4 — user macros are banned."
@@ -371,7 +371,7 @@
                                  (symbol (str ns-sym) (str (:name e))))))
                        (store/forms store ns-sym))]
     (remove #(contains? exempt (:var %))
-            (derive/effect-violations (analyze/analyze (render/render-ns store ns-sym))
+            (derive/effect-violations (analyze/analyze (store.render/render-ns store ns-sym))
                                      dep-nses (:dep-pure store)))))
 
 (defn dialect-scan
@@ -668,8 +668,8 @@
                             (str/replace "_" "-")))]
         (when (contains? (:namespaces store) nsx)
           (let [row (parse-long line)
-                e   (render/owner-form store nsx row 1)
-                at  (nth (str/split-lines (render/render-ns store nsx))
+                e   (store.render/owner-form store nsx row 1)
+                at  (nth (str/split-lines (store.render/render-ns store nsx))
                          (dec row) nil)]
             (when (or e at)
               (cond-> {}
@@ -789,7 +789,7 @@
         findings (mapcat (fn [ns-sym]
                            (map #(assoc % :ns ns-sym)
                                 (derive/forward-refs
-                                 (analyze/analyze (render/render-ns store ns-sym))
+                                 (analyze/analyze (store.render/render-ns store ns-sym))
                                  ns-sym)))
                          (distinct ns-syms))]
     (cond
@@ -1031,7 +1031,7 @@
         ;; through the shared accessor — indexing here is the same mistake
         ;; that hid nine documented globals from ambient-state
         docs  store/form-docstring
-        arits (fn [nd] (mapv count (modules/fn-arglists (sx nd))))
+        arits (fn [nd] (mapv count (edit.modules/fn-arglists (sx nd))))
         lost  (remove (fn [[sym _]] (contains? (hints new-node) sym))
                       (hints old-node))]
     (cond-> []

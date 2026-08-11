@@ -19,7 +19,7 @@
             [clojure.string :as str]
             [slopp.store :as store]
             [slopp.index.refs :as refs]
-            [slopp.ops.external :as external] [slopp.project.capabilities :as caps]))
+            [slopp.ops.external :as external] [slopp.project.capabilities :as capabilities]))
 
 (deftest ^:external
   ^{:correspondence "the public WRITE verbs in the operation surface vs what the MCP wire dispatches — a verb nobody can reach is surface an agent is told about and cannot use"}
@@ -130,9 +130,9 @@
                             f (store/forms st n)]
                         (str (:node f))))
         mentions (fn [k] (boolean (some #(str/includes? % (base k)) prod)))
-        orphans  (vec (remove mentions (map :key caps/registry)))]
+        orphans  (vec (remove mentions (map :key capabilities/registry)))]
     (testing "there is a population on BOTH sides"
-      (is (< 10 (count caps/registry)) "the registry")
+      (is (< 10 (count capabilities/registry)) "the registry")
       (is (< 100 (count prod)) "the production forms this scans"))
     (testing "the detector bites — an empty orphan list must not be its only mode"
       (is (not (mentions "web.nosuch.invented.key")))

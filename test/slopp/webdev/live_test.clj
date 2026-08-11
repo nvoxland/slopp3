@@ -7,7 +7,7 @@
   the blue/green swap need a real image and are `^:external`."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.webdev.live :as live] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as client] [slopp.web :as web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as ops] [slopp.read.orient :as orient]))
+            [slopp.webdev.live :as live] [clojure.edn :as edn] [clojure.string :as str] [slopp.web.client :as web.client] [slopp.web :as slopp.web] [clojure.set :as set] [slopp.store.artifacts :as artifacts] [slopp.ops.external :as external] [slopp.ops :as ops] [slopp.read.orient :as orient]))
 
 (deftest a-serve-plan-is-derived-from-the-store
   (let [src (str "(ns shop.api)\n\n"
@@ -247,7 +247,7 @@
         ;; failure is a url that is reported and a port that is bound
         (is (= (:port (live/serve-plan s dir)) (:port r)))
         (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r))))
-      (let [body (:http/body (client/request {:http/url (:url r)
+      (let [body (:http/body (web.client/request {:http/url (:url r)
                                               :http/timeout-ms 5000}))]
         (testing "the DERIVED namespace list is what crossed into the image"
           (is (str/includes? body "demo.app")))
@@ -272,7 +272,7 @@
               server — there is no half-stopped state to leak a port"
       (is (= :unreachable
              (:http/error
-              (ex-data (try (client/request {:http/url (:url r)
+              (ex-data (try (web.client/request {:http/url (:url r)
                                              :http/timeout-ms 5000})
                             (catch clojure.lang.ExceptionInfo e e)))))))))
 
@@ -297,7 +297,7 @@
                                   "        :malli/schema [:=> [:cat :map] :map]\n"
                                   "        :web/response :map} hi \"H.\" [req] {:ok true})\n")))
         sess (atom {})
-        body (fn [r] (:http/body (client/request {:http/url (:url r)
+        body (fn [r] (:http/body (web.client/request {:http/url (:url r)
                                                   :http/timeout-ms 5000})))]
     (try
       (let [v1 (live/refresh! sess (app "version one") dir)]
@@ -431,7 +431,7 @@
                                (map #(keyword "web" (name %))) set))
         ;; serve! reads the address options and hands the whole map to
         ;; context, which reads the rest. Both, because either alone is half.
-        accepted  (into (opt-keys #'web/serve!) (opt-keys #'web/context))
+        accepted  (into (opt-keys #'slopp.web/serve!) (opt-keys #'slopp.web/context))
                 ;; every option it COULD carry, so the plan has to exercise them all —
         ;; a plan missing :static made :web/routes look ungenerated and let the
         ;; stale "deliberately dropped" entry survive the change that generated it
@@ -548,7 +548,7 @@
         r    (live/start! sess s dir)]
     (try
       (is (:serving? r) (str "start! did not serve: " (:reason r)))
-      (let [body (:http/body (client/request {:http/url (:url r)
+      (let [body (:http/body (web.client/request {:http/url (:url r)
                                               :http/timeout-ms 5000}))]
         (testing "the mount the store declared reached the child as a route"
           (is (str/includes? body ":mounted \"/assets\"") body))

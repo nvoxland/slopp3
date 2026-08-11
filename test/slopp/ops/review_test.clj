@@ -15,7 +15,7 @@
   `slopp.orientation-test`, with the other orientation surfaces."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.ops.review :as review] [slopp.read.modules :as modules]))
+            [slopp.ops.review :as review] [slopp.read.modules :as read.modules]))
 
 (deftest review-scan-surfaces-ns-form-lint
   ;; Lint findings INSIDE the (ns …) form — dead imports, unused requires — have
@@ -202,7 +202,7 @@
                                           (atom {:store st :test-map {}})))
                                :when (contains? (set (:flags row)) :unused)]
                            (:form row)))
-        report-unused (set (:unused (modules/unused-report
+        report-unused (set (:unused (read.modules/unused-report
                                      st ['ag.api 'ag.api-test])))]
     (testing "the comparison has TEETH — an equality between two empty sets is not
               a guard, and the first cut of this test was exactly that"

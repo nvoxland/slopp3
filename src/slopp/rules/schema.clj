@@ -30,7 +30,7 @@
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
             [slopp.store :as store]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.image.repl :as repl] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze]))
 
 (defn schema-of
@@ -55,7 +55,7 @@
    a green `done`). Same RT bar as `tier-refusal`'s `:pure`."
   [store qsym]
   (let [ns-sym   (symbol (namespace qsym))
-        analysis (analyze/analyze (render/render-ns store ns-sym))
+        analysis (analyze/analyze (store.render/render-ns store ns-sym))
         dep-nses (into #{} (mapcat identity) (vals (:dep-ns store)))
         eff      (derive/effectful-vars analysis dep-nses (:dep-pure store))
         nondet   (derive/nondeterministic-vars analysis)]

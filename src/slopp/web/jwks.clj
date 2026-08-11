@@ -16,7 +16,7 @@
   key set it was given rather than one it fetched. That is why the split costs
   nothing at the call sites — the boundary was already in the right place, only
   the filing was wrong."
-  (:require [cheshire.core :as json] [slopp.web.client :as client]))
+  (:require [cheshire.core :as json] [slopp.web.client :as web.client]))
 
 (defn ^:export fetch-jwks!
   "Fetch the issuer's signing keys: GET
@@ -37,7 +37,7 @@
   failing as \"URI with undefined scheme\", three layers from the mistake and
   naming neither the issuer nor the 404. \"Fail loudly at startup\" was already
   the stated intent; this is the first version that does it."
-  ([issuer] (fetch-jwks! issuer client/request))
+  ([issuer] (fetch-jwks! issuer web.client/request))
   ([issuer requester]
    (let [GET   (fn [url]
                  (let [{:http/keys [status body]}

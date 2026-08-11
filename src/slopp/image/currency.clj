@@ -31,19 +31,40 @@
   In-process bookkeeping only — no store, no IO, and deliberately no analysis,
   so the write paths can stamp without taking on a dependency.")
 
-(defonce ^{:private true
-           :doc "`{:seq n :armed? bool :forms {form-id {:hash h :seq n}}}`.
+(defn ^:export new-registry
+  "A fresh, unarmed record for ONE image. `slopp.image.repl/start!` mints one
+  per image and hangs it on the handle.
 
-  `defonce` on purpose: reloading THIS namespace must not erase the record of
-  what the image loaded. An erased registry reads as `:never-loaded` for every
-  form in the store — the loudest possible false alarm, produced by the very
-  mechanism meant to end false alarms.
+  `{:seq n :armed? bool :forms {form-id {:hash h :seq n}}}`.
 
-  `:armed?` is the same concern one level up. A registry that has not been
-  filled by a loader has no record, which is not a record of nothing, so it
-  answers \"not measured\" until `arm!` says otherwise."}
-  stamps
+  This was a process-global `defonce` whose docstring explained that reloading
+  THIS namespace must not erase what the image loaded. That concern belonged
+  to the global and goes with it — a record on a handle is not touched by any
+  namespace reload, and it is garbage when its image is. What replaces the
+  `defonce` argument is a stronger one: a record that cannot outlive its image
+  cannot be attributed to a different one.
+
+  `:armed?` stays, and it guards the same confusion one level up: a record no
+  loader has filled is not a record of nothing, so it answers \"not measured\"
+  until `arm!` says otherwise. Absence of a check and absence of a finding
+  must never share a representation — that is what this whole file is for,
+  and it applies to the file itself."
+  []
   (atom {:seq 0 :armed? false :forms {}}))
+
+(defn- reg
+  "`image`'s own record.
+
+  Throws on a handle that has none rather than stamping nowhere. An image not
+  minted by `repl/start!` is a bug at its construction site, and a silent
+  no-op here would surface much later, somewhere else, as a whole namespace
+  reading `:never-loaded` — which is precisely the shape of failure this
+  registry exists to end."
+  [image]
+  (or (:currency image)
+      (throw (ex-info (str "image has no currency record — every handle from "
+                           "repl/start! carries one")
+                      {:image-keys (vec (keys image))}))))
 
 (defn ^:export hash-of
   "The identity of a form's SOURCE, as one value.
@@ -60,19 +81,26 @@
   (hash (str src)))
 
 (defn ^:export stamp!
-  "Record that `form-id`'s source was just evaluated into the image.
+  "Record that `form-id`'s source was just evaluated into `image`.
 
-  Called by every path that puts a form in the image — the per-form hot-load
+  Called by every path that puts a form in an image — the per-form hot-load
   and the whole-namespace load. Missing one is not a crash but a lie: that
   form reads as `:never-loaded` forever after.
+
+  The image is an ARGUMENT, which is the whole of this record's design. It
+  used to be implied — the record was one process-global atom and the image it
+  meant was the oracle — so a second image had to be kept out by every caller
+  choosing a non-stamping loader. Correctness that depends on picking the
+  right door is not correctness; the door is gone and the subject is named.
 
   The `:seq` bump is what makes the derived-stale class visible. Re-evaluating
   a form moves it to the FRONT of the order, so a `def` that captured its
   value earlier is now behind its own input and can be named — which is
   exactly the case a source hash cannot see, because the stale form's own
-  source never changed."
-  [form-id src]
-  (swap! stamps
+  source never changed. The counter is per-image too: one image's evaluation
+  order says nothing about another's."
+  [image form-id src]
+  (swap! (reg image)
          (fn [s]
            (let [n (inc (:seq s))]
              (-> s
@@ -80,44 +108,50 @@
                  (assoc-in [:forms form-id] {:hash (hash-of src) :seq n}))))))
 
 (defn ^:export stamped
-  "What the image loaded for `form-id` — `{:hash :seq}` — or nil if it never
+  "What `image` loaded for `form-id` — `{:hash :seq}` — or nil if it never
   loaded it. Absence is a real answer here and must stay distinguishable from
   a match, so this returns nil rather than an empty map."
-  [form-id]
-  (get-in @stamps [:forms form-id]))
+  [image form-id]
+  (get-in @(reg image) [:forms form-id]))
 
 (defn forget!
-  "Drop the stamps for `form-ids` — for forms leaving the image (a delete, a
+  "Drop `image`'s stamps for `form-ids` — for forms leaving it (a delete, a
   namespace removed). A stamp that outlives the form it describes would report
   a deleted form as loaded and current."
-  [form-ids]
-  (swap! stamps update :forms #(apply dissoc % form-ids)))
+  [image form-ids]
+  (swap! (reg image) update :forms #(apply dissoc % form-ids)))
 
 (defn ^:export forget-all!
-  "Reset the registry — for a fresh image, where nothing is loaded yet.
+  "Empty `image`'s record — it holds nothing and has not been measured.
 
-  The registry describes ONE image. Carrying stamps across a rebuild would
-  claim the new image holds what the old one did, which is the precise
-  failure this whole mechanism exists to end.
+  ONE legitimate caller: `repl/reset-to-baseline!`, the single point where an
+  image changes TENANT. Everywhere else a record that must be empty belongs to
+  an image that is new, and `repl/start!` already minted it empty.
+
+  That is exactly why a recycled image needs this and a fresh one does not:
+  `reset-to-baseline!` hands the SAME handle to the next tenant, so without
+  this the new tenant inherits stamps for a store it never loaded — the false
+  green this record exists to prevent, arriving through the reuse path rather
+  than through a second image.
 
   Resets `:armed?` too: between the reset and the loader's `arm!` the image is
   genuinely mid-construction, and a comparison run then would report every
   form not yet reached as missing."
-  []
-  (reset! stamps {:seq 0 :forms {} :armed? false}))
+  [image]
+  (reset! (reg image) {:seq 0 :forms {} :armed? false}))
 
 (defn ^:export snapshot
-  "The whole registry as one value: `{form-id {:hash :seq}}` — or **nil** when
-  the registry has not been armed.
+  "`image`'s whole record as one value: `{form-id {:hash :seq}}` — or **nil**
+  when it has not been armed, and nil for a nil image, which mean the same
+  thing: nobody has measured this.
 
   The nil is the important half, and it is this file's own instance of the
   rule it exists to enforce: *an empty record and no record must not share a
-  representation.* A registry is only complete from the moment an image is
-  built with the stamping in place. Before that — a process whose image
-  predates this mechanism, a registry born mid-session — it holds a few forms
-  out of thousands, and comparing that against the store would report the
-  whole codebase as never-loaded. That is the loudest possible false alarm,
-  produced by the machinery meant to end false alarms.
+  representation.* A record is only complete from the moment an image is built
+  with the stamping in place. Before that it holds a few forms out of
+  thousands, and comparing that against the store would report the whole
+  codebase as never-loaded — the loudest possible false alarm, produced by the
+  machinery meant to end false alarms.
 
   So `arm!` is called by the loader once it has stamped everything it loaded,
   and until then this answers \"I have not looked\". `host-brief` and
@@ -126,20 +160,21 @@
   Exists at all so the drift ANALYSIS can be a pure function of (store,
   stamps): the cases worth testing are trivial to state as data and painful to
   stage in a live process."
-  []
-  (let [s @stamps]
-    (when (:armed? s) (:forms s))))
+  [image]
+  (when image
+    (let [s @(reg image)]
+      (when (:armed? s) (:forms s)))))
 
 (defn ^:export arm!
-  "Declare the registry COMPLETE — called by a loader once it has stamped
-  everything it loaded into an image.
+  "Declare `image`'s record COMPLETE — called by a loader once it has stamped
+  everything it loaded into that image.
 
   Before this, `snapshot` answers nil and every currency surface reports
   \"not measured\". After it, an unstamped form is real news. Splitting the
-  two is what keeps a partially-populated registry from reporting a whole
+  two is what keeps a partially-populated record from reporting a whole
   codebase as never-loaded.
 
   Idempotent, and deliberately separate from `stamp!`: arming on the first
-  stamp would make one hot-loaded form arm a registry holding nothing else."
-  []
-  (swap! stamps assoc :armed? true))
+  stamp would make one hot-loaded form arm a record holding nothing else."
+  [image]
+  (swap! (reg image) assoc :armed? true))

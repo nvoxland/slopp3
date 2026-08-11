@@ -13,7 +13,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
             [slopp.ops.external :as external]
-            [slopp.webdev.screen :as scr] [clojure.java.io :as io] [slopp.kernel.boot :as boot] [rewrite-clj.parser :as p] [slopp.store :as store] [rewrite-clj.node :as n]))
+            [slopp.webdev.screen :as webdev.screen] [clojure.java.io :as io] [slopp.kernel.boot :as boot] [rewrite-clj.parser :as p] [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (deftest ^:external an-agent-can-look-at-a-screen-without-writing-code
   ;; The end of the loop this feature exists to close: a real store, a real
@@ -98,7 +98,7 @@
           (ops/restart! sess)
 
           (testing "a bare look renders the v2 screen, and names the entry it used"
-            (let [r (scr/screen! sess)]
+            (let [r (webdev.screen/screen! sess)]
               (is (nil? (:error r)) (pr-str r))
               (is (str/includes? (str (:screen r)) "<h1>Demo</h1>"))
               (is (str/includes? (str (:screen r)) "<input placeholder=\"Filter\"")
@@ -111,7 +111,7 @@
                   "a screen is only as trustworthy as the app it came from")))
 
           (testing "a script drives the app's OWN handlers, in order"
-            (let [r (scr/screen! sess
+            (let [r (webdev.screen/screen! sess
                                  :steps [{:fill "Filter" :value "web"}
                                          {:click "Add"}
                                          {:click "Add"}]
@@ -127,7 +127,7 @@
             ;; script above left n=2 and the trace continues from there. That
             ;; persistence is the app's design, not the tool's; a page that
             ;; builds fresh state in its ^:web/page fn starts clean each open.
-            (let [r (scr/screen! sess
+            (let [r (webdev.screen/screen! sess
                                  :steps [{:fill "Filter" :value "web"} {:click "Add"}]
                                  :region "main" :detail "prose" :trace true)]
               (is (nil? (:error r)) (pr-str r))
@@ -139,7 +139,7 @@
             (let [s2 (external/open!)]
               (try
                 (ops/ingest! s2 'plain.core "(ns plain.core)\n\n(defn f \"F.\" [x] x)\n")
-                (is (str/includes? (str (:error (scr/screen! s2))) "no ^:web/page")
+                (is (str/includes? (str (:error (webdev.screen/screen! s2))) "no ^:web/page")
                     "an ERROR, not an empty screen — a blank answer reads as a broken app")
                 (finally (ops/close! s2)))))
           (finally (ops/close! sess)))))))
@@ -152,12 +152,12 @@
   ;; answer for the input. None of these should reach the image at all.
   (let [dummy (atom {})]
     (testing "a detail the tool does not speak is refused, naming the choices"
-      (let [r (scr/screen! dummy :detail "porse")]
+      (let [r (webdev.screen/screen! dummy :detail "porse")]
         (is (some? (:error r)))
         (is (str/includes? (:error r) "structured"))
         (is (str/includes? (:error r) "porse"))))
     (testing "steps that are not an array of step maps are refused before the image"
-      (let [r (scr/screen! dummy :steps "visit /store")]
+      (let [r (webdev.screen/screen! dummy :steps "visit /store")]
         (is (some? (:error r)))
         (is (str/includes? (:error r) "steps"))))
     (testing "the generated driver PARSES as one balanced form, in every shape"
@@ -169,20 +169,20 @@
       (doseq [opts [{:region nil :detail :structured :list-head 3 :trace false}
                     {:region "main" :detail :prose :list-head 3 :trace true}
                     {:region nil :detail :structured :list-head nil :trace true}]]
-        (let [code (scr/drive-code [{:visit "/x"} {:click "Go"}] opts)
+        (let [code (webdev.screen/drive-code [{:visit "/x"} {:click "Go"}] opts)
               parsed (try (p/parse-string code) (catch Throwable e e))]
           (is (not (instance? Throwable parsed))
               (str (pr-str opts) " — " (when (instance? Throwable parsed)
                                          (ex-message parsed)))))))
     (testing "the cap and the conditional cause separator ride the generated code"
-      (let [code (scr/drive-code [{:visit "/x"}]
+      (let [code (webdev.screen/drive-code [{:visit "/x"}]
                                  {:region nil :detail :structured
                                   :list-head 3 :trace false})]
         (is (str/includes? code ":list-head 3"))
         (is (str/includes? code "cond->")
             "a message-less cause must not render a trailing colon — parity with read.query/cause-chain")))
     (testing "trace drives ONE session a step at a time through the one interpreter"
-      (let [code (scr/drive-code [{:visit "/x"} {:click "Go"}]
+      (let [code (webdev.screen/drive-code [{:visit "/x"} {:click "Go"}]
                                  {:region nil :detail :structured
                                   :list-head 3 :trace true})]
         (is (str/includes? code ":screens"))

@@ -13,9 +13,9 @@
   a claim about the wrong code."
   (:require [rewrite-clj.node :as n]
             [slopp.edit :as edit]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.image.currency :as currency]))
+            [slopp.store :as store] [slopp.image.currency :as image.currency]))
 
 (defn ^:export hot-load-form!
   "Hot-reload one form (from a store VALUE — commit only on success, S1) into
@@ -37,14 +37,14 @@
                   (first (keep-indexed
                           (fn [i e] (when (= form-id (:id e)) i)) elems)))]
     (when idx
-      (let [[row _] (nth (render/element-offsets store ns-sym) idx)
+      (let [[row _] (nth (store.render/element-offsets store ns-sym) idx)
             src     (n/string (:node (nth elems idx)))
             padded  (if (>= row 2)
                       (str "(in-ns '" ns-sym ")\n"
                            (apply str (repeat (- row 2) "\n")) src)
                       (str "(in-ns '" ns-sym ") " src))
-            err     (:err (repl/load-checked! image padded (render/ns-path ns-sym)))]
-        (when-not err (currency/stamp! form-id src))
+            err     (:err (repl/load-checked! image padded (store.render/ns-path ns-sym)))]
+        (when-not err (image.currency/stamp! image form-id src))
         err))))
 
 (defn ^:export apply-replace!

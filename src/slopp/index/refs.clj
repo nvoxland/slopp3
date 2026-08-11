@@ -5,7 +5,7 @@
   Derived and content-memoized, never stored: references are an index of
   source, and the journal owes them no consistency."
   (:require [rewrite-clj.node :as n]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.store :as store] [slopp.cache :as cache] [slopp.index.analyze :as analyze] [clojure.string :as str]))
 
 (defn ^:export walk-pruned
@@ -44,7 +44,7 @@
    (fn [nsx]
      (let [fid-of (into {} (keep (fn [e] (when (:name e) [(:name e) (:id e)])))
                         (store/forms st nsx))
-           usages (:var-usages (analyze/analyze (render/render-ns st nsx)))
+           usages (:var-usages (analyze/analyze (store.render/render-ns st nsx)))
            kondo  (for [u usages
                         :when (and (:name u) (:from-var u)
                                    (contains? known (:to u))
@@ -62,7 +62,7 @@
                         :when (and (:name u) (nil? (:from-var u))
                                    (contains? known (:to u))
                                    (:row u))
-                        :let [owner (render/owner-form st nsx (:row u) (:col u))]
+                        :let [owner (store.render/owner-form st nsx (:row u) (:col u))]
                         :when (and owner
                                    (not (and (= nsx (:to u))
                                              (some? (:name owner))

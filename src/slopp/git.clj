@@ -28,7 +28,7 @@
             [next.jdbc :as jdbc]
             [slopp.build :as build]
             [slopp.store.db :as db]
-            [slopp.store.render :as render] [slopp.store :as store])
+            [slopp.store.render :as store.render] [slopp.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.time Instant ZoneOffset]
            [org.eclipse.jgit.dircache DirCache DirCacheEntry]
@@ -301,10 +301,10 @@
         ;; way build! does, because CI jars a checkout of this tree.
         tree-of  (fn [st]
                    (into (sorted-map)
-                         (map (fn [n] [(render/source-path n
+                         (map (fn [n] [(store.render/source-path n
                                                            (store/platform-for st n)
                                                            (store/role-for st n))
-                                       (render/render-ns st n)]))
+                                       (store.render/render-ns st n)]))
                          (keys (:namespaces st))))]
     (:parent
      (reduce

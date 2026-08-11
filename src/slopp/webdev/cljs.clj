@@ -19,7 +19,7 @@
   cherry/squint slot in as new methods without re-authoring a single form."
   (:require [clojure.edn :as edn]
             [clojure.string :as str]
-            [slopp.store.render :as render] [slopp.build :as build] [slopp.ops.external :as external] [slopp.ops.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.ops.engine :as session] [clojure.java.io :as io] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as client] [slopp.edit.web :as web]))
+            [slopp.store.render :as store.render] [slopp.build :as build] [slopp.ops.external :as external] [slopp.ops.testrun :as testrun] [slopp.image.repl :as repl] [slopp.store :as store] [slopp.ops.engine :as engine] [clojure.java.io :as io] [slopp.edit :as edit] [slopp.store.artifacts :as artifacts] [slopp.web.client :as web.client] [slopp.edit.web :as edit.web]))
 
 (def result-marker
   "The line prefix the cljs compile runner prints its EDN summary behind, so the
@@ -49,8 +49,8 @@
          :let [nsx  (some-> (:ns w) symbol)
                row  (:line w)
                ok?  (boolean (and nsx row (contains? (:namespaces store) nsx)))
-               e    (when ok? (render/owner-form store nsx row 1))
-               at   (when ok? (nth (str/split-lines (render/render-ns store nsx))
+               e    (when ok? (store.render/owner-form store nsx row 1))
+               at   (when ok? (nth (str/split-lines (store.render/render-ns store nsx))
                                    (dec row) nil))]]
      (cond-> {:type (:type w) :message (:message w)}
        e  (assoc :form (symbol (str nsx) (str (or (:name e) (:id e)))))
@@ -133,8 +133,8 @@
                       (str/replace "_" "-")
                       symbol))
         ok? (boolean (and nsx line (contains? (:namespaces store) nsx)))
-        e   (when ok? (render/owner-form store nsx line 1))
-        at  (when ok? (nth (str/split-lines (render/render-ns store nsx))
+        e   (when ok? (store.render/owner-form store nsx line 1))
+        at  (when ok? (nth (str/split-lines (store.render/render-ns store nsx))
                            (dec line) nil))]
     (cond-> {:error (-> (str msg)
                         ;; the compiler names the materialization dir, often
@@ -255,7 +255,7 @@
                     :request  req
                     :response resp})))))
    {:wrappers [] :problems []}
-   (web/web-endpoint-rows store)))
+   (edit.web/web-endpoint-rows store)))
 
 (defn ^:private schema-form
   "The cljs code for a resolved schema ref: the fully-qualified var symbol (a
@@ -544,7 +544,7 @@
    part worth testing is the paragraph above: that what comes back is READ and
    not evaluated, and that a non-200 fails rather than being parsed as if it
    were a contract. Neither needs a socket."
-  ([url] (fetch-contract url client/request))
+  ([url] (fetch-contract url web.client/request))
   ([url requester]
    (let [{:http/keys [status body]}
          (requester {:http/method  :get
@@ -652,7 +652,7 @@
                                               {:kind :build :tool "compile_client"}
                                               :content-type "application/javascript")]
                     (let [prior (get-in @session [:store :artifacts output :sha])]
-                      (session/commit-appended!
+                      (engine/commit-appended!
                        session
                        (fn [s] (first (store/record-artifact s output entry)))
                        [])
@@ -829,7 +829,7 @@
         (seq problems) (assoc :problems problems))
       (let [csrc (render-contracts-ns cns defs)
             src  (render-client-ns target wrappers)]
-        (session/commit-appended!
+        (engine/commit-appended!
          session
          (fn [s]
            (let [s1 (first (store/record-module-platform s (str cns) :cljc))
@@ -900,7 +900,7 @@
                :note "no shippable endpoints — nothing generated"}
         (seq problems) (assoc :problems problems))
       (let [src (render-client-ns target wrappers)]
-        (session/commit-appended!
+        (engine/commit-appended!
          session
          (fn [s]
            (let [s1 (first (store/record-module-platform s (str target) :cljs))
@@ -908,7 +908,7 @@
              ;; record the contract fingerprint so the done-advisory can detect
              ;; endpoint drift and nudge a regenerate (the "explicit" safety net)
              (first (store/record-config-put s2 "client" :manifest "generated-sig"
-                                             (web/client-signature st0)))))
+                                             (edit.web/client-signature st0)))))
          [target])
         (let [recompiled (maybe-recompile-client! session target)
               others     (other-generated-clients (:store @session) target)]
@@ -928,8 +928,8 @@
                               " you mean to keep."))
             recompiled     (merge recompiled)))))))
 
-(defmethod session/after-write! :cljs [session ns-sym]
+(defmethod engine/after-write! :cljs [session ns-sym]
   (maybe-recompile-client! session ns-sym))
 
-(defmethod session/after-write! :cljc [session ns-sym]
+(defmethod engine/after-write! :cljc [session ns-sym]
   (maybe-recompile-client! session ns-sym))

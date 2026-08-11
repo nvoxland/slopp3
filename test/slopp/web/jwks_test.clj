@@ -12,7 +12,7 @@
   static keys and never a network."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.web.jwks :as jwks]
-            [slopp.web.server.jdk :as jdk] [slopp.web.client :as client] [cheshire.core :as json]))
+            [slopp.web.server.jdk :as jdk] [slopp.web.client :as web.client] [cheshire.core :as json]))
 
 (deftest ^:external the-two-hop-discovery-lands-on-the-issuers-keys
   ;; fetch-jwks! shipped with zero coverage — ^:unused-ok, because slopp's own
@@ -50,7 +50,7 @@
   ;; somewhere a guesser would never look, and only a real chain finds it.
   (let [issuer  "https://idp.test"
         keys-at (fn [path]
-                  (client/fake-requester
+                  (web.client/fake-requester
                    issuer
                    {[:get "/.well-known/openid-configuration"]
                     (fn [_] {:status 200
@@ -69,10 +69,10 @@
               mistake"
       (is (thrown-with-msg? clojure.lang.ExceptionInfo #"404"
                             (jwks/fetch-jwks! issuer
-                                              (client/fake-requester issuer {})))))
+                                              (web.client/fake-requester issuer {})))))
     (testing "and so does a discovery document naming a jwks_uri the issuer does
               not serve — the failure names the hop that failed"
-      (let [dangling (client/fake-requester
+      (let [dangling (web.client/fake-requester
                       issuer
                       {[:get "/.well-known/openid-configuration"]
                        (fn [_] {:status 200

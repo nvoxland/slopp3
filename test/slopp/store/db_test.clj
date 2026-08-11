@@ -14,7 +14,7 @@
   previous milestone — is most of what is tested here."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.store.db :as db]
             [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.java.io :as io] [next.jdbc :as jdbc] [rewrite-clj.node :as n] [slopp.read.history :as history])
   (:import [java.nio.file Files]
@@ -41,7 +41,7 @@
           ;; against the STORE's render, not the raw source: spacing is normalized
           ;; at ingest now, so comparing to `src` would be testing the
           ;; renderer's retired byte-exact contract rather than persistence
-          (is (= (render/render-ns s 'ns) (render/render-ns loaded 'ns))
+          (is (= (store.render/render-ns s 'ns) (store.render/render-ns loaded 'ns))
               (str "render round-trip failed for: " (pr-str src)))
           (is (= (store/deltas s) (store/deltas loaded)))
           (is (= (map :id (store/forms s 'ns)) (map :id (store/forms loaded 'ns))))
@@ -238,8 +238,8 @@
         (testing "the comment comes back attached to its form"
           (is (= ";; --- section divider ---\n;; second line" (:comment f-el))))
         (testing "and renders identically to before the round trip"
-          (is (= (render/render-ns st' 'cmt.core)
-                 (render/render-ns back 'cmt.core)))))
+          (is (= (store.render/render-ns st' 'cmt.core)
+                 (store.render/render-ns back 'cmt.core)))))
       (finally (.close conn)))))
 
 (deftest loading-folds-a-positional-comment-onto-the-form-it-describes
@@ -272,10 +272,10 @@
                         elems)))
         (testing "rendering keeps the gap ABOVE the comment and drops the one below"
           (is (= "(ns fc.core)\n\n;; --- section ---\n;; second line\n(defn f [] 1)\n"
-                 (render/render-ns back 'fc.core))))
+                 (store.render/render-ns back 'fc.core))))
         (testing "it is idempotent — loading again changes nothing"
-          (is (= (render/render-ns back 'fc.core)
-                 (render/render-ns (db/load-store conn) 'fc.core)))))
+          (is (= (store.render/render-ns back 'fc.core)
+                 (store.render/render-ns (db/load-store conn) 'fc.core)))))
       (finally (.close conn)))))
 
 (deftest ^:external a-new-store-dir-ignores-itself

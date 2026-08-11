@@ -17,7 +17,7 @@
   needs to know this port at all, because the address a human remembers
   belongs to the HUB, which is its own project (`slopp-ui`) and proxies here.
   `ui_serve {port}` is still an explicit override for one run."
-  (:require [slopp.web :as web]
+  (:require [slopp.web :as slopp.web]
             [slopp.api.reads] [slopp.api.endpoints]))
 
 (defonce ^:private current
@@ -35,7 +35,7 @@
   Idempotent, because eviction and an explicit stop are the same act."
   []
   (when-let [srv (:server @current)]
-    (web/stop! srv)
+    (slopp.web/stop! srv)
     (reset! current nil)
     true))
 
@@ -142,7 +142,7 @@
   [session port]
   (stop!)
   (try
-    (let [srv (web/serve! {:web/namespaces served-namespaces
+    (let [srv (slopp.web/serve! {:web/namespaces served-namespaces
                            :web/host "127.0.0.1"
                            :web/port port
                            :web/perform-ctx {:session session
@@ -157,6 +157,6 @@
       ;; listeners doing that differently. What stays here is the part that is
       ;; genuinely this listener's: it REPORTS rather than throws, because the
       ;; caller is a tool result.
-      (if-let [d (web/bind-diagnosis port e)]
+      (if-let [d (slopp.web/bind-diagnosis port e)]
         {:error d :port port}
         (throw e)))))

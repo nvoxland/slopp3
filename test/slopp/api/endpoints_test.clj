@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.api.endpoints]
             [slopp.api.contracts :as contracts]
-            [slopp.web :as web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs] [slopp.api.model :as model] [slopp.read.orient :as orient]))
+            [slopp.web :as slopp.web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs] [slopp.api.model :as model] [slopp.read.orient :as orient]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -31,9 +31,9 @@
         ;; the served list, not a hand-picked subset: the reads these
         ;; endpoints declare are performed by slopp.api.reads, so a context
         ;; holding only slopp.api.endpoints answers 500 and tests nothing real
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        GET (fn [uri] (web/handle! ctx {:request-method :get :uri uri}))]
+        GET (fn [uri] (slopp.web/handle! ctx {:request-method :get :uri uri}))]
     (testing "GET /api/namespaces — every namespace, sorted, as JSON data"
       ;; 2, not 1: the `ns` form is a top-level form in the store like any
       ;; other, which is slopp's model rather than an off-by-one. /store has
@@ -138,9 +138,9 @@
     ;; a list missing either half fails here rather than in a browser — and
     ;; missing the performer half is a 500, not a 404
     (let [st  (store/ingest (store/empty-store) 'demo.core "(ns demo.core)\n")
-          ctx (web/context {:web/namespaces server/served-namespaces
+          ctx (slopp.web/context {:web/namespaces server/served-namespaces
                             :web/perform-ctx {:session (atom {:store st})}})
-          get* (fn [uri] (:status (web/handle! ctx {:request-method :get
+          get* (fn [uri] (:status (slopp.web/handle! ctx {:request-method :get
                                                     :uri uri})))]
       (is (= 200 (get* "/api/namespaces")))
       (is (= 200 (get* "/api/contracts")))
@@ -171,7 +171,7 @@
                         ;; that half is where the wire types actually bite
                         "(defn greet [x] (hello x))\n")
                    :prompt "the demo form")
-      (let [ctx (web/context {:web/namespaces server/served-namespaces
+      (let [ctx (slopp.web/context {:web/namespaces server/served-namespaces
                               :web/perform-ctx {:session sess}})
             ;; THROUGH JSON, deliberately. In-image `handle!` hands back the
             ;; body as Clojure DATA — the adapter is what serializes — so a
@@ -186,7 +186,7 @@
             ;; entirely the wrong reason: it never reached the handler.
             GET (fn [uri]
                   (let [[path qs] (str/split uri #"\?" 2)
-                        r (web/handle! ctx (cond-> {:request-method :get :uri path}
+                        r (slopp.web/handle! ctx (cond-> {:request-method :get :uri path}
                                              qs (assoc :query-string qs)))]
                     (cond-> r
                       (map? (:body r))
@@ -235,9 +235,9 @@
                 (store/ingest 'demo.b.util
                               (str "(ns demo.b.util (:require [demo.a.core :as c]))\n\n"
                                    "(defn helper [] (c/hello))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        res (web/handle! ctx {:request-method :get :uri "/api/modules"})]
+        res (slopp.web/handle! ctx {:request-method :get :uri "/api/modules"})]
     (testing "the route is served and its response satisfies the declared contract"
       ;; a violation fails HERE, at the boundary, rather than rendering wrong
       (is (= 200 (:status res))))
@@ -262,10 +262,10 @@
   ;; that matters is not "some document is served" but "the schema published
   ;; for an endpoint IS the var that endpoint declares" — anything weaker and a
   ;; generated client would validate against a shape the server never promised.
-  (let [ctx (web/context {:web/namespaces server/served-namespaces
+  (let [ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store (store/empty-store)})
                                             :served-namespaces server/served-namespaces}})
-        r   (web/handle! ctx {:request-method :get :uri "/api/contracts"})
+        r   (slopp.web/handle! ctx {:request-method :get :uri "/api/contracts"})
         doc (edn/read-string (:body r))
         by-path (into {} (map (juxt :path identity)) (:endpoints doc))]
 
@@ -365,9 +365,9 @@
                                "(defn- helper [x] x)\n\n"
                                "(defn ^{:malli/schema [:=> [:cat :int] :int]} inc-it\n"
                                "  [x] (inc x))\n"))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.shape"})
+        r    (slopp.web/handle! ctx {:request-method :get :uri "/api/ns/demo.shape"})
         rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
     (is (= 200 (:status r)))
     (is (m/validate contracts/ns-outline (:body r))
@@ -419,9 +419,9 @@
                                    "  (:require [clojure.test :refer [deftest is]]\n"
                                    "            [demo.rank :as rank]))\n\n"
                                    "(deftest pluralises (is (= \"rows\" (rank/plural 2 \"row\"))))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.rank"})
+        r    (slopp.web/handle! ctx {:request-method :get :uri "/api/ns/demo.rank"})
         rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
     (is (= 200 (:status r)))
     (is (m/validate contracts/ns-outline (:body r))
@@ -469,7 +469,7 @@
                 (store/record-module-tier "demo.core" :pure)
                 first)
         ask (fn [nsx]
-              (web/handle! (web/context
+              (slopp.web/handle! (slopp.web/context
                             {:web/namespaces server/served-namespaces
                              :web/perform-ctx {:session (atom {:store st})}})
                            {:request-method :get :uri (str "/api/ns/" nsx)}))]
@@ -502,9 +502,9 @@
                               (str "(ns demo.addr)\n\n"
                                    "(defn one [x] x)\n\n"
                                    "(defn two [x] (one x))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        r    (web/handle! ctx {:request-method :get :uri "/api/ns/demo.addr"})
+        r    (slopp.web/handle! ctx {:request-method :get :uri "/api/ns/demo.addr"})
         rows (into {} (map (juxt :name identity)) (:forms (:body r)))]
     (is (= 200 (:status r)))
     (is (m/validate contracts/ns-outline (:body r))
@@ -550,9 +550,9 @@
                                    "  (:require [clojure.test :refer [deftest is]]\n"
                                    "            [sh.mod.core :as core]))\n"
                                    "(deftest base-t (is (= 1 (core/base 1))))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        r   (web/handle! ctx {:request-method :get :uri "/api/module/sh.mod"})
+        r   (slopp.web/handle! ctx {:request-method :get :uri "/api/module/sh.mod"})
         b   (:body r)
         nss (into {} (map (juxt :ns identity)) (:namespaces b))]
     (is (= 200 (:status r)) (pr-str r))
@@ -579,7 +579,7 @@
       (is (= [{:from "out.app" :from-module "out.app" :to "sh.mod.door"}]
              (:in (:boundary b)))))
     (testing "a module with no production namespaces is a 404, not an empty frame"
-      (let [r (web/handle! ctx {:request-method :get :uri "/api/module/no.such"})]
+      (let [r (slopp.web/handle! ctx {:request-method :get :uri "/api/module/no.such"})]
         (is (= 404 (:status r)))
         (is (not (m/validate contracts/module-detail (:body r))))))))
 
@@ -598,10 +598,10 @@
                 (store/ingest 'sym.caller
                               (str "(ns sym.caller (:require [sym.core :as core]))\n"
                                    "(defn ^{:why \"drives base\"} go \"Goes.\" [x] (core/base x))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
         fid (:id (store/form-named st 'sym.core 'base))
-        r   (web/handle! ctx {:request-method :get :uri (str "/api/form/" fid)})
+        r   (slopp.web/handle! ctx {:request-method :get :uri (str "/api/form/" fid)})
         b   (:body r)
         clr (first (:forms (first (:callers b))))]
     (is (= 200 (:status r)) (pr-str r))
@@ -652,10 +652,10 @@
                 (store/ingest 'wd.top
                               (str "(ns wd.top (:require [wd.mid :as mid]))\n\n"
                                    "(defn go [x] (mid/a x))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
         fid (:id (store/form-named st 'wd.top 'go))
-        GET (fn [q] (web/handle! ctx {:request-method :get
+        GET (fn [q] (slopp.web/handle! ctx {:request-method :get
                                       :uri (str "/api/form/" fid)
                                       :query-string q}))]
     (testing "no depth — unchanged, and that is the compatibility promise"
@@ -688,11 +688,11 @@
                               (str "(ns gp.mod.a-test (:require [clojure.test :refer [deftest is]]\n"
                                    "                            [gp.mod.a :as a]))\n"
                                    "(deftest f-t (is (= 1 (a/f 1))))\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        mods (:body (web/handle! ctx {:request-method :get :uri "/api/modules"}))
+        mods (:body (slopp.web/handle! ctx {:request-method :get :uri "/api/modules"}))
         row  (first (filter #(= "gp.mod" (:module %)) (:modules mods)))
-        det  (:body (web/handle! ctx {:request-method :get :uri "/api/module/gp.mod"}))]
+        det  (:body (slopp.web/handle! ctx {:request-method :get :uri "/api/module/gp.mod"}))]
     (is (some? row) (pr-str (map :module (:modules mods))))
     (testing "the row's counts are the sum over the namespaces it lists"
       ;; a  → ns documented, f documented        → 2 forms, 0 no-doc
@@ -738,9 +738,9 @@
                               (str "(ns inv.core \"Invoice core.\")\n\n"
                                    "(defn invoice \"Makes one.\" [x] x)\n\n"
                                    "(defn total \"Sums an invoice.\" [xs] xs)\n")))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        GET (fn [q] (web/handle! ctx {:request-method :get
+        GET (fn [q] (slopp.web/handle! ctx {:request-method :get
                                       :uri "/api/search"
                                       :query-string q}))
         ok? (fn [b] (is (m/validate contracts/search-results b)
@@ -809,9 +809,9 @@
   ;; carries callers, callees and warranty.
   (let [st  (store/ingest (store/empty-store) 'src.demo
                           "(ns src.demo)\n\n(defn rate [kg] (* kg 2))\n")
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st})}})
-        r   (web/handle! ctx {:request-method :get :uri "/api/source/src.demo/rate"})
+        r   (slopp.web/handle! ctx {:request-method :get :uri "/api/source/src.demo/rate"})
         b   (:body r)]
     (testing "the form's own id comes back with its source"
       (is (= 200 (:status r)) (pr-str r))
@@ -825,7 +825,7 @@
     (testing "and it validates against the contract that declares it"
       (is (m/validate contracts/form-source b) (pr-str b)))
     (testing "an unknown form is still a 404, not a body with a nil id"
-      (is (= 404 (:status (web/handle! ctx {:request-method :get
+      (is (= 404 (:status (slopp.web/handle! ctx {:request-method :get
                                             :uri "/api/source/src.demo/nope"})))))))
 
 (deftest every-key-a-response-SENDS-is-a-key-its-contract-DECLARES
@@ -843,9 +843,9 @@
   ;; which is why this is a guard and not a project.
   (let [st  (-> (store/empty-store)
                 (store/ingest 'ek.core "(ns ek.core)\n\n(defn rate [kg] (* kg 2))\n"))
-        ctx (web/context {:web/namespaces server/served-namespaces
+        ctx (slopp.web/context {:web/namespaces server/served-namespaces
                           :web/perform-ctx {:session (atom {:store st :test-map {}})}})
-        get* (fn [uri] (:body (web/handle! ctx {:request-method :get :uri uri})))
+        get* (fn [uri] (:body (slopp.web/handle! ctx {:request-method :get :uri uri})))
         ;; walk a value against its schema, collecting keys the schema does not
         ;; name. Only descends where the schema does, so an undeclared subtree
         ;; is reported once at its own key rather than as everything inside it.

@@ -6,7 +6,7 @@
   (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
-            [slopp.git :as git] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string])
+            [slopp.git :as git] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
            [org.eclipse.jgit.api Git]
@@ -44,7 +44,7 @@
       (let [ctx (git/open-ctx! dir)]
         (try
           (testing "push lands the milestone tip in the bare remote"
-            (let [r (client/push-to-remote! ctx bare)]
+            (let [r (git.client/push-to-remote! ctx bare)]
               (is (nil? (:error r)) (pr-str r))
               (is (string? (:pushed r)))
               (let [remote (-> (FileRepositoryBuilder.)
@@ -61,13 +61,13 @@
                   (finally (.close remote))))))
 
           (testing "re-push is a clean no-op (up to date, not an error)"
-            (let [r (client/push-to-remote! ctx bare)]
+            (let [r (git.client/push-to-remote! ctx bare)]
               (is (nil? (:error r)) (pr-str r))))
 
           (testing "fetch reads the tip + tree back into a fresh in-memory repo"
             (let [repo (git/open-repo! nil)]
               (try
-                (let [{:keys [tip]} (client/fetch-remote! repo bare)]
+                (let [{:keys [tip]} (git.client/fetch-remote! repo bare)]
                   (is (string? tip))
                   (let [tree (git/tree-at repo tip)]
                     (is (= (query/query-source sess 'gc.core)
@@ -86,7 +86,7 @@
         bare (bare-repo! (str (temp-dir) "/remote.git"))
         ctx  (git/open-ctx! dir)]
     (try
-      (let [r (client/push-to-remote! ctx bare)]
+      (let [r (git.client/push-to-remote! ctx bare)]
         (is (:error r)))
       (finally
         (git/close-ctx! ctx)
@@ -103,7 +103,7 @@
         ctx (git/open-ctx! dir)]
     (try
       (let [url (str "http://127.0.0.1:" (.getLocalPort srv) "/dead.git")
-            f   (future (try (client/fetch-remote! (:slopp.git/repo ctx) url :timeout 2)
+            f   (future (try (git.client/fetch-remote! (:slopp.git/repo ctx) url :timeout 2)
                              (catch Exception e {:threw (str e)})))
             r   (deref f 20000 ::wedged)]
         (is (not= ::wedged r)
@@ -131,13 +131,13 @@
   ;; correct one a sibling tool already produces. A VAGUE error would have sent
   ;; them to git_push in one step.
   (testing "an external push keeps its remedy — pulling is the right advice there"
-    (let [m (client/push-refusal "REJECTED_NONFASTFORWARD" nil
+    (let [m (git.client/push-refusal "REJECTED_NONFASTFORWARD" nil
                                  {:dst "refs/heads/main"})]
       (is (clojure.string/includes? m "remote"))
       (is (clojure.string/includes? m "pull"))))
 
   (testing "a LOCAL mirror names the ref and does not suggest the impossible"
-    (let [m (client/push-refusal "REJECTED_NONFASTFORWARD" nil
+    (let [m (git.client/push-refusal "REJECTED_NONFASTFORWARD" nil
                                  {:mirror? true :dst "refs/heads/slopp/main"})]
       (is (clojure.string/includes? m "refs/heads/slopp/main")
           "the ref is the whole finding — a reader has to know WHICH branch diverged")
@@ -147,7 +147,7 @@
           "and it says the mirror is DERIVED, which makes resetting it a decision rather than data loss")))
 
   (testing "any other status still travels verbatim rather than being interpreted"
-    (let [m (client/push-refusal "REJECTED_OTHER_REASON" "hook declined"
+    (let [m (git.client/push-refusal "REJECTED_OTHER_REASON" "hook declined"
                                  {:mirror? true :dst "refs/heads/slopp/main"})]
       (is (clojure.string/includes? m "REJECTED_OTHER_REASON"))
       (is (clojure.string/includes? m "hook declined")

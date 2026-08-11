@@ -20,11 +20,11 @@
   made `slopp.edit.modules` a misnomer: 45 forms under a name that described
   a third of them."
   (:require [clojure.string :as str]
-            [slopp.edit.modules :as modules]
+            [slopp.edit.modules :as edit.modules]
             [slopp.edit.tiers :as tiers]
-            [slopp.edit.web :as web]
+            [slopp.edit.web :as edit.web]
             [slopp.store :as store]
-            [slopp.store.render :as render]))
+            [slopp.store.render :as store.render]))
 
 (defn ^:export rule-severity
   "The effective severity of rule `rule-key` for this store: a per-store OVERRIDE
@@ -53,9 +53,9 @@
   per-store `rule-severity` (`:off` skips it) is consulted by `gate-refusal`.
   The web-* gates (D-web) are additionally inert until the store opts into
   HTTP (`web-enabled?`)."
-  [#'modules/module-refusal #'tiers/tier-refusal #'modules/schema-refusal #'modules/namespaced-keys-refusal #'web/web-generated-ns
-   #'web/web-auth-refusal #'web/web-endpoint-schema #'web/web-route-collision #'web/web-page-unreachable #'web/web-undeclared-effect #'web/web-undeclared-context
-   #'web/web-unsafe-get #'web/web-unknown-group #'web/web-react-attrs])
+  [#'edit.modules/module-refusal #'tiers/tier-refusal #'edit.modules/schema-refusal #'edit.modules/namespaced-keys-refusal #'edit.web/web-generated-ns
+   #'edit.web/web-auth-refusal #'edit.web/web-endpoint-schema #'edit.web/web-route-collision #'edit.web/web-page-unreachable #'edit.web/web-undeclared-effect #'edit.web/web-undeclared-context
+   #'edit.web/web-unsafe-get #'edit.web/web-unknown-group #'edit.web/web-react-attrs])
 
 (defn ^:export write-gate-namespaces
   "`{rule-key defining-ns-sym}` for the registered per-form write gates — where
@@ -137,7 +137,7 @@
               (let [sev   (rule-severity candidate (:name (meta gate))
                                          (:rule/severity (meta gate) :refuse))
                     skip? (or (and (= :production (:rule/applies-to (meta gate) :all))
-                                   (render/test-ns? ns-sym))
+                                   (store.render/test-ns? ns-sym))
                               (not (rule-applies-to-platform?
                                     (:rule/platform (meta gate) :everywhere)
                                     platform)))]

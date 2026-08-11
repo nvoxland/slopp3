@@ -18,7 +18,7 @@
             [slopp.ops :as ops]
             [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as kernel]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity]))
 
 (defn path-ns
   "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
@@ -82,7 +82,7 @@
                        " working tree).")}
 
           :else
-          (let [r     (client/push-to-remote! ctx target
+          (let [r     (git.client/push-to-remote! ctx target
                                            :token token :remote-branch rbranch)
                 saved (db/get-meta conn "git-remote")]
             ;; save the FIRST url as the default; a one-off push elsewhere
@@ -123,7 +123,7 @@
     (let [repo (git/open-repo! nil)]
       (try
         (let [want (or branch "slopp/main")
-              {:keys [tip]} (client/fetch-remote! repo url :token token :branch want)
+              {:keys [tip]} (git.client/fetch-remote! repo url :token token :branch want)
               used want]
           (if-not tip
             {:error (str "remote has no " want " branch to clone: " url)}
@@ -406,7 +406,7 @@
             (if (str/blank? (str url))
               {:error "no remote configured — git_push with :url (or clone) first"}
               (let [ours (get-in (git/ensure-projected! ctx) [:refs "main"])
-                    tip  (:tip (client/fetch-remote! (:slopp.git/repo ctx) url :token token
+                    tip  (:tip (git.client/fetch-remote! (:slopp.git/repo ctx) url :token token
                                               :branch (str "slopp/" (:branch @session "main"))))]
                 (cond
                   (nil? tip)   {:error (str "remote has no slopp/"
@@ -498,7 +498,7 @@
         (if (= mirror (checked-out-branch (str dir)))
           {:error (str "refs/heads/" mirror " is checked out — cannot mirror onto"
                        " a live working tree")}
-          (assoc (client/push-to-remote! ctx (str dir)
+          (assoc (git.client/push-to-remote! ctx (str dir)
                                          :branch line
                                          :remote-branch mirror
                                          ;; this push never leaves the repo —
@@ -547,7 +547,7 @@
                            (str/join ", " (map #(str "slopp/" %) missing))
                            " — a commit_point creates it")}
               (let [res (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
-                          (when-let [creds (client/remote-credentials token)]
+                          (when-let [creds (git.client/remote-credentials token)]
                             (.setCredentialsProvider tn creds))
                           (.push tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE updates))
                     rows (vec (for [^org.eclipse.jgit.transport.RemoteRefUpdate u
@@ -588,7 +588,7 @@
                               (str "refs/heads/slopp/" % ":refs/heads/slopp/" %))
                             branches)]
             (with-open [tn (org.eclipse.jgit.transport.Transport/open repo uri)]
-              (when-let [creds (client/remote-credentials token)]
+              (when-let [creds (git.client/remote-credentials token)]
                 (.setCredentialsProvider tn creds))
               (.fetch tn org.eclipse.jgit.lib.NullProgressMonitor/INSTANCE specs)
               {:pulled (vec (for [b branches]
@@ -669,7 +669,7 @@
             ;; a shell that can see two git refs — so the check lives here,
             ;; takes both sides as paths, and the caller decides where each
             ;; came from.
-            "kernel" (kernel/kernel-parity
+            "kernel" (parity/kernel-parity
                       (slurp a) (slurp b)
                       (into #{} (map symbol) (remove str/blank? (str/split (or c "") #","))))
             {:error "usage: clone <url> <dir> | import <dir> | push <dir> [url] | pull <dir> | test <dir> | kernel <file-copy> <store-copy> [accepted,names]"})]

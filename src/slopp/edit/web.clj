@@ -25,7 +25,7 @@
             [slopp.index.analyze :as analyze]
             [slopp.index.derive :as derive]
             [slopp.store :as store]
-            [slopp.store.render :as render] [slopp.edit.modules :as modules]))
+            [slopp.store.render :as store.render] [slopp.edit.modules :as edit.modules]))
 
 (defn web-enabled?
   "The D-web master opt-in, read off the candidate store's `capabilities`
@@ -61,7 +61,7 @@
   [store]
   (vec
    (for [nsx (sort (keys (:namespaces store)))
-         :when (not (render/test-ns? nsx))
+         :when (not (store.render/test-ns? nsx))
          e   (store/forms store nsx)
          :when (:name e)
          :let [m (web-name-meta e)]
@@ -184,7 +184,7 @@
                  " the effects")
 
             (contains? (derive/effectful-vars
-                        (analyze/analyze (render/render-ns candidate ns-sym))
+                        (analyze/analyze (store.render/render-ns candidate ns-sym))
                         nil nil)
                        (symbol (str ns-sym) (str form-name)))
             (str ns-sym "/" form-name " is a GET/HEAD endpoint but reaches a"
@@ -483,7 +483,7 @@
              ;; vacuously — which is exactly how it first shipped green over a
              ;; fixture built to violate it. `not-any? empty?` and not `some seq`:
              ;; a multi-arity entry WITH a zero arity is one slopp can call.
-             (let [arglists (modules/fn-arglists sexpr)]
+             (let [arglists (edit.modules/fn-arglists sexpr)]
                (and (seq arglists) (not-any? empty? arglists)))
              (str ns-sym "/" form-name " is marked ^:web/page but has no zero"
                   " arity, and slopp opens it by calling it with none — there is"

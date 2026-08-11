@@ -27,7 +27,7 @@
   incomplete, and reloading a browser into a red half-written state trains
   the author to ignore it."
   (:require [slopp.project.capabilities :as capabilities]
-            [slopp.rules.web :as web] [slopp.store :as store] [slopp.ops.engine :as session] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts] [slopp.web :as framework]))
+            [slopp.rules.web :as rules.web] [slopp.store :as store] [slopp.ops.engine :as engine] [slopp.image :as image] [slopp.image.repl :as repl] [clojure.string :as str] [clojure.java.io :as io] [slopp.store.artifacts :as artifacts] [slopp.web :as slopp.web]))
 
 (defn ^:export self-served?
   "Whether the calling process ALREADY serves everything `store` would —
@@ -52,7 +52,7 @@
   exempt every non-web project for a reason that has nothing to do with
   them — the emptiness guard, in the position where it actually bites."
   [store already-served]
-  (let [nses (set (web/serving-namespaces store))]
+  (let [nses (set (rules.web/serving-namespaces store))]
     (boolean (and (seq nses)
                   (every? (set already-served) nses)))))
 
@@ -142,7 +142,7 @@
                   "key \"web.enabled\" value \"true\"} opts this store into web")}
     {:enabled?   true
      :mode       :dev
-     :namespaces (web/serving-namespaces store)
+     :namespaces (rules.web/serving-namespaces store)
      :host       (capabilities/effective store "web.host")
      :port       (if (capabilities/stored? store "web.port")
                    (capabilities/effective store "web.port")
@@ -152,12 +152,12 @@
      ;; made a managed server 500 on any app that took slopp's own advice to
      ;; receive its dependencies as :web/deps.
      :max-body-bytes  (capabilities/effective store "web.max-body-bytes")
-     :context-builder (web/context-builder store)
+     :context-builder (rules.web/context-builder store)
      ;; the app's own assets. A UI's stylesheet and cljs bundle ARE the
      ;; product, so a managed server that 404s them is not a lesser version
      ;; of the app — it is an unusable one, and the project it happened to
      ;; switched the managed server off rather than reading it as a bug.
-     :static          (web/static-mounts store)}))
+     :static          (rules.web/static-mounts store)}))
 
 (defn load-order
   "The store namespaces to load into the app image, dependencies first.
@@ -169,8 +169,8 @@
 
   Dependency order is not a nicety here. A store namespace has no classpath
   presence, so a dependent loaded first would `:require` its way out to the
-  classpath and fail (`image/load-ns-into!` marks `*loaded-libs*` for exactly
-  this reason).
+  classpath and fail (`image/load-ns!` marks `*loaded-libs*` for exactly this
+  reason).
 
   **`slopp.web` is seeded when the STORE holds it.** slopp's own store does;
   an ordinary app gets the framework from its declared `slopp-web` coord,
@@ -178,8 +178,8 @@
   which, so this asks the store rather than requiring an answer — and its
   absence is a fact, not an error."
   [store]
-  (let [builder (web/context-builder store)
-        seeds   (cond-> (set (web/serving-namespaces store))
+  (let [builder (rules.web/context-builder store)
+        seeds   (cond-> (set (rules.web/serving-namespaces store))
                   (contains? (:namespaces store) 'slopp.web) (conj 'slopp.web)
                   ;; the context builder is NOT part of the served surface —
                   ;; it declares no route and performs no kind — so nothing
@@ -354,19 +354,22 @@
   after launch\" — and this codebase has already paid for an unenumerated
   door twice.
 
-  **Loaded with `load-ns-into!`, not `load-ns!`.** `currency/stamps` is one
-  process-global atom describing THE ORACLE. Stamping this image's loads into
-  it would report forms as current in a process the oracle never saw, which
-  is the exact false green the registry exists to prevent.
+  **Loaded with `load-ns!`, like every other image.** This used to need a
+  second, non-stamping loader: the currency record was one process-global atom
+  describing THE ORACLE, so stamping this image's loads into it would report
+  forms as current in a process the oracle never saw. The record is now the
+  image's own, so stamping here records what THIS image holds — which is a
+  question worth being able to ask of an app server, and was previously
+  unanswerable.
 
   The image is stopped on every failing path: a child JVM that outlives the
   attempt to use it is the worst of both outcomes."
   [session store plan]
   (let [t0  (System/nanoTime)
-        img (session/start-image! session store)]
+        img (engine/start-image! session store)]
     (try
       (if-let [err (first (keep (fn [n]
-                                  (when-let [e (image/load-ns-into! img store n)]
+                                  (when-let [e (image/load-ns! img store n)]
                                     (str n ": " e)))
                                 (load-order store)))]
         (do (repl/stop! img)
@@ -421,7 +424,7 @@
   `raw` is TEXT, not a Throwable: it crossed an nREPL wire from the child
   image, which is why the recogniser takes both representations."
   [port raw]
-  (if-let [d (framework/bind-diagnosis port raw)]
+  (if-let [d (slopp.web/bind-diagnosis port raw)]
     (str d " — free it, or set web.port to another")
     (str "the app image would not serve on port " port ": " raw)))
 

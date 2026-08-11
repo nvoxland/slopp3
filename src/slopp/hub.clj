@@ -21,7 +21,7 @@
   is where drift between the two copies surfaces."
   (:require [clojure.string :as str]
             [cheshire.core :as json]
-            [slopp.project.capabilities :as caps] [slopp.web.client :as client]))
+            [slopp.project.capabilities :as capabilities] [slopp.web.client :as web.client]))
 
 (def default-beat-ms
   "How often to check in when the hub has not said otherwise.
@@ -52,13 +52,13 @@
   the seam this design left open: reporting `working` instead of `idle` is a
   change to THIS function, and every hub already displays it."
   [store dir url]
-  {:name    (or (caps/effective store "app.name")
+  {:name    (or (capabilities/effective store "app.name")
                 (last (remove str/blank? (str/split (str dir) #"/")))
                 "project")
    :dir     (str dir)
    :url     (str url)
    :pid     (.pid (java.lang.ProcessHandle/current))
-   :version (caps/effective store "app.version")
+   :version (capabilities/effective store "app.version")
    :status  "idle"})
 
 (defn ^:export refused?
@@ -200,7 +200,7 @@
   is covered once, by `requester-contract`, against both adapters; the loop is
   covered here at memory speed."
   ([hub-url payload-fn] (start! hub-url payload-fn (fn [_])))
-  ([hub-url payload-fn on-answer] (start! hub-url payload-fn on-answer client/request))
+  ([hub-url payload-fn on-answer] (start! hub-url payload-fn on-answer web.client/request))
   ([hub-url payload-fn on-answer requester]
    (let [running (atom true)
          thread  (doto (Thread. ^Runnable

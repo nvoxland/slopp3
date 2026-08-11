@@ -11,7 +11,7 @@
   declares a whole-store sweep vacuous for itself, and it lives here rather
   than only in the registry's prose."
   (:require [clojure.test :refer [deftest testing is]]
-            [slopp.rules.keywords :as attrs]
+            [slopp.rules.keywords :as keywords]
             [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.read.graph :as graph]))
 
 (deftest keyword-inventory-collects-namespaced-domain-keys
@@ -19,7 +19,7 @@
                         (str "(ns app.core)\n\n"
                              "(defn a [{:user/keys [email]}] {:user/email email :order/id 1})\n\n"
                              "(defn b [x] {:order/id x :plain 2})\n"))
-        inv (attrs/keyword-inventory s)]
+        inv (keywords/keyword-inventory s)]
     (testing "namespaced domain keywords are collected"
       (is (contains? inv :user/email))
       (is (contains? inv :order/id)))
@@ -41,17 +41,17 @@
         typo-fid (:id (store/form-named typo 'app.core 'e))]
     (testing "a transposition of an established same-ns key is flagged"
       (is (= [{:used :user/emial :suggest :user/email :seen 2}]
-             (attrs/near-duplicate-keys typo #{typo-fid}))))
+             (keywords/near-duplicate-keys typo #{typo-fid}))))
     (testing "an established key (also used by unchanged forms) is NOT a typo"
       (let [reuse (store/ingest (store/empty-store) 'app.core
                                 (str base "\n(defn e [m] {:user/email (:q m)})\n"))
             fid   (:id (store/form-named reuse 'app.core 'e))]
-        (is (empty? (attrs/near-duplicate-keys reuse #{fid})))))
+        (is (empty? (keywords/near-duplicate-keys reuse #{fid})))))
     (testing "a genuinely-new key with no near neighbor is NOT flagged"
       (let [novel (store/ingest (store/empty-store) 'app.core
                                 (str base "\n(defn e [m] {:user/phone (:q m)})\n"))
             fid   (:id (store/form-named novel 'app.core 'e))]
-        (is (empty? (attrs/near-duplicate-keys novel #{fid})))))))
+        (is (empty? (keywords/near-duplicate-keys novel #{fid})))))))
 
 (deftest ^:external done-surfaces-key-typos-as-advisory
   (let [sess (external/open!)]
@@ -85,12 +85,12 @@
                              "(defn b [m] {:user/email (:y m) :order/id 2})\n"
                              "(defn c [m] {:user.address/city (:z m)})\n"))]
     (testing "most-used first, with usage counts"
-      (is (= {:kw :user/email :uses 2} (first (attrs/vocabulary s)))))
+      (is (= {:kw :user/email :uses 2} (first (keywords/vocabulary s)))))
     (testing "ns-prefix filters by keyword namespace (exact or dotted-prefix)"
       (is (= #{:user/email :user/name :user.address/city}
-             (set (map :kw (attrs/vocabulary s :ns-prefix "user"))))))
+             (set (map :kw (keywords/vocabulary s :ns-prefix "user"))))))
     (testing "an exact namespace does not match an unrelated one"
-      (is (= #{:order/id} (set (map :kw (attrs/vocabulary s :ns-prefix "order"))))))))
+      (is (= #{:order/id} (set (map :kw (keywords/vocabulary s :ns-prefix "order"))))))))
 
 (deftest ^:external keyword-blast-radius-includes-destructuring
   ;; query_depends on a keyword was a TEXT scan, so it missed every consumer

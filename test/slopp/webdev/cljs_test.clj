@@ -15,7 +15,7 @@
   only unverifiable layer in slopp verified by something that cannot fail."
   (:require [clojure.test :refer [deftest testing is]]
             [slopp.webdev.cljs :as cljs]
-            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.store.artifacts :as artifacts] [slopp.store.render :as render] [clojure.string :as str] [slopp.web.client :as client]))
+            [slopp.store :as store] [slopp.ops :as ops] [slopp.ops.external :as external] [slopp.store.artifacts :as artifacts] [slopp.store.render :as store.render] [clojure.string :as str] [slopp.web.client :as web.client]))
 
 (deftest parse-result-extracts-the-marked-edn
   (testing "reads the EDN after the SLOPP-CLJS-RESULT marker, ignoring other output"
@@ -37,7 +37,7 @@
         ;; derived: rendering synthesizes the space between forms, so a
         ;; literal line here encodes one renderer version and goes red on the
         ;; next. The compiler reports against render output, so ask it.
-        line (->> (str/split-lines (render/render-ns st 'app.widget))
+        line (->> (str/split-lines (store.render/render-ns st 'app.widget))
                   (keep-indexed (fn [i l]
                                   (when (str/includes? l "undeclared-thing") (inc i))))
                   first)]
@@ -600,7 +600,7 @@
   ;; would prove the difference — `#=(…)` is read-eval, which `read-string`
   ;; honours and the EDN reader refuses — and that is a far better test than any
   ;; real server, because no real server would ever send it.
-  (let [at (fn [body] (client/fake-requester
+  (let [at (fn [body] (web.client/fake-requester
                        "http://pub.test/"
                        {[:get "/contract"] (fn [_] {:status 200 :body body})}))]
     (testing "an ordinary contract round-trips as data"
@@ -618,7 +618,7 @@
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo #"404"
            (cljs/fetch-contract "http://pub.test/contract"
-                                (client/fake-requester "http://pub.test/" {})))))))
+                                (web.client/fake-requester "http://pub.test/" {})))))))
 
 (deftest ^:external a-bare-generate-client-targets-THIS-stores-family
   ;; Reported by slopp-ui. Their store's entire family is `slopp-ui.*` — 22

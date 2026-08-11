@@ -40,7 +40,7 @@
 
   **Not a screenshot, and it must not be sold as one.** Wrapping and contrast
   need pixels; see [[of]]."
-  (:require [clojure.string :as str] [slopp.web.screen.hiccup :as hiccup] [slopp.web.dispatch :as dispatch] [slopp.web.screen.render :as render]))
+  (:require [clojure.string :as str] [slopp.web.screen.hiccup :as hiccup] [slopp.web.dispatch :as dispatch] [slopp.web.screen.render :as screen.render]))
 
 (defn lines
   "A rendered screen as a VECTOR of text lines — the checking face of [[of]],
@@ -110,7 +110,7 @@
            t (hiccup/expand hiccup)
            t (if-let [r (:region o)] (hiccup/region t r) t)
            t (if-let [w (:within o)] (hiccup/scope-node t w) t)]
-       (vec (remove nil? (render/emit t 0 o)))))))
+       (vec (remove nil? (screen.render/emit t 0 o)))))))
 
 (defn of
   "A rendered screen as structured text — what a reader would see, at a size

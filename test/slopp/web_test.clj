@@ -13,7 +13,7 @@
   own tests through the client would close the loop and let a symmetric bug —
   client omits a header, server ignores it — pass both suites."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.web :as web] [slopp.web.static :as static] [slopp.web.router :as router] [clojure.string :as str]))
+            [slopp.web :as slopp.web] [slopp.web.static :as static] [slopp.web.router :as router] [clojure.string :as str]))
 
 (defn ^{:web/method :get :web/path "/w/mine/:owner" :web/auth :authenticated}
   t-mine
@@ -24,21 +24,21 @@
   {:status 200 :body {:yours true}})
 
 (deftest facade-assembles-and-enforces
-  (let [ctx (web/context {:web/namespaces ['slopp.web-test]})]
+  (let [ctx (slopp.web/context {:web/namespaces ['slopp.web-test]})]
     (testing "context derives the route table from var metadata"
       (is (= 1 (count (:web/routes ctx))))
       (is (= "/w/mine/:owner" (:path (first (:web/routes ctx))))))
     (testing "handle! is the portless test surface"
-      (let [r (web/handle! ctx {:request-method :get :uri "/w/mine/ada"
+      (let [r (slopp.web/handle! ctx {:request-method :get :uri "/w/mine/ada"
                                 :web/identity {:web/sub "ada" :web/groups #{}}})]
         (is (= 200 (:status r)) (pr-str r))))
     (testing "enforce inside the handler maps to 403 response data"
-      (let [r (web/handle! ctx {:request-method :get :uri "/w/mine/ada"
+      (let [r (slopp.web/handle! ctx {:request-method :get :uri "/w/mine/ada"
                                 :web/identity {:web/sub "eve" :web/groups #{}}})]
         (is (= 403 (:status r)) (pr-str r))))
     (testing "authorized? answers booleans for branching"
-      (is (web/authorized? [:group "admin"] {:web/groups #{"admin"}}))
-      (is (not (web/authorized? [:group "admin"] nil))))))
+      (is (slopp.web/authorized? [:group "admin"] {:web/groups #{"admin"}}))
+      (is (not (slopp.web/authorized? [:group "admin"] nil))))))
 
 (deftest ^:external
   ^{:adapter "http — a deliberately INDEPENDENT client. requester-contract's
@@ -48,7 +48,7 @@
               ignores it) pass both. The server tests are the one place that
               must not go through the port."}
   serve-round-trips-the-facade
-  (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
+  (let [srv (slopp.web/serve! {:web/namespaces ['slopp.web-test]
                          :web/port 0})
         http (java.net.http.HttpClient/newHttpClient)
         resp (.send http
@@ -60,14 +60,14 @@
     (try
       (testing "the anonymous request is refused by the declared policy, over the wire"
         (is (= 401 (.statusCode resp))))
-      (finally (web/stop! srv)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
               serve-round-trips-the-facade, and doubly so here: this test exists
               to prove a SECOND server adapter behaves like the first, which a
               shared client cannot witness."}
   httpkit-adapter-round-trips-the-facade
-  (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
+  (let [srv (slopp.web/serve! {:web/namespaces ['slopp.web-test]
                          :web/adapter :http-kit
                          :web/port 0})
         http (java.net.http.HttpClient/newHttpClient)
@@ -80,13 +80,13 @@
     (try
       (testing "the declared policy refuses over http-kit exactly as over jdk"
         (is (= 401 (.statusCode resp))))
-      (finally (web/stop! srv)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
               serve-round-trips-the-facade. This one sends AUTH headers, which
               is precisely the shape a symmetric client/server bug would hide."}
   auth-round-trips-over-the-wire
-  (let [srv (web/serve! {:web/namespaces ['slopp.web-test]
+  (let [srv (slopp.web/serve! {:web/namespaces ['slopp.web-test]
                          :web/adapter :http-kit
                          :web/port 0
                          :web/auth-config {:auth/providers [:bearer]
@@ -107,7 +107,7 @@
         (is (= 200 (GET "/w/mine/ada" "tok-ada")))
         (testing "and enforce still 403s the wrong owner, authenticated or not"
           (is (= 403 (GET "/w/mine/someone-else" "tok-ada")))))
-      (finally (web/stop! srv)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest ^:external ^{:adapter "http — independent client on purpose; same reason as
               serve-round-trips-the-facade. Raw BYTES are the case where a
@@ -120,7 +120,7 @@
                        "public/app.css"  {:content "body{}" :content-type "text/css"}}
                       path))
         rows (static/mount-routes {"/assets" "public"} reader)
-        srv  (web/serve! {:web/namespaces []
+        srv  (slopp.web/serve! {:web/namespaces []
                           :web/routes rows
                           :web/adapter :http-kit
                           :web/port 0})
@@ -152,7 +152,7 @@
                 the reader for `public//app.css` — and a store-backed reader,
                 which looks a path up in a manifest rather than on a
                 filesystem that would normalise it, answered nothing."
-        (let [srv2 (web/serve! {:web/namespaces []
+        (let [srv2 (slopp.web/serve! {:web/namespaces []
                                 :web/routes (static/mount-routes {"/assets" "public/"} reader)
                                 :web/adapter :http-kit :web/port 0})
               get2 (fn [path]
@@ -165,8 +165,8 @@
                              (java.net.http.HttpResponse$BodyHandlers/ofByteArray))))]
           (try
             (is (= 200 (get2 "/assets/app.css")))
-            (finally (web/stop! srv2)))))
-      (finally (web/stop! srv)))))
+            (finally (slopp.web/stop! srv2)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest ^:external built-app-reader-resolves-fs-then-resources
   (let [dir (str (java.nio.file.Files/createTempDirectory
@@ -299,7 +299,7 @@
   ;; Every input needed is already in hand at assembly. So assemble-time is
   ;; where it is caught.
   (testing "a route declaring a read nobody performs is refused at assembly"
-    (let [e (try (web/context {:web/namespaces ['slopp.web-test]
+    (let [e (try (slopp.web/context {:web/namespaces ['slopp.web-test]
                               :web/routes [{:method :get :path "/orphan"
                                             :handler identity
                                             :auth :public
@@ -314,7 +314,7 @@
   (testing "a context that can perform every read it declares assembles"
     ;; the guard must not fire on the ordinary case, including a route with
     ;; no declared reads at all
-    (is (map? (web/context {:web/namespaces ['slopp.web-test]})))))
+    (is (map? (slopp.web/context {:web/namespaces ['slopp.web-test]})))))
 
 (defn reader-contract
   "Every property a `mount-routes` reader must satisfy, run against whatever
@@ -369,20 +369,20 @@
   ;; failure is fixable with `web.port`.
   (testing "a Throwable carrying a BindException anywhere in its cause chain"
     (is (= "port 8080 is already in use"
-           (web/bind-diagnosis 8080 (java.net.BindException. "Address already in use"))))
+           (slopp.web/bind-diagnosis 8080 (java.net.BindException. "Address already in use"))))
     (is (= "port 8080 is already in use"
-           (web/bind-diagnosis 8080 (ex-info "wrapped" {} (java.net.BindException. "nope"))))
+           (slopp.web/bind-diagnosis 8080 (ex-info "wrapped" {} (java.net.BindException. "nope"))))
         "the cause chain is walked — http-kit wraps"))
   (testing "a text blob that crossed a wire, where the class is gone"
     (is (= "port 7357 is already in use"
-           (web/bind-diagnosis
+           (slopp.web/bind-diagnosis
             7357
             (str "class java.net.BindException: Execution error (BindException) at"
                  " sun.nio.ch.Net/bind0 (Net.java:-2).\nAddress already in use")))))
   (testing "nil for anything it does not recognize — the caller keeps every byte"
-    (is (nil? (web/bind-diagnosis 8080 (java.net.UnknownHostException. "nowhere"))))
-    (is (nil? (web/bind-diagnosis 8080 "Syntax error compiling at (app/core.clj:1:1)")))
-    (is (nil? (web/bind-diagnosis 8080 nil)))))
+    (is (nil? (slopp.web/bind-diagnosis 8080 (java.net.UnknownHostException. "nowhere"))))
+    (is (nil? (slopp.web/bind-diagnosis 8080 "Syntax error compiling at (app/core.clj:1:1)")))
+    (is (nil? (slopp.web/bind-diagnosis 8080 nil)))))
 
 (deftest ^:external serve-on-a-taken-port-leads-with-the-diagnosis
   ;; The production half of the same rule the dev server already follows. An
@@ -394,10 +394,10 @@
   ;; A clash is an ERROR here and stays one — never a hunt for a free port.
   ;; The url an operator was handed must not quietly stop being the url that
   ;; works, which is the same stance api.server/serve! takes.
-  (let [held (web/serve! {:web/namespaces [] :web/port 0})
+  (let [held (slopp.web/serve! {:web/namespaces [] :web/port 0})
         port (:port held)]
     (try
-      (let [t (try (web/serve! {:web/namespaces [] :web/port port})
+      (let [t (try (slopp.web/serve! {:web/namespaces [] :web/port port})
                    nil
                    (catch Throwable t t))]
         (testing "it still fails — a taken port is never routed around"
@@ -409,4 +409,4 @@
           (is (re-find #"(?i)address already in use" (str (ex-message t)))))
         (testing "the port rides as data, so a caller need not re-parse the sentence"
           (is (= port (:web/port (ex-data t))))))
-      (finally (web/stop! held)))))
+      (finally (slopp.web/stop! held)))))

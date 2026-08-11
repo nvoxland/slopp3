@@ -11,7 +11,7 @@
   from believing it."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.lab :as bench]))
+            [slopp.lab :as lab]))
 
 (def sample
   (str "(ns sample)\n\n"
@@ -36,7 +36,7 @@
 
 (deftest reference-query-is-cheaper-than-grep-read
   (let [sess (atom {:store (store/ingest (store/empty-store) 'sample sample)})
-        c    (bench/reference-query-cost sess 'sample 'helper)]
+        c    (lab/reference-query-cost sess 'sample 'helper)]
     (testing "slopp's targeted answer is a fraction of reading the whole file"
       (is (< (:slopp-chars c) (:read-file-chars c)))
       (is (< (:ratio-vs-read c) 0.5)))

@@ -5,12 +5,12 @@
   and docstring warnings on the public surface."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
-            [slopp.store :as store] [slopp.edit.modules :as modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates] [clojure.string :as str]))
+            [slopp.store :as store] [slopp.edit.modules :as edit.modules] [slopp.store.merge :as merge] [slopp.ops.external :as external] [clojure.java.io] [clojure.edn] [slopp.store.render :as store.render] [slopp.read.graph :as graph] [slopp.edit.tiers :as tiers] [slopp.edit.gates :as gates] [clojure.string :as str]))
 
 (deftest module-of-is-the-first-two-segments
-  (is (= "logi.quoting" (modules/module-of 'logi.quoting)))
-  (is (= "logi.quoting" (modules/module-of 'logi.quoting.internal)))
-  (is (= "scratch" (modules/module-of 'scratch))))
+  (is (= "logi.quoting" (edit.modules/module-of 'logi.quoting)))
+  (is (= "logi.quoting" (edit.modules/module-of 'logi.quoting.internal)))
+  (is (= "scratch" (edit.modules/module-of 'scratch))))
 
 (deftest module-edges-are-crdt-grain
   (let [base    (store/empty-store)
@@ -58,7 +58,7 @@
   ;; module edges — so package-private deep helpers stay unit-testable.
   ;; (found dogfooding the deep-module split: without this, moving a
   ;; test-referenced helper into a deep ns forces a spurious ^:export.)
-  (let [viol (fn [rows] (seq (modules/module-violations {} rows)))
+  (let [viol (fn [rows] (seq (edit.modules/module-violations {} rows)))
         row  (fn [from to] {:from-ns from :from-var 'f :to to})]
     (testing "a -test ns reaches its subject's package-private deep var"
       (is (nil? (viol [(row 'a.b-test 'a.b.impl)]))
@@ -69,7 +69,7 @@
       (is (some #(= :visibility (:rule %)) (viol [(row 'x.y 'a.b.impl)]))))))
 
 (deftest module-rules-are-recursive-and-declared
-  (let [viol (fn [manifest rows] (seq (modules/module-violations manifest rows)))
+  (let [viol (fn [manifest rows] (seq (edit.modules/module-violations manifest rows)))
         row  (fn [from to] {:from-ns from :from-var 'f :to to})]
     (testing "nil manifest = a pre-adoption store — rules off until open! adopts"
       (is (nil? (viol nil [(row 'b.user 'a.pub)]))))
@@ -132,11 +132,11 @@
       (testing "renaming the CALLER module re-keys the manifest entry"
         (is (nil? (:error (ops/ns-rename! sess 'mb.app 'mb.hub :prompt "rebrand"))))
         (is (= {"mb.hub" #{"ma.core"}}
-               (modules/modules-manifest (:store @sess)))))
+               (edit.modules/modules-manifest (:store @sess)))))
       (testing "renaming the TARGET module re-keys the dep values"
         (is (nil? (:error (ops/ns-rename! sess 'ma.core 'mx.core :prompt "rebrand"))))
         (is (= {"mb.hub" #{"mx.core"}}
-               (modules/modules-manifest (:store @sess))))
+               (edit.modules/modules-manifest (:store @sess))))
         (is (nil? (:error (ops/edit-replace! sess 'mb.hub 'use-it
                                              "(defn use-it \"Uses mx.\" [x] (core/shared (inc x)))"
                                              :prompt "still declared under the new names")))))
@@ -155,13 +155,13 @@
       (ops/ingest! sess 'kb.app
                    (str "(ns kb.app (:require [ka.core :as core]))\n"
                         "(defn g \"G.\" [x] (core/f x))\n"))
-      (is (= {} (modules/modules-manifest (:store @sess))))
+      (is (= {} (edit.modules/modules-manifest (:store @sess))))
       (finally (ops/close! sess)))
     ;; reopen: empty manifest + populated + no edge delta ever = adopt
     (let [sess2 (external/open! {:slopp.ops/dir dir})]
       (try
         (is (= {"kb.app" #{"ka.core"}}
-               (modules/modules-manifest (:store @sess2))))
+               (edit.modules/modules-manifest (:store @sess2))))
         (is (nil? (:error (ops/edit-replace! sess2 'kb.app 'g
                                              "(defn g \"G.\" [x] (core/f (inc x)))"
                                              :prompt "gated edits work under the adopted manifest"))))
@@ -300,12 +300,12 @@
       (let [cand (store/ingest base 'x.y
                                "(ns x.y)\n\n(defn f \"F.\" [v] (a.b.impl/hidden v))\n")]
         (is (re-find #"package-private"
-                     (str (modules/module-refusal cand 'x.y 'f))))
-        (is (re-find #"package-private" (str (modules/module-scan cand 'x.y))))))
+                     (str (edit.modules/module-refusal cand 'x.y 'f))))
+        (is (re-find #"package-private" (str (edit.modules/module-scan cand 'x.y))))))
     (testing "quoted symbols are data, not calls"
       (let [cand (store/ingest base 'x.z
                                "(ns x.z)\n\n(defn g \"G.\" [] 'a.b.impl/hidden)\n")]
-        (is (nil? (modules/module-refusal cand 'x.z 'g)))))))
+        (is (nil? (edit.modules/module-refusal cand 'x.z 'g)))))))
 
 (deftest module-tiers-merge-clean
   (testing "tiers declared on either side land on the merged store, canonically"
@@ -421,35 +421,35 @@
                      "gates" :manifest "require-boundary-schemas" "true")))]
     (testing "OFF by default (opt-in, permissive default) → never fires"
       (let [s (store/ingest (store/empty-store) 'app.core ext-noschema)]
-        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a module-external map-arg fn lacking a :=> schema is refused, with teaching"
       (let [s (on ext-noschema 'app.core)]
-        (is (re-find #":malli/schema" (str (modules/schema-refusal s 'app.core 'handle))))))
+        (is (re-find #":malli/schema" (str (edit.modules/schema-refusal s 'app.core 'handle))))))
     (testing "ON: a :=> schema that says nothing about THROWS is still refused —
               a caller cannot tell a function that signals failure by returning
               from one that throws something nobody named, and those need
               different code at every call site"
       (let [s (on ext-schema 'app.core)]
-        (is (re-find #":throws" (str (modules/schema-refusal s 'app.core 'handle))))))
+        (is (re-find #":throws" (str (edit.modules/schema-refusal s 'app.core 'handle))))))
     (testing "ON: an EMPTY :throws passes — declaring that it signals nothing is
               itself a declaration, and requiring it even when empty is the
               whole point: undeclared and declared-nothing must not look alike"
       (let [s (on ext-throws-none 'app.core)]
-        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a declared ex-data shape passes too. This is the CHECKED half
               — the ex-info a caller is expected to handle. An NPE from three
               calls down is unchecked, and nobody's declaration"
       (let [s (on ext-throws-some 'app.core)]
-        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a non-map first arg is not a boundary-contract case"
       (let [s (on no-map-arg 'app.core)]
-        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a private fn is not module-external"
       (let [s (on private-fn 'app.core)]
-        (is (nil? (modules/schema-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core 'handle)))))
     (testing "ON: a deep, non-exported fn is package-private, not a module boundary"
       (let [s (on deep-noexport 'app.core.impl)]
-        (is (nil? (modules/schema-refusal s 'app.core.impl 'handle)))))))
+        (is (nil? (edit.modules/schema-refusal s 'app.core.impl 'handle)))))))
 
 (deftest ^:external schema-require-gate-refuses-boundary-writes
   (let [sess (external/open!)]
@@ -522,19 +522,19 @@
                      "gates" :manifest "require-namespaced-keys" "true")))]
     (testing "OFF by default (opt-in) → never fires"
       (let [s (store/ingest (store/empty-store) 'app.core bare)]
-        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/namespaced-keys-refusal s 'app.core 'handle)))))
     (testing "ON: a module-external fn destructuring unqualified :keys is refused"
       (let [s (on bare 'app.core)]
-        (is (re-find #"namespaced" (str (modules/namespaced-keys-refusal s 'app.core 'handle))))))
+        (is (re-find #"namespaced" (str (edit.modules/namespaced-keys-refusal s 'app.core 'handle))))))
     (testing "ON: namespaced :ns/keys passes"
       (let [s (on qualified 'app.core)]
-        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/namespaced-keys-refusal s 'app.core 'handle)))))
     (testing "ON: a non-map first arg is not a boundary-keys case"
       (let [s (on no-map 'app.core)]
-        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))
+        (is (nil? (edit.modules/namespaced-keys-refusal s 'app.core 'handle)))))
     (testing "ON: a private fn is not a module boundary"
       (let [s (on private 'app.core)]
-        (is (nil? (modules/namespaced-keys-refusal s 'app.core 'handle)))))))
+        (is (nil? (edit.modules/namespaced-keys-refusal s 'app.core 'handle)))))))
 
 (deftest ^:external namespaced-keys-gate-refuses-boundary-writes
   (let [sess (external/open!)]
@@ -590,11 +590,11 @@
                      "gates" :manifest k "true")))]
     (testing "namespaced-keys gate catches bare :keys in a LATER arity"
       (is (re-find #"namespaced"
-                   (str (modules/namespaced-keys-refusal (on "require-namespaced-keys")
+                   (str (edit.modules/namespaced-keys-refusal (on "require-namespaced-keys")
                                                          'app.core 'handle)))))
     (testing "schema gate catches a map first-arg in a LATER arity"
       (is (re-find #":malli/schema"
-                   (str (modules/schema-refusal (on "require-boundary-schemas")
+                   (str (edit.modules/schema-refusal (on "require-boundary-schemas")
                                                 'app.core 'handle)))))))
 
 (deftest write-gate-advisory-severity
@@ -924,10 +924,10 @@
           (is (some? (get-in @sess [:store :namespaces 'me.core.helper]))))
         (testing "only the var an outside caller reaches was hoisted"
           (let [st (:store @sess)]
-            (is (true? (modules/export-level st 'me.core.helper 'shared)))
-            (is (nil? (modules/export-level st 'me.core.helper 'local)))))
+            (is (true? (edit.modules/export-level st 'me.core.helper 'shared)))
+            (is (nil? (edit.modules/export-level st 'me.core.helper 'local)))))
         (testing "the edge reality now requires is declared"
-          (is (contains? (get (modules/modules-manifest (:store @sess)) "me.other")
+          (is (contains? (get (edit.modules/modules-manifest (:store @sess)) "me.other")
                          "me.core")))
         (testing "THE property: the end state has no module violations"
           (is (nil? (:error (ops/edit-replace!
@@ -990,7 +990,7 @@
   ;; Its sibling `web-tooling-is-reached-only-by-the-transport` states it over
   ;; the whole image; this one states it about the surface that broke.
   (let [st  (external/built-store)
-        src (render/render-ns st 'slopp.ops.external)
+        src (store.render/render-ns st 'slopp.ops.external)
         pat #"slopp\.webdev"]
     (testing "there is a population — the vacuity that ate a sibling guard"
       ;; and it doubles as the guard on the quoted symbol above: a namespace
@@ -1007,7 +1007,7 @@
       ;; tooling on purpose (it is the transport, the one declared exception),
       ;; so if the pattern stops matching THERE it has stopped matching
       ;; anywhere and the assertion below is measuring an empty search.
-      (is (seq (re-seq pat (render/render-ns st 'slopp.mcp)))
+      (is (seq (re-seq pat (store.render/render-ns st 'slopp.mcp)))
           "the pattern no longer matches the tooling's own consumer — retarget it"))
     (testing "the whole-store check names no web-tooling namespace, by any path"
       ;; require, qualified ref and prose all read the same here on purpose
@@ -1112,7 +1112,7 @@
                         "                            [mr.tool :as tool]))\n"
                         "(deftest fixture-uses-the-tool (is (= 1 (tool/helper 1))))\n"))
       (testing "the manufactured edge is in the DECLARED manifest"
-        (is (contains? (get (modules/modules-manifest (:store @sess)) "mp.core") "mr.tool")))
+        (is (contains? (get (edit.modules/modules-manifest (:store @sess)) "mp.core") "mr.tool")))
       (testing "an edge blocked only by a test-manufactured path is allowed"
         (let [r (ops/module-dep! sess "mr.tool" "mq.app"
                                  :prompt "acyclic in production: mq→mp, and mr is a leaf")]
@@ -1419,7 +1419,7 @@
         ;; localizes a future failure: this half is the rule, the next is the
         ;; wiring, and they fail for opposite reasons.
         (is (re-find #"package-private"
-                     (str (modules/module-scan (:store @sess) 'mo.app)))))
+                     (str (edit.modules/module-scan (:store @sess) 'mo.app)))))
       (testing "and full_check names it, red"
         (let [r (external/full-check! sess)]
           (is (= 1 (:count (:module-violations r)))
@@ -1587,12 +1587,12 @@
           (is (true? (:test-only r)) (pr-str r))))
       (testing "`:modules` is untouched, so every production reader sees no new edge"
         (let [st (:store @sess)]
-          (is (not (contains? (get (modules/modules-manifest st) "tz.helper" #{})
+          (is (not (contains? (get (edit.modules/modules-manifest st) "tz.helper" #{})
                               "tz.core"))
-              (pr-str (modules/modules-manifest st)))
-          (is (contains? (get (modules/module-test-manifest st) "tz.helper" #{})
+              (pr-str (edit.modules/modules-manifest st)))
+          (is (contains? (get (edit.modules/module-test-manifest st) "tz.helper" #{})
                          "tz.core")
-              (pr-str (modules/module-test-manifest st)))))
+              (pr-str (edit.modules/module-test-manifest st)))))
       (testing "a -test namespace under tz.helper may now cross"
         (is (nil? (:error (ops/ingest! sess 'tz.helper.spec-test
                                        (str "(ns tz.helper.spec-test (:require [tz.core :as core]))\n"
@@ -1604,9 +1604,9 @@
           (is (re-find #"does not declare tz\.core" (str (:error r))) (pr-str r))))
       (testing "the whole-store fold agrees with the write gate, in both directions"
         (let [debt (fn [] (let [st (:store @sess)]
-                            (modules/module-violations (modules/modules-manifest st)
-                                                       (modules/module-test-manifest st)
-                                                       (modules/module-usage-rows st))))]
+                            (edit.modules/module-violations (edit.modules/modules-manifest st)
+                                                       (edit.modules/module-test-manifest st)
+                                                       (edit.modules/module-usage-rows st))))]
           ;; must-NOT-flag: nothing stands while only the test crosses…
           (is (nil? (debt)) (pr-str (debt)))
           ;; …and retracting the test edge makes that same crossing a violation,
@@ -1715,7 +1715,7 @@
                         "(defn ^:unused-ok r \"R.\" [] (q/read-it))\n"))
       (testing "the graph is acyclic before the move — mc.util → mc.app → mc.core"
         (is (empty? (:cycles (store/module-layers
-                              (modules/modules-manifest (:store @sess)))))
+                              (edit.modules/modules-manifest (:store @sess)))))
             "fixture precondition"))
       (let [r    (ops/ns-rename! sess 'mc.core.query 'mc.util.query
                                  :prompt "the reads join util")
@@ -1739,7 +1739,7 @@
   ;; worked out by hand, every time, from a message that had it available.
   ;; The callee was dropped one layer down, in the usage row, which is why
   ;; three separate reports each came out one fact short of actionable.
-  (let [v (first (modules/module-violations
+  (let [v (first (edit.modules/module-violations
                   {}
                   [{:from-ns 'vz.a.caller :from-var 'go
                     :to 'vz.b.deep :to-name 'helper :to-export nil}]))]
@@ -1751,7 +1751,7 @@
   (testing "a row that does not know its callee still refuses, generically"
     ;; module_extract and the hand-built rows in these tests both predate
     ;; :to-name; a missing callee must degrade the MESSAGE, never the rule.
-    (let [v (first (modules/module-violations
+    (let [v (first (edit.modules/module-violations
                     {}
                     [{:from-ns 'vz.a.caller :from-var 'go
                       :to 'vz.b.deep :to-export nil}]))]
@@ -1939,7 +1939,7 @@
                    "(def registry \"D.\" [{:kind :regex} {:kind :string}])\n"
                    "(defmulti area :shape)\n"))
         args (fn [nm]
-               (modules/fn-arglists
+               (edit.modules/fn-arglists
                 (store/form-sexpr (:node (store/form-named st 'fa.core nm)))))]
     (testing "a fn, every arity — unchanged, and the reason this exists"
       (is (= '[[x]] (args 'one)))

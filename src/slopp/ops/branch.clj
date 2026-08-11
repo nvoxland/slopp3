@@ -17,12 +17,12 @@
   Lines are reaped on idle (the session's timer), because an abandoned branch
   should not hold a JVM open indefinitely."
   (:require [clojure.java.io :as io]
-            [slopp.ops.engine :as session]
+            [slopp.ops.engine :as engine]
             [slopp.store.db :as db]
             [slopp.edit :as edit]
             [slopp.image :as image]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str] [slopp.read.modules :as modules]))
+            [slopp.store :as store] [slopp.store.merge :as merge] [clojure.string :as str] [slopp.read.modules :as read.modules]))
 
 (defn merge-into-session!
   "Shared merge pipeline (m2 forks + m3 branches): replay `theirs` onto the
@@ -90,8 +90,8 @@
                                       (image/load-ns! (:image @session) st' ns-sym)
 
                                       (seq (get by-ns ns-sym))
-                                      (session/load-error-message
-                                       (session/hot-load-all! session st'
+                                      (engine/load-error-message
+                                       (engine/hot-load-all! session st'
                                                               (get by-ns ns-sym)))
 
                                       :else nil))
@@ -99,13 +99,13 @@
                             ;; live ids whose ns lookup still missed keep
                             ;; the whole-batch path
                             (when-let [rest-ids (seq (get by-ns nil))]
-                              (session/load-error-message
-                               (session/hot-load-all! session st' rest-ids))))))]
+                              (engine/load-error-message
+                               (engine/hot-load-all! session st' rest-ids))))))]
         (if load-err
-          (do (session/fresh-image! session)
+          (do (engine/fresh-image! session)
               (edit/compile-error st' load-err "merge failed to compile: "))
           (let [[st'' mdelta] (merge/record-merge st' from-label r)]
-            (if-not (session/try-commit! session base st''
+            (if-not (engine/try-commit! session base st''
                                  (vec (distinct
                                        (concat (keep :ns (drop (count (store/deltas base))
                                                                (store/deltas st'')))
@@ -127,7 +127,7 @@
                     ;; DECLARED manifest, where a -test namespace's fixture
                     ;; requires are edges, so it warned on every merge into
                     ;; main about a cycle no production code had.
-                    mod-cycle    (modules/merge-production-cycle base st'')
+                    mod-cycle    (read.modules/merge-production-cycle base st'')
                     notes        (cond-> (vec (:notes r))
                                    mod-cycle
                                    (conj {:modules-cycle mod-cycle
@@ -136,13 +136,13 @@
                                                        " an edge (module_dep {from .. to .."
                                                        " remove true})")}))
                     summary      (when (seq verify-nses)
-                                   (session/run-verification! session verify-nses nil
+                                   (engine/run-verification! session verify-nses nil
                                                       :edited edited))]
                 (when summary
-                  (session/commit-appended! session
+                  (engine/commit-appended! session
                                     #(store/record-verification % verify-nses summary)
                                     []))
-                (session/with-ms
+                (engine/with-ms
                   (cond-> {:merged     (:merged r)
                            :conflicts  (:conflicts r)
                            :merge-delta (:id mdelta)}
@@ -187,10 +187,10 @@
         ;; fourth image launcher and the one nobody wired the framework into,
         ;; because nothing exercises branches and web code together. It would
         ;; have failed exactly as restart did.
-        img   (session/image-with-deps! session store spare)]
+        img   (engine/image-with-deps! session store spare)]
     (when spare
       (swap! session assoc :spare nil)
-      (session/start-spare! session))
+      (engine/start-spare! session))
     (if-let [err (some #(image/load-ns! img store %)
                        (store/ns-dependency-order store))]
       (do (repl/stop! img)

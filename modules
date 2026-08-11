@@ -38,7 +38,7 @@ slopp.orientation: slopp.edit slopp.read slopp.ops (test)
 slopp.phase4: slopp.read slopp.store slopp.ops (test)
 slopp.project: slopp.index slopp.store
 slopp.read: slopp.edit slopp.index slopp.project slopp.rules slopp.store slopp.ops (test)
-slopp.realias: slopp.ops (test)
+slopp.realias: slopp.edit (test) slopp.ops (test) slopp.store (test)
 slopp.rename: slopp.read slopp.store slopp.ops (test)
 slopp.rules: slopp.edit slopp.image slopp.index slopp.project slopp.store slopp.web slopp.ops (test) slopp.read (test)
 slopp.store: slopp.cache slopp.ops (test) slopp.read (test)

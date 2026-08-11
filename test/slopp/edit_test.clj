@@ -14,7 +14,7 @@
   somewhere real and useless."
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.image.repl :as repl]
             [slopp.image :as image]
             [slopp.edit :as edit] [slopp.index.refs :as refs] [slopp.edit.hotload :as hotload] [clojure.string :as str]))
@@ -49,8 +49,8 @@
       (is (= :replace (:op (:delta r))))
       (is (= "make it multiply" (:prompt (:delta r)))))
     (testing "rendered source reflects the change; other forms untouched"
-      (is (re-find #"\(\* x y\)" (render/render-ns (:store r) 'demo)))
-      (is (re-find #"\(def z 1\)" (render/render-ns (:store r) 'demo))))
+      (is (re-find #"\(\* x y\)" (store.render/render-ns (:store r) 'demo)))
+      (is (re-find #"\(def z 1\)" (store.render/render-ns (:store r) 'demo))))
     (testing "form identity is stable across the edit (C2)"
       (is (= (:id (store/form-named s 'demo 'add))
              (:id (store/form-named (:store r) 'demo 'add)))))))
@@ -130,7 +130,7 @@
         ;; derived, not hardcoded: rendering SYNTHESIZES the space between
         ;; forms, so a literal row here silently encodes one renderer version
         ;; and goes red on the next. What is under test is the translation.
-        row (->> (str/split-lines (render/render-ns st 'an.err))
+        row (->> (str/split-lines (store.render/render-ns st 'an.err))
                  (keep-indexed (fn [i l] (when (str/includes? l "nope-not-a-fn") (inc i))))
                  first)]
     (testing "a located error resolves to form + snippet"
@@ -147,7 +147,7 @@
                           "(ns ce.core)\n(defn f \"F.\" [x] (boom x))\n")
         ;; derived: rendering synthesizes the space between forms, so a
         ;; literal row encodes one renderer version and goes red on the next
-        row (->> (str/split-lines (render/render-ns st 'ce.core))
+        row (->> (str/split-lines (store.render/render-ns st 'ce.core))
                  (keep-indexed (fn [i l] (when (str/includes? l "boom") (inc i))))
                  first)]
     (testing "resolvable coordinate → form + snippet, coordinate stripped"

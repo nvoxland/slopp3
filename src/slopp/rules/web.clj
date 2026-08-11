@@ -20,7 +20,7 @@
   keep those apart, and each distinction was added because collapsing it made a
   report state something false. Prefer adding a category over widening one."
   (:require [slopp.project.capabilities :as capabilities]
-            [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as render] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.edit.web :as web] [rewrite-clj.parser :as p] [slopp.index.refs :as refs]))
+            [slopp.web.router :as router] [slopp.store :as store] [slopp.store.render :as store.render] [clojure.string :as str] [rewrite-clj.node :as n] [slopp.edit.web :as edit.web] [rewrite-clj.parser :as p] [slopp.index.refs :as refs]))
 
 (defn endpoints
   "Every declared endpoint in the store — a `:web/path` form's route row:
@@ -53,14 +53,14 @@
            :web/spa   (:web/spa meta)
            :schema?   (contains? meta :web/response)
            :effectful? (boolean (:web/effectful meta))})
-        (web/web-endpoint-rows store)))
+        (edit.web/web-endpoint-rows store)))
 
 (defn performers
   "The app-defined performer vocabulary for `marker-key` (`:web/effect` or
   `:web/read`): {kind → performer qsym}. Delegates to the SAME derivation
   the undeclared-effect gate checks (`modules/web-performers`)."
   [store marker-key]
-  (web/web-performers store marker-key))
+  (edit.web/web-performers store marker-key))
 
 (def ^:private url-attrs
   "Hiccup tag → the attributes that name a URL ON THAT ELEMENT, per HTML.
@@ -161,7 +161,7 @@
   [store]
   (vec
    (for [nsx (sort (keys (:namespaces store)))
-         :when (not (render/test-ns? nsx))
+         :when (not (store.render/test-ns? nsx))
          e (store/forms store nsx)
          :when (:name e)
          :let [sx (try (n/sexpr (:node e)) (catch Exception _ nil))
@@ -290,7 +290,7 @@
                acc reqs))
      {}
      (for [nsx  (sort (keys (:namespaces store)))
-           :when (render/test-ns? nsx)
+           :when (store.render/test-ns? nsx)
            e     (store/forms store nsx)
            :when (:name e)
            :let  [sx (try (n/sexpr (:node e)) (catch Exception _ nil))]
@@ -331,7 +331,7 @@
   silently is how an app ends up running on deps it did not mean, and the
   failure would surface as a missing key three layers away."
   [store]
-  (let [found (web/web-context-builders store)]
+  (let [found (edit.web/web-context-builders store)]
     (when (seq found)
       (when (next found)
         (throw (ex-info (str "a store declares exactly ONE ^{:web/context true}"
@@ -437,7 +437,7 @@
   (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
     (vec (keep (fn [fid]
                  (when-let [e (store/form-by-id st* fid)]
-                   (let [m (web/web-name-meta e)]
+                   (let [m (edit.web/web-name-meta e)]
                      (when (and (:web/path m)
                                 (= :public (:web/auth m))
                                 (seq (:web/effects m)))
@@ -472,7 +472,7 @@
    signature and clears it."
   [_session store _changed]
   (let [recorded (get-in store [:config "client" :values "generated-sig"])]
-    (when (and recorded (not= recorded (web/client-signature store)))
+    (when (and recorded (not= recorded (edit.web/client-signature store)))
       [{:web-stale-client true
         :teach (str "the generated typed client is out of date — an endpoint or its"
                     " :web/request/:web/response changed since generate_client last"
@@ -486,7 +486,7 @@
    structured (vector) inline schemas count — a bare keyword like :map is too
    trivial to extract. Fires once per duplicated shape."
   [_session store _changed]
-  (let [inlines (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
+  (let [inlines (for [{:keys [ns name meta]} (edit.web/web-endpoint-rows store)
                       k     [:web/request :web/response]
                       :let  [v (get meta k)]
                       :when (vector? v)]
@@ -577,7 +577,7 @@
   [st]
   (vec (for [n     (keys (:namespaces st))
              f     (store/forms st n)
-             :when (and (:name f) (:web/page (web/web-name-meta f)))
+             :when (and (:name f) (:web/page (edit.web/web-name-meta f)))
              :let  [cljs (page-cljs-reach st n)]
              :when (seq cljs)]
          {:page (symbol (str n) (str (:name f))) :cljs cljs})))
@@ -612,7 +612,7 @@
   (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
     (vec (keep (fn [fid]
                  (when-let [e (store/form-by-id st* fid)]
-                   (when (:web/page (web/web-name-meta e))
+                   (when (:web/page (edit.web/web-name-meta e))
                      (let [own  (store/ns-of-form-id st* fid)
                            cljs (page-cljs-reach st* own)]
                        (when (seq cljs)
@@ -720,7 +720,7 @@
   [store]
   (let [resolve-sym (schema-resolver store)]
     (vec
-     (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
+     (for [{:keys [ns name meta]} (edit.web/web-endpoint-rows store)
            k     [:web/request :web/response]
            :let  [schema (get meta k)
                   from   [ns name]
@@ -838,7 +838,7 @@
   [store]
   (let [resolve-sym (schema-resolver store)]
     (vec
-     (for [{:keys [ns name meta]} (web/web-endpoint-rows store)
+     (for [{:keys [ns name meta]} (edit.web/web-endpoint-rows store)
            k     [:web/request :web/response]
            :let  [schema (get meta k)
                   fields (when schema

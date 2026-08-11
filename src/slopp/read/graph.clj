@@ -25,10 +25,10 @@
             [slopp.index.analyze :as analyze]
             [slopp.index.derive :as derive]
             [slopp.index.refs :as refs]
-            [slopp.read.modules :as modules]
+            [slopp.read.modules :as read.modules]
             [slopp.rules.shape :as shape]
             [slopp.store :as store]
-            [slopp.store.render :as render]))
+            [slopp.store.render :as store.render]))
 
 (defn ^:export query-references
   "Usages of `ns-sym/nm` across EVERY namespace (F-3c3 — same-ns-only results
@@ -37,7 +37,7 @@
   [session ns-sym nm]
   (let [st (:store @session)]
     (vec (mapcat (fn [n]
-                   (derive/references (analyze/analyze (render/render-ns st n))
+                   (derive/references (analyze/analyze (store.render/render-ns st n))
                                      ns-sym nm))
                  (sort (keys (:namespaces st)))))))
 
@@ -47,7 +47,7 @@
   (let [internal? (:namespaces st)]
     (reduce
      (fn [adj ns-sym]
-       (let [an (analyze/analyze (render/render-ns st ns-sym))]
+       (let [an (analyze/analyze (store.render/render-ns st ns-sym))]
          (reduce (fn [adj u]
                    (if (and (:from-var u) (internal? (:to u)))
                      (update adj
@@ -192,7 +192,7 @@
   (let [st (:store @session)]
     (if modules
       (if (seq (str on))
-        (assoc (modules/module-surface session on) :kind :module-surface)
+        (assoc (read.modules/module-surface session on) :kind :module-surface)
         (let [manifest (or (edit.modules/modules-manifest st) {})
               rows     (edit.modules/module-usage-rows st)
               actual   (into #{}
@@ -205,17 +205,17 @@
                                   d      (sort ds)
                                   :when  (not (contains? actual [m d]))]
                               [m d]))
-              over     (modules/overstated-edges st rows)
+              over     (read.modules/overstated-edges st rows)
               ;; layers/cycles reflect PRODUCTION architecture (test fixtures excluded);
               ;; :manifest below stays the DECLARED/enforced set
-              graph    (store/module-layers (modules/production-manifest st rows))]
+              graph    (store/module-layers (read.modules/production-manifest st rows))]
           (cond-> {:kind :modules
                    :manifest (into (sorted-map)
                                    (map (fn [[m ds]] [m (vec (sort ds))]))
                                    manifest)
                    :layers (:layers graph)
-                   :debt (modules/module-debt st rows)
-                   :purity (let [p (modules/purity-standing st)]
+                   :debt (read.modules/module-debt st rows)
+                   :purity (let [p (read.modules/purity-standing st)]
                              ;; :could-tighten is a one-time ADOPTION worklist, but it
                              ;; rode every response: 2,304 of 5,584 chars (41%) on the
                              ;; eval9 seed, byte-identical across three calls in one

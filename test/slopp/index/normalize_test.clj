@@ -7,11 +7,11 @@
   (a stale auto-declare) are asserted to be silent on purpose rather than by
   omission."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.index.normalize :as norm]
+            [slopp.index.normalize :as normalize]
             [slopp.store :as store]
             [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
-(defn- normed [src] (:src (norm/normalize-source src)))
+(defn- normed [src] (:src (normalize/normalize-source src)))
 
 (deftest rewrite-rules
   (testing "kibit-classics, conservative set"
@@ -82,11 +82,11 @@
                     "(into [] xs)"               "(vec xs)"
                     "(filter (complement p) xs)" "(remove p xs)"
                     "(cond t x)"                 "(when t x)"}]
-    (is (= out (:src (norm/normalize-source in))) in))
+    (is (= out (:src (normalize/normalize-source in))) in))
   (testing "near-misses stay untouched"
     (doseq [src ["(= x y)" "(into [0] xs)" "(cond a b c d)"
                  "(filter pred xs)"]]
-      (is (= src (:src (norm/normalize-source src))) src))))
+      (is (= src (:src (normalize/normalize-source src))) src))))
 
 (deftest ^:external done-removes-stale-auto-declare-silently
   (let [sess (external/open!)]

@@ -17,7 +17,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
             [slopp.edit :as edit]
-            [slopp.store :as store] [slopp.ops.engine :as session] [slopp.ops.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
+            [slopp.store :as store] [slopp.ops.engine :as engine] [slopp.ops.external :as external] [rewrite-clj.parser :as p] [slopp.store.render :as store.render]))
 
 (deftest ^:external heal-replays-a-new-namespace-this-call-did-not-touch
   ;; The MERGE shape, and the gap the sibling test below does not cover.
@@ -49,7 +49,7 @@
             ;; sibling test, and the whole bug.
             ids  [(:id (store/form-named st3 'hp2.core 'hp2.core))
                   (:id (store/form-named st3 'hp2.core 'top))]
-            r    (#'session/hot-load-all! sess st3 ids)]
+            r    (#'engine/hot-load-all! sess st3 ids)]
         (is (not (re-find #"Could not locate" (str (:err r))))
             (str "the heal manufactured a classpath error: " (pr-str r)))
         (is (:healed r) (pr-str r))
@@ -83,7 +83,7 @@
             ids  (into [(:id (store/form-named st3 'hp.core 'hp.core))
                         (:id (store/form-named st3 'hp.core 'top))]
                        (mapv :id (store/forms st3 'hp.core.impl)))
-            r    (#'session/hot-load-all! sess st3 ids)]
+            r    (#'engine/hot-load-all! sess st3 ids)]
         (is (:healed r) (pr-str r))
         (is (= [3] (ops/query-eval sess "(hp.core/top 2)"))))
       (finally (ops/close! sess)))))
@@ -106,10 +106,10 @@
                                   "(deftest ^:external slow-t (is (= 2 (c/f 2))))\n")))]
     (testing "only the ^:external members come back — the rest already ran in-image"
       (is (= '[z.core-test/slow-t]
-             (session/external-among st '[z.core-test/fast-t z.core-test/slow-t]))))
+             (engine/external-among st '[z.core-test/fast-t z.core-test/slow-t]))))
     (testing "an all-in-image set routes nowhere: there is nothing for the
               external tier to do, which is NOT the same as a silent trace"
-      (is (empty? (session/external-among st '[z.core-test/fast-t]))))))
+      (is (empty? (engine/external-among st '[z.core-test/fast-t]))))))
 
 (deftest impacted-external-expands-untraced-forms-per-form
   ;; #127 gave the external tier trace-narrowing but kept the all-or-nothing
@@ -130,12 +130,12 @@
         fid  (:id (store/form-named st 'z.core 'f))
         gid  (:id (store/form-named st 'z.core 'g))]
     (testing "traced: only the ^:external half routes out — fast-t already ran in-image"
-      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [fid]))))
+      (is (= '[z.core-test/slow-t] (engine/impacted-external sess st [fid]))))
     (testing "an UNTRACED form expands to its namespace's reach instead of
               collapsing the whole answer to nil"
-      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [gid]))))
+      (is (= '[z.core-test/slow-t] (engine/impacted-external sess st [gid]))))
     (testing "mixed: the union, still never nil"
-      (is (= '[z.core-test/slow-t] (session/impacted-external sess st [fid gid]))))))
+      (is (= '[z.core-test/slow-t] (engine/impacted-external sess st [fid gid]))))))
 
 (deftest affected-tests-adds-declared-coverage-to-the-narrowed-set
   ;; ^{:covers} declares a test that reaches a form through a dispatch/data
@@ -152,7 +152,7 @@
         sess (atom {:store st :test-map {'f.t/traced #{'f.core/f}}})]
     (testing "the declared-coverage test is unioned into the trace-narrowed set"
       (is (= '[f.t/declared-cover f.t/traced]
-             (vec (sort (session/affected-tests sess 'f.core 'f))))))))
+             (vec (sort (engine/affected-tests sess 'f.core 'f))))))))
 
 (deftest affected-tests-consults-every-name-and-refuses-opaque-bodies
   ;; Two consequences of D8 land here. (1) Evidence arrives keyed by the VAR
@@ -193,17 +193,17 @@
               extend-based dispatch, so it is partial, and partial must not
               select. The synthetic p.core/m evidence here is exactly the kind
               a real run might NOT produce."
-      (is (nil? (session/affected-tests sess 'p.core 'P))))
+      (is (nil? (engine/affected-tests sess 'p.core 'P))))
     (testing "a defrecord form NEVER narrows — its method bodies are invisible
               to the tracer, so ->R evidence alone would under-select"
-      (is (nil? (session/affected-tests sess 'p.core 'R))))
+      (is (nil? (engine/affected-tests sess 'p.core 'R))))
     (testing "a defmethod form never narrows — the external tier records it at
               multi grain, and partial evidence must not select"
-      (is (nil? (session/affected-tests sess 'dm.core meth-id))))
+      (is (nil? (engine/affected-tests sess 'dm.core meth-id))))
     (testing "the defmulti itself narrows: every dispatched call records it, in
               both tiers, so its evidence is complete"
       (is (= '[dm.t/meth-t dm.t/multi-t]
-             (vec (sort (session/affected-tests sess 'dm.core 'area))))))))
+             (vec (sort (engine/affected-tests sess 'dm.core 'area))))))))
 
 (deftest impacted-tests-falls-back-per-form-not-globally
   ;; THE collapse (measured 2026-07-17): done! discarded ALL narrowing when ONE
@@ -236,18 +236,18 @@
         fid  (fn [nsx nm] (:id (store/form-named st nsx nm)))]
     (testing "all-traced: exactly the evidence, nothing else"
       (is (= '[pf.a-test/f-t]
-             (session/impacted-tests sess st [(fid 'pf.a 'f)]))))
+             (engine/impacted-tests sess st [(fid 'pf.a 'f)]))))
     (testing "an untraced form (pf.b's NS FORM — the 43.2% case) expands to the
               tests reaching ITS namespace only"
       (is (= '[pf.b-test/h-t]
-             (session/impacted-tests sess st [(fid 'pf.b 'pf.b)]))))
+             (engine/impacted-tests sess st [(fid 'pf.b 'pf.b)]))))
     (testing "mixed episode: the traced form KEEPS its narrow set — g-t, whose
               subject was not touched, is not dragged in by pf.b's ns form"
       (is (= '[pf.a-test/f-t pf.b-test/h-t]
-             (session/impacted-tests sess st [(fid 'pf.a 'f) (fid 'pf.b 'pf.b)]))))
+             (engine/impacted-tests sess st [(fid 'pf.a 'f) (fid 'pf.b 'pf.b)]))))
     (testing "a deleted fid is skipped, not an error"
       (is (= '[pf.a-test/f-t]
-             (session/impacted-tests sess st [(fid 'pf.a 'f) "f999"]))))))
+             (engine/impacted-tests sess st [(fid 'pf.a 'f) "f999"]))))))
 
 (deftest an-alias-only-require-addition-impacts-nothing
   ;; frictions #2: ns_add_require on a hub namespace invalidated every
@@ -274,22 +274,22 @@
     (testing "adding an alias-only in-store require impacts nothing"
       (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
                            "                   [ir.a :as a]))"))]
-        (is (= [] (session/impacted-tests sess st' [fid])))))
+        (is (= [] (engine/impacted-tests sess st' [fid])))))
     (testing "an added :refer is NOT inert — it can change resolution"
       (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
                            "                   [ir.a :refer [f]]))"))]
-        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+        (is (= '[ir.b-test/h-t] (engine/impacted-tests sess st' [fid])))))
     (testing "an added ns carrying defmethods is NOT inert — loading registers"
       (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
                            "                   [ir.m :as m]))"))]
-        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+        (is (= '[ir.b-test/h-t] (engine/impacted-tests sess st' [fid])))))
     (testing "an out-of-store lib is NOT inert — load effects unknown"
       (let [st' (edit (str "(ns ir.b (:require [clojure.string :as s]\n"
                            "                   [clojure.set :as cset]))"))]
-        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))
+        (is (= '[ir.b-test/h-t] (engine/impacted-tests sess st' [fid])))))
     (testing "a require REMOVAL is NOT inert"
       (let [st' (edit "(ns ir.b)")]
-        (is (= '[ir.b-test/h-t] (session/impacted-tests sess st' [fid])))))))
+        (is (= '[ir.b-test/h-t] (engine/impacted-tests sess st' [fid])))))))
 
 (deftest inert-require-respects-transitive-loads-and-metadata
   ;; review V-F1/V-F2: inert-ns-require-change? classified as inert two edits
@@ -307,19 +307,19 @@
         fid  (:id (store/form-named st 'tr.b 'tr.b))]
     (testing "V-F1: adding a method-free lib whose CLOSURE loads defmethods is NOT inert"
       (let [st' (edit "(ns tr.b (:require [tr.leaf :as l]))")]
-        (is (not (session/inert-ns-require-change? st' fid)))))
+        (is (not (engine/inert-ns-require-change? st' fid)))))
     (testing "a genuinely quiet leaf (no methods anywhere in its closure) stays inert"
       (let [st2 (store/ingest st 'tr.quiet "(ns tr.quiet)\n\n(defn q [x] x)\n")
             fid2 (:id (store/form-named st2 'tr.b 'tr.b))
             st' (first (store/replace-node st2 'tr.b 'tr.b
                                            (p/parse-string "(ns tr.b (:require [tr.quiet :as q]))")
                                            :prompt "t"))]
-        (is (session/inert-ns-require-change? st' fid2))))
+        (is (engine/inert-ns-require-change? st' fid2))))
     (testing "V-F2: an ns-NAME metadata change bundled with an alias add is NOT inert"
       (let [st' (edit "(ns ^:no-doc tr.b (:require [tr.quiet :as q]))")]
         ;; tr.quiet doesn't exist in `st` here, but the metadata change alone
         ;; must defeat inertness regardless
-        (is (not (session/inert-ns-require-change? st' fid)))))))
+        (is (not (engine/inert-ns-require-change? st' fid)))))))
 
 (deftest impacted-tests-diffs-against-the-last-done-not-the-newest-delta
   ;; review V-F3: an episode with TWO ns edits — the first adds a :refer
@@ -347,7 +347,7 @@
         sess (atom {:store st3 :test-map {'ep.b-test/h-t #{'ep.b/h}}})
         fid  (:id (store/form-named st3 'ep.b 'ep.b))]
     (testing "the episode's net ns change includes a :refer → NOT inert, tests selected"
-      (is (= '[ep.b-test/h-t] (session/impacted-tests sess st3 [fid]))))))
+      (is (= '[ep.b-test/h-t] (engine/impacted-tests sess st3 [fid]))))))
 
 (deftest an-endpoint-selects-the-tests-that-drive-its-route
   (let [s (store/ingest (store/empty-store) 'shop.api
@@ -360,14 +360,14 @@
         sess (atom {:store s :test-map {}})]
     (testing "with no trace evidence, the route join still names the covering test"
       (is (= '[shop.api-test/listing]
-             (session/affected-tests sess 'shop.api 'todos))))
+             (engine/affected-tests sess 'shop.api 'todos))))
     (testing "a non-endpoint form with no evidence still returns nil (run everything)"
-      (is (nil? (session/affected-tests sess 'shop.api-test 'unrelated-missing))))
+      (is (nil? (engine/affected-tests sess 'shop.api-test 'unrelated-missing))))
     (testing "recorded TRACE evidence still wins — the join is a fallback, not an override"
       (let [sess (atom {:store s
                         :test-map '{shop.api-test/unrelated #{shop.api/todos}}})]
         (is (= '[shop.api-test/unrelated]
-               (session/affected-tests sess 'shop.api 'todos)))))))
+               (engine/affected-tests sess 'shop.api 'todos)))))))
 
 (deftest a-heal-that-changed-the-error-reports-both
   ;; D-surface-honesty: when the heal's retry fails DIFFERENTLY from the
@@ -375,11 +375,11 @@
   ;; the pre-heal one is the fault. Reporting only :err is how a merge
   ;; refusal pointed at a classpath that was never the problem.
   (testing "no heal, or an unchanged error — the message is just the error"
-    (is (nil? (session/load-error-message nil)))
-    (is (nil? (session/load-error-message {:healed true})))
-    (is (= "boom" (session/load-error-message {:err "boom"}))))
+    (is (nil? (engine/load-error-message nil)))
+    (is (nil? (engine/load-error-message {:healed true})))
+    (is (= "boom" (engine/load-error-message {:err "boom"}))))
   (testing "a heal that changed the error carries the pre-heal one too"
-    (let [msg (session/load-error-message {:err "post" :first-err "pre"})]
+    (let [msg (engine/load-error-message {:err "post" :first-err "pre"})]
       (is (re-find #"post" msg))
       (is (re-find #"pre" msg))
       (is (re-find #"(?i)before" msg)
@@ -404,7 +404,7 @@
   ;; finding — which is the point of the split, and this test survives the move
   ;; as the specific statement of it.
   (let [st  (external/built-store)
-        src (render/render-ns st 'slopp.ops.engine)]
+        src (store.render/render-ns st 'slopp.ops.engine)]
     (testing "there is a population — the vacuity that ate a sibling guard"
       (is (< 50 (count (:namespaces st))))
       (is (re-find #"rebased-write!" src)
@@ -423,7 +423,7 @@
       ;; the HAYSTACK is real — a rendered namespace, over 50 namespaces in the
       ;; store — and neither of them can prove the NEEDLE still matches
       ;; anything. A population control is not a pattern control.
-      (is (seq (re-seq #"slopp\.webdev\.cljs" (render/render-ns st 'slopp.webdev.cljs)))
+      (is (seq (re-seq #"slopp\.webdev\.cljs" (store.render/render-ns st 'slopp.webdev.cljs)))
           "the pattern no longer matches a namespace that names itself, so the absence below proves nothing")
       (is (= [] (vec (re-seq #"slopp\.webdev\.cljs" src)))
           "the offending mentions are the failure value"))))
@@ -446,7 +446,7 @@
                              (str "(ns cl.core-test (:require [clojure.test :refer [deftest is]]\n"
                                   "                            [cl.core :as c]))\n"
                                   "(deftest t (is (= 1 (c/f))))\n")))
-        h  (fn [s] (get (session/closure-hashes s '[cl.core-test]) 'cl.core-test))
+        h  (fn [s] (get (engine/closure-hashes s '[cl.core-test]) 'cl.core-test))
         h0 (h st)]
     (testing "the same store hashes the same — a key recomputed is a key"
       (is (= h0 (h st))))
@@ -466,6 +466,6 @@
               different libraries are not the same verdict"
       (is (not= h0 (h (assoc st :deps {'org.clojure/data.json {:mvn/version "2.5.0"}})))))
     (testing "every namespace asked about gets an answer, and they differ"
-      (let [m (session/closure-hashes st '[cl.core-test cl.core cl.other])]
+      (let [m (engine/closure-hashes st '[cl.core-test cl.core cl.other])]
         (is (= '#{cl.core-test cl.core cl.other} (set (keys m))))
         (is (= 3 (count (set (vals m)))))))))

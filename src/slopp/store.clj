@@ -187,19 +187,31 @@
 
 (defn forms-named
   "EVERY form in `ns-sym` that answers to `nm` — the plural of `form-named`,
-  and the same matcher, so the two can never drift.
+  and the same matcher, so the two can never drift. `nm` may be a NAME or a
+  form ID; the id is what addresses a form that has no name.
 
   Normally 0 or 1. TWO means the namespace holds elements a NAME CANNOT TELL
   APART — in practice a legacy `(declare x)` beside its `(defn x …)`, since a
   declare defines the var (so it matches `:names`) while carrying no `:name`
   of its own. Destructive writes must refuse that rather than resolve it by
   position: picking the first match silently deletes the definition. See
-  `slopp.edit/ambiguous-form-error`."
+  `slopp.edit/ambiguous-form-error`.
+
+  **nil answers to NOTHING, and that guard is load-bearing.** A `defmethod`
+  and a `use-fixtures` have `:name nil`, so `(= nm (:name %))` with a nil `nm`
+  matched every nameless form in the namespace — `by-name` came back
+  non-empty, the ID fallback never ran, and a caller holding only an id was
+  told its form was AMBIGUOUS with every other nameless one. The refusal that
+  produced named the empty string, blamed a legacy declare that did not
+  exist, and recommended a cleanup that reported clean. Absence of a name is
+  not a name that means absence."
   [store ns-sym nm]
-  (let [fs      (forms store ns-sym)
-        by-name (filter #(or (contains? (:names %) nm) (= nm (:name %))) fs)]
-    (vec (or (seq by-name)
-             (filter #(= (str nm) (:id %)) fs)))))
+  (if (nil? nm)
+    []
+    (let [fs      (forms store ns-sym)
+          by-name (filter #(or (contains? (:names %) nm) (= nm (:name %))) fs)]
+      (vec (or (seq by-name)
+               (filter #(= (str nm) (:id %)) fs))))))
 
 (defn form-named
   "The form in `ns-sym` defining symbol `nm`, or nil.

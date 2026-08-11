@@ -30,10 +30,10 @@
   Lint here is EPISODE-scoped on purpose. Re-judging code this episode never
   touched is `full_check`'s job — done names it rather than doing it unasked."
   (:require [clojure.string :as str]
-            [slopp.ops.engine :as session]
+            [slopp.ops.engine :as engine]
             [slopp.index :as index]
             [slopp.index.normalize :as normalize]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.store :as store] [rewrite-clj.node :as n]))
 
 (defn normalize-rewrites "Which of the episode's `changed` form ids the normalizer would actually
@@ -86,7 +86,7 @@
                                   (some-> (re-find #"namespace (\S+) is required"
                                                    (:message f))
                                           second symbol)))
-                              (index/lint (render/render-ns st ns-sym)
+                              (index/lint (store.render/render-ns st ns-sym)
                                           (store/kondo-lang st ns-sym))))]
       (vec (for [spec (require-specs (n/sexpr (:node e)))
                  :let [lib (if (vector? spec) (first spec) spec)]
@@ -125,7 +125,7 @@
   (vec (for [ns-sym (distinct (map #(store/ns-of-form-id (:store @session) %)
                                    changed))
              :let [st*   (:store @session)
-                   src   (render/render-ns st* ns-sym)
+                   src   (store.render/render-ns st* ns-sym)
                    lines (vec (str/split-lines src))]
              f (index/lint src (store/kondo-lang st* ns-sym))
              :when (not (marked-unused? st* ns-sym f))]
@@ -134,7 +134,7 @@
          (cond-> (-> f
                      (dissoc :row :col)
                      (assoc :ns ns-sym
-                            :form (when-let [e (render/owner-form
+                            :form (when-let [e (store.render/owner-form
                                                 st* ns-sym
                                                 (:row f) (:col f))]
                                     (symbol (str ns-sym)
@@ -177,7 +177,7 @@
                                                             :prompt (or label "done normalization")
                                                             :agent agent)
                          touched     (distinct (map #(store/ns-of-form-id st' %) (keys changeset)))]
-                     (when-let [err (:err (session/hot-load-all! session st' (keys changeset)))]
+                     (when-let [err (:err (engine/hot-load-all! session st' (keys changeset)))]
                        (throw (ex-info (str "normalization failed to compile: " err) {})))
-                     (when-not (session/try-commit! session st st' (vec touched))
+                     (when-not (engine/try-commit! session st st' (vec touched))
                        (throw (ex-info "store changed during done — retry" {}))))))

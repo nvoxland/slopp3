@@ -15,7 +15,7 @@
   only against `native-incompatible-deps` — which is empty, because a missing
   reachability manifest is a WARN and not an incompatibility."
   (:require [slopp.store.db :as db]
-            [slopp.index.deps :as deps]))
+            [slopp.index.deps :as index.deps]))
 
 (defn ^:export analyze-dep!
   "Compute (or reuse the cached) API surface for `lib`@`coord` (M4) —
@@ -25,14 +25,14 @@
   [session lib coord]
   (try
     (let [conn (:db @session)
-          id   (deps/coord-key lib coord)]
+          id   (index.deps/coord-key lib coord)]
       (if-let [cached (some-> conn (db/get-dep-surface id))]
         cached
-        (let [jars (deps/dep-jars lib coord)                  ; resolve once
-              surf (deps/surface jars)]
+        (let [jars (index.deps/dep-jars lib coord)                  ; resolve once
+              surf (index.deps/surface jars)]
           (when conn
             (db/put-dep-surface! conn id surf)
-            (db/put-dep-native! conn id (deps/native-verdict jars)))  ; M6
+            (db/put-dep-native! conn id (index.deps/native-verdict jars)))  ; M6
           surf)))
     (catch Throwable _ nil)))
 
@@ -41,9 +41,9 @@
   dependency (M6). Best-effort; nil on failure."
   [session lib coord]
   (let [conn (:db @session)
-        id   (deps/coord-key lib coord)]
+        id   (index.deps/coord-key lib coord)]
     (or (some-> conn (db/get-dep-native id))
-        (try (deps/native-verdict (deps/dep-jars lib coord))
+        (try (index.deps/native-verdict (index.deps/dep-jars lib coord))
              (catch Throwable _ nil)))))
 
 (def ^:export native-incompatible-deps

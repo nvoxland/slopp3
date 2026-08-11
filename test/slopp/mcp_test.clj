@@ -17,7 +17,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [slopp.ops :as ops]
-            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.api.server :as ui-server] [slopp.web.client :as client] [slopp.read.history :as history]))
+            [slopp.mcp :as mcp] [clojure.java.io :as io] [slopp.store :as store] [slopp.store.db :as db] [clojure.java.shell :as sh] [slopp.sync :as sync] [clojure.string :as str] [slopp.mcp.tools :as tools] [slopp.read.query :as query] [slopp.ops.review :as review] [slopp.ops.external :as external] [rewrite-clj.node :as n] [slopp.mcp.smells :as smells] [slopp.api.server :as server] [slopp.web.client :as web.client] [slopp.read.history :as history]))
 
 (deftest ^:external protocol-handshake
   (let [sess (atom {})]
@@ -1392,7 +1392,7 @@
         (let [r (edn/read-string (call! sess "ui_serve" {:port 0}))]
           (is (pos? (:port r)) (pr-str r))
           (is (= (str "http://127.0.0.1:" (:port r) "/") (:url r)))
-          (is (re-find #"us\.only" (:http/body (client/request
+          (is (re-find #"us\.only" (:http/body (web.client/request
                                     {:http/url (str (:url r) "api/namespaces")})))
               "the served session is THIS one — a fresh session would not have
                us.only. Asserted against the API rather than the document,
@@ -1532,7 +1532,7 @@
             (let [r (mcp/start-ui! sess busy)]
               (is (some? (:url r)) (pr-str r))
               (is (not= busy (:port r)) (pr-str r)))
-            (finally (.close sock) (ui-server/stop!)))))
+            (finally (.close sock) (server/stop!)))))
       (testing "a free port comes up and reports where it is"
         ;; The port is picked by opening an ephemeral socket and CLOSING it, so
         ;; between that close and start-ui!'s bind anything on the machine may
@@ -1552,7 +1552,7 @@
                               [p res] (attempt)]
                          (if (or (= p (:port res)) (zero? tries))
                            [p res]
-                           (do (ui-server/stop!)
+                           (do (server/stop!)
                                (recur (dec tries) (attempt)))))]
           (is (= free (:port r)) (pr-str r))
           (is (re-find (re-pattern (str ":" free "/")) (str (:url r))) (pr-str r))
@@ -1570,9 +1570,9 @@
                     CONFIGURED port whether or not anything answered"
             (let [b (ops/session-brief sess)]
               (is (nil? (:hub b)) (pr-str (select-keys b [:ui :hub])))))
-          (ui-server/stop!)))
+          (server/stop!)))
       (finally
-        (ui-server/stop!)
+        (server/stop!)
         (ops/close! sess)))))
 
 (deftest targets-accepts-the-shapes-a-reader-would-try
@@ -1774,8 +1774,8 @@
   ;; same class: a gate sees var references, never a promise made in prose.
   ;; Anchored to the FACT rather than to a wording, so the day a page endpoint
   ;; comes back this guard stops firing instead of having to be argued with.
-  (doseq [n ui-server/served-namespaces] (require n))
-  (let [paths   (->> ui-server/served-namespaces
+  (doseq [n server/served-namespaces] (require n))
+  (let [paths   (->> server/served-namespaces
                      (mapcat (comp vals ns-publics))
                      (keep (comp :web/path meta))
                      sort vec)

@@ -30,14 +30,14 @@
   declare — not the within-module regroup this was."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.rules.keywords :as attrs]
+            [slopp.rules.keywords :as keywords]
             [slopp.read.history :as history]
             [slopp.read.orient :as orient]
             [slopp.read.telemetry :as telemetry]
             [slopp.edit :as edit]
             [slopp.index.refs :as refs]
-            [slopp.store.render :as render]
-            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.rules.web :as web] [slopp.read.graph :as graph]))
+            [slopp.store.render :as store.render]
+            [slopp.store :as store] [slopp.index.derive :as derive] [slopp.index.analyze :as analyze] [slopp.project.capabilities :as capabilities] [slopp.rules.web :as rules.web] [slopp.read.graph :as graph]))
 
 (defn ^:export query-sources
   "Batched read (ONE call, several targets): `targets` is a vector of
@@ -52,7 +52,7 @@
               {:ns ns :error "no such namespace"}
 
               (nil? name)
-              {:ns ns :source (render/render-ns st ns)}
+              {:ns ns :source (store.render/render-ns st ns)}
 
               :else
               (if-let [e (store/form-named st ns name)]
@@ -63,7 +63,7 @@
 (defn ^:export query-source
   "Render `ns-sym`'s current source from the store (the VFS read)."
   [session ns-sym]
-  (render/render-ns (:store @session) ns-sym))
+  (store.render/render-ns (:store @session) ns-sym))
 
 (defn ^:export ns-effectful-vars
   "The set of `ns/name` symbols in `ns-sym` that reach an effect (D6) — THE
@@ -80,7 +80,7 @@
   Members are qualified by the full namespace, so a caller looks up
   `(symbol (str ns-sym) (str nm))` rather than reconstructing an alias."
   [st ns-sym]
-  (derive/effectful-vars (analyze/analyze (render/render-ns st ns-sym))))
+  (derive/effectful-vars (analyze/analyze (store.render/render-ns st ns-sym))))
 
 (defn ^:export query-symbol
   "Describe the form defining `nm`: id, name, effectfulness (D6), source."
@@ -103,7 +103,7 @@
   docstring first line (the outline's token bulk)."
   [session ns-sym & {:keys [detail]}]
   (let [st  (:store @session)
-        an  (analyze/analyze (render/render-ns st ns-sym))
+        an  (analyze/analyze (store.render/render-ns st ns-sym))
         eff (ns-effectful-vars st ns-sym)]
     {:ns ns-sym
      :forms
@@ -351,7 +351,7 @@
    :user.address/*). Derived from the forms, so it reflects the current branch/
    revision exactly."
   [session & {:keys [ns]}]
-  (let [attrs (attrs/vocabulary (:store @session) :ns-prefix ns)]
+  (let [attrs (keywords/vocabulary (:store @session) :ns-prefix ns)]
     {:count (count attrs) :attributes attrs}))
 
 (defn ^:export query-rule-telemetry
@@ -382,4 +382,4 @@
    enforce, so what this shows is what the gates guaranteed. Disabled →
    `{:enabled false}` with the opt-in teaching."
   [session]
-  (web/routes-report (:store @session)))
+  (rules.web/routes-report (:store @session)))

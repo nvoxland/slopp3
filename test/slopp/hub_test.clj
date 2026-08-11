@@ -5,25 +5,25 @@
   (:require [clojure.test :refer [deftest is testing]]
             [malli.core :as m]
             [slopp.store :as store]
-            [slopp.hub :as beat]
-            [slopp.web :as web] [slopp.web.client :as client] [cheshire.core :as json] [clojure.string :as str]))
+            [slopp.hub :as hub]
+            [slopp.web :as slopp.web] [slopp.web.client :as web.client] [cheshire.core :as json] [clojure.string :as str]))
 
 (deftest a-beat-says-who-and-where-and-nothing-it-does-not-know
   (let [named (assoc-in (store/empty-store) [:config "capabilities" :values]
                         {"app.name" "Invoices" "app.version" "2.1.0"})]
     (testing "a store that names itself is listed under that name"
-      (is (= "Invoices" (:name (beat/payload named "/w/inv" "http://127.0.0.1:1/")))))
+      (is (= "Invoices" (:name (hub/payload named "/w/inv" "http://127.0.0.1:1/")))))
     (testing "a store that configured nothing still gets a name a human
               recognises — the directory's own, never a blank row"
-      (is (= "inv" (:name (beat/payload (store/empty-store) "/w/inv"
+      (is (= "inv" (:name (hub/payload (store/empty-store) "/w/inv"
                                         "http://127.0.0.1:1/"))))
-      (is (= "inv" (:name (beat/payload (store/empty-store) "/w/inv/"
+      (is (= "inv" (:name (hub/payload (store/empty-store) "/w/inv/"
                                         "http://127.0.0.1:1/")))
           "a trailing slash is not a nameless project"))
     (testing "the beat satisfies the contract the hub validates it against"
-      (let [p (beat/payload named "/w/inv" "http://127.0.0.1:1/")]
-        (is (m/validate beat/project-beat p)
-            (str "project-beat contract: " (m/explain beat/project-beat p)))
+      (let [p (hub/payload named "/w/inv" "http://127.0.0.1:1/")]
+        (is (m/validate hub/project-beat p)
+            (str "project-beat contract: " (m/explain hub/project-beat p)))
         (is (= "/w/inv" (:dir p)))
         (is (= "2.1.0" (:version p)))
         (is (pos? (:pid p)) "the pid is what lets a human find the process behind a stuck project")))))
@@ -40,7 +40,7 @@
   ;; with a deliberately tiny `:beat-ms`, and a second beat arriving quickly
   ;; is the observable proof the project took the number from the wire.
   (let [seen (atom [])
-        srv  (web/serve!
+        srv  (slopp.web/serve!
               {:web/namespaces []
                :web/routes
                [{:method :post :path "/api/register" :auth :public
@@ -62,7 +62,7 @@
                        (> n 100) false
                        :else (do (Thread/sleep 20) (recur (inc n))))))]
     (try
-      (let [hb (beat/start! url (constantly me))]
+      (let [hb (hub/start! url (constantly me))]
         (testing "the first beat is immediate, so a project is in the picker
                   as soon as its server is up rather than one interval later"
           (is (wait (fn [] (seq @seen))))
@@ -71,11 +71,11 @@
                   for — 30ms here, where the built-in default is ten seconds,
                   so arriving at all is the proof it came from the wire"
           (is (wait (fn [] (<= 2 (registers))))))
-        (beat/stop! hb)
+        (hub/stop! hb)
         (testing "a clean shutdown deregisters instead of leaving a row to go
                   stale on its own"
           (is (wait (fn [] (some (fn [e] (= [:deregister] e)) @seen))))))
-      (finally (web/stop! srv)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest the-hub-sets-the-interval-and-the-project-obeys-it
   ;; The split removed the shared constant. `beat-ms` lived in
@@ -89,15 +89,15 @@
   ;; `POST /api/register` answers `{:slug … :beat-ms …}`. The hub was already
   ;; telling us; nobody was listening.
   (testing "a hub that answers with an interval sets ours"
-    (is (= 250 (beat/interval-from {:slug "x" :beat-ms 250}))))
+    (is (= 250 (hub/interval-from {:slug "x" :beat-ms 250}))))
   (testing "a hub that says nothing leaves the default standing — an older hub,
             or one that answered with something unexpected, must not turn the
             beat into a busy loop or stop it altogether"
-    (is (= beat/default-beat-ms (beat/interval-from {:slug "x"})))
-    (is (= beat/default-beat-ms (beat/interval-from nil)))
-    (is (= beat/default-beat-ms (beat/interval-from {:beat-ms "soon"})))
-    (is (= beat/default-beat-ms (beat/interval-from {:beat-ms 0})))
-    (is (= beat/default-beat-ms (beat/interval-from {:beat-ms -5})))))
+    (is (= hub/default-beat-ms (hub/interval-from {:slug "x"})))
+    (is (= hub/default-beat-ms (hub/interval-from nil)))
+    (is (= hub/default-beat-ms (hub/interval-from {:beat-ms "soon"})))
+    (is (= hub/default-beat-ms (hub/interval-from {:beat-ms 0})))
+    (is (= hub/default-beat-ms (hub/interval-from {:beat-ms -5})))))
 
 (deftest a-project-can-name-its-own-page-only-once-a-hub-has-answered
   ;; Orientation advertised `:hub` from the moment the beat STARTED, so a
@@ -108,15 +108,15 @@
   ;; and throwing everything but `:beat-ms` away.
   (testing "an answered beat yields the project's own page on the hub"
     (is (= "http://127.0.0.1:7359/p/slopp2"
-           (beat/hub-address "http://127.0.0.1:7359/" {:slug "slopp2" :beat-ms 10}))))
+           (hub/hub-address "http://127.0.0.1:7359/" {:slug "slopp2" :beat-ms 10}))))
   (testing "no answer, or an answer with no slug, yields NOTHING — a hub that
             is not running is the ordinary case, and the honest report of it is
             absence, not the configured address"
-    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" nil)))
-    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:beat-ms 10})))
-    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:slug ""}))
+    (is (nil? (hub/hub-address "http://127.0.0.1:7359/" nil)))
+    (is (nil? (hub/hub-address "http://127.0.0.1:7359/" {:beat-ms 10})))
+    (is (nil? (hub/hub-address "http://127.0.0.1:7359/" {:slug ""}))
         "a blank slug is not an address")
-    (is (nil? (beat/hub-address "http://127.0.0.1:7359/" {:slug "   "})))))
+    (is (nil? (hub/hub-address "http://127.0.0.1:7359/" {:slug "   "})))))
 
 (deftest ^:external the-beat-hands-every-answer-back-so-the-address-tracks-the-hub
   ;; `hub-address` is only useful if something feeds it the CURRENT answer. The
@@ -128,7 +128,7 @@
   ;; Every beat, not just the first: a hub that goes away must make the address
   ;; go away too, or this is the same stale-claim bug one layer along.
   (let [answers (atom [])
-        srv (web/serve!
+        srv (slopp.web/serve!
              {:web/namespaces []
               :web/routes
               [{:method :post :path "/api/register" :auth :public
@@ -144,25 +144,25 @@
                        (> n 100) false
                        :else (do (Thread/sleep 20) (recur (inc n))))))]
     (try
-      (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+      (let [hb (hub/start! url (constantly me) #(swap! answers conj %))]
         (try
           (testing "the answer arrives, repeatedly, and carries the slug"
             (is (wait (fn [] (<= 2 (count @answers)))))
             (is (every? #(= "toy" (:slug %)) @answers) (pr-str @answers)))
           (testing "which is exactly what hub-address needs"
-            (is (= (str url "p/toy") (beat/hub-address url (last @answers)))))
-          (finally (beat/stop! hb))))
+            (is (= (str url "p/toy") (hub/hub-address url (last @answers)))))
+          (finally (hub/stop! hb))))
       (testing "a hub that stops answering reports nil, so the address it
                 supported stops being claimed"
-        (web/stop! srv)
+        (slopp.web/stop! srv)
         (reset! answers [])
-        (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+        (let [hb (hub/start! url (constantly me) #(swap! answers conj %))]
           (try
             (is (wait (fn [] (seq @answers))))
             (is (every? nil? @answers) (pr-str @answers))
-            (is (nil? (beat/hub-address url (last @answers))))
-            (finally (beat/stop! hb)))))
-      (finally (web/stop! srv)))))
+            (is (nil? (hub/hub-address url (last @answers))))
+            (finally (hub/stop! hb)))))
+      (finally (slopp.web/stop! srv)))))
 
 (deftest ^:external a-hub-that-REFUSES-the-beat-is-not-a-hub-that-is-absent
   ;; `post!` returned nil for a refused connection AND for a 4xx, so "no hub is
@@ -178,7 +178,7 @@
   ;; the whole drift-detection story is "the hub 400s and we say so" — and if we
   ;; swallow the 400, there is no story at all.
   (let [refuse (fn [status body]
-                 (web/serve!
+                 (slopp.web/serve!
                   {:web/namespaces []
                    :web/routes [{:method :post :path "/api/register" :auth :public
                                  :handler (fn [_] {:status status :body body})}]
@@ -195,24 +195,24 @@
                              :explain {:dir ["missing required key"]}})
             url (str "http://127.0.0.1:" (:port srv) "/")]
         (try
-          (let [hb (beat/start! url (constantly me) #(swap! answers conj %))]
+          (let [hb (hub/start! url (constantly me) #(swap! answers conj %))]
             (try
               (is (wait (fn [] (seq @answers))))
               (let [a (last @answers)]
                 (is (some? a)
                     "nil is what made a refusal look like an absent hub")
-                (is (beat/refused? a) (pr-str a))
+                (is (hub/refused? a) (pr-str a))
                 (is (re-find #"missing required key" (pr-str a))
                     (str "the hub's explain must survive the trip, or drift is"
                          " undiagnosable from this side: " (pr-str a))))
-              (finally (beat/stop! hb))))
-          (finally (web/stop! srv)))))
+              (finally (hub/stop! hb))))
+          (finally (slopp.web/stop! srv)))))
     (testing "and a refusal yields NO address — we are not registered, so there
               is no page to hand anyone"
-      (is (nil? (beat/hub-address "http://127.0.0.1:7359/" (last @answers)))))
+      (is (nil? (hub/hub-address "http://127.0.0.1:7359/" (last @answers)))))
     (testing "nor does it change the beat interval: a hub refusing us must not
               also become a hub we hammer"
-      (is (= beat/default-beat-ms (beat/interval-from (last @answers)))))
+      (is (= hub/default-beat-ms (hub/interval-from (last @answers)))))
     (testing "an ABSENT hub is still a quiet nil — nobody has to run one"
       (reset! answers [])
       (let [;; NOT an ephemeral port opened-and-closed: that races. A sibling
@@ -224,12 +224,12 @@
             ;; it, while CONNECTING needs no privilege and simply refuses —
             ;; the same idiom the `me` fixture above already relies on.
             dead 1
-            hb   (beat/start! (str "http://127.0.0.1:" dead "/")
+            hb   (hub/start! (str "http://127.0.0.1:" dead "/")
                               (constantly me) #(swap! answers conj %))]
         (try
           (is (wait (fn [] (seq @answers))))
           (is (nil? (last @answers)) (pr-str @answers))
-          (finally (beat/stop! hb)))))))
+          (finally (hub/stop! hb)))))))
 
 (deftest the-beat-loop-is-checkable-without-a-network
   ;; Everything this asserts was already asserted — in three `^:external` tests
@@ -265,54 +265,54 @@
     (testing "the first beat is immediate and the second arrives at the interval
               the hub asked for — 20ms, where the compiled-in default is ten
               seconds, so a second beat at all is proof it came from the wire"
-      (let [hb (beat/start! hub (constantly me) #(swap! answers conj %)
-                            (client/fake-requester hub routes))]
+      (let [hb (hub/start! hub (constantly me) #(swap! answers conj %)
+                            (web.client/fake-requester hub routes))]
         (try
           (is (wait (fn [] (<= 2 (beats)))))
           (is (str/includes? (second (first @seen)) "toy")
               "the payload has to actually reach the hub")
           (is (every? (fn [a] (= "toy" (:slug a))) @answers) (pr-str @answers))
-          (finally (beat/stop! hb))))
+          (finally (hub/stop! hb))))
       (testing "and an orderly stop says goodbye rather than leaving a row to
                 age out on its own"
         (is (wait (fn [] (some (fn [e] (= [:deregister] e)) @seen))))))
     (testing "a hub that REFUSES is not a hub that is absent — the distinction
               the whole port exists to keep, checked here without a socket"
-      (let [refusing (client/fake-requester
+      (let [refusing (web.client/fake-requester
                       hub {[:post "/api/register"]
                            (fn [_] {:status 400
                                     :body (json/generate-string
                                            {:explain {:dir ["missing required key"]}})})})
             got (atom [])
-            hb  (beat/start! hub (constantly me) #(swap! got conj %) refusing)]
+            hb  (hub/start! hub (constantly me) #(swap! got conj %) refusing)]
         (try
           (is (wait (fn [] (seq @got))))
           (let [a (last @got)]
             (is (some? a) "nil is what made a refusal look like an absent hub")
-            (is (beat/refused? a) (pr-str a))
+            (is (hub/refused? a) (pr-str a))
             (is (str/includes? (pr-str a) "missing required key")
                 "the hub's explanation must survive, or drift is undiagnosable"))
-          (is (nil? (beat/hub-address hub (last @got)))
+          (is (nil? (hub/hub-address hub (last @got)))
               "a refused beat registered nothing, so there is no page to offer")
-          (finally (beat/stop! hb)))))
+          (finally (hub/stop! hb)))))
     (testing "an ABSENT hub is a quiet nil — nobody has to run one"
       (let [got (atom [])
-            hb  (beat/start! hub (constantly me) #(swap! got conj %)
-                             (client/fake-requester "http://elsewhere.test/" {}))]
+            hb  (hub/start! hub (constantly me) #(swap! got conj %)
+                             (web.client/fake-requester "http://elsewhere.test/" {}))]
         (try
           (is (wait (fn [] (seq @got))))
           (is (nil? (last @got)) (pr-str @got))
-          (finally (beat/stop! hb)))))
+          (finally (hub/stop! hb)))))
     (testing "a callback that THROWS must not take the beat down — documented
               since the loop was written, and never once checked"
       (reset! seen [])
-      (let [hb (beat/start! hub (constantly me)
+      (let [hb (hub/start! hub (constantly me)
                             (fn [_] (throw (ex-info "callers break" {})))
-                            (client/fake-requester hub routes))]
+                            (web.client/fake-requester hub routes))]
         (try
           (is (wait (fn [] (<= 2 (beats))))
               "the loop kept registering despite the callback throwing every time")
-          (finally (beat/stop! hb)))))))
+          (finally (hub/stop! hb)))))))
 
 (deftest a-bug-we-own-is-not-a-hub-that-is-absent
   ;; The third collapse in the same function, and the one nothing caught.
@@ -342,19 +342,19 @@
                         :else (do (Thread/sleep 5) (recur (inc n))))))
         ;; a function value is not JSON, so generate-string throws before the
         ;; request is ever made — a bug entirely on our side of the wire
-        hb    (beat/start! hub (constantly {:name (fn [] :not-serialisable)})
+        hb    (hub/start! hub (constantly {:name (fn [] :not-serialisable)})
                            #(swap! got conj %)
-                           (client/fake-requester hub routes))]
+                           (web.client/fake-requester hub routes))]
     (try
       (is (wait (fn [] (seq @got))))
       (let [a (last @got)]
         (is (some? a)
             "nil here is the bug: it is indistinguishable from an absent hub")
         (is (:hub/error a) (pr-str a))
-        (is (not (beat/refused? a)) "a bug of ours is not the hub refusing us")
-        (is (nil? (beat/hub-address hub a))
+        (is (not (hub/refused? a)) "a bug of ours is not the hub refusing us")
+        (is (nil? (hub/hub-address hub a))
             "and it registered nothing, so there is no page to offer")
-        (is (= beat/default-beat-ms (beat/interval-from a))
+        (is (= hub/default-beat-ms (hub/interval-from a))
             "nor does it change the interval"))
       (testing "and the loop SURVIVES it — a broken payload must not stop the
                 beat, or one bad field takes the project off the picker for
@@ -362,4 +362,4 @@
                 an errored answer falls back to the ten-second default
                 interval, so counting beats here would measure the clock"
         (is (.isAlive ^Thread (:thread hb))))
-      (finally (beat/stop! hb)))))
+      (finally (hub/stop! hb)))))

@@ -14,7 +14,7 @@
   SURVIVES a round trip through the log alone. `replay-delta` is the honest
   oracle for that, and a new op earns its place by replaying."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.store :as store] [rewrite-clj.parser :as p] [slopp.store.render :as render]))
+            [slopp.store :as store] [rewrite-clj.parser :as p] [slopp.store.render :as store.render]))
 
 (def src "(ns foo)\n\n(defn add [x y]\n  (+ x y))\n\n;; a comment\n(def z 1)\n")
 
@@ -150,7 +150,7 @@
         [s-b d-b] (store/append-form base 't.core (p/parse-string "(defn b [] 2)"))
         [s-c _]   (store/append-form s-b 't.core (p/parse-string "(defn c [] 3)")
                                      :before 'b)
-        render    (fn [st] (render/render-ns st 't.core))]
+        render    (fn [st] (store.render/render-ns st 't.core))]
     (testing "a tail-appended form gets a blank line before it (top-level convention)"
       (is (= "(ns t.core)\n\n(defn a [] 1)\n\n(defn b [] 2)\n" (render s-b))))
     (testing "an anchored insert is blank-line separated on both sides"
@@ -413,7 +413,7 @@
                          "(ns cm.core)\n\n(defn f [] 1)\n")
         [st' d] (store/set-comment st 'cm.core 'f ";; why f is the way it is")]
     (testing "it renders directly above its form"
-      (let [src (render/render-ns st' 'cm.core)]
+      (let [src (store.render/render-ns st' 'cm.core)]
         (is (re-find #";; why f is the way it is\n\(defn f \[\] 1\)" src) (pr-str src))))
     (testing "the DELTA carries it — this is what the journal was missing"
       (is (= :comment (:op d)))
@@ -422,12 +422,12 @@
     (testing "a foreign replay reconstructs it from the log alone"
       (let [replayed (store/replay-delta st d)]
         (is (some? replayed) "the op must be replayable, not a full-reload fallback")
-        (is (= (render/render-ns st' 'cm.core)
-               (render/render-ns replayed 'cm.core)))))
+        (is (= (store.render/render-ns st' 'cm.core)
+               (store.render/render-ns replayed 'cm.core)))))
     (testing "clearing it removes the comment and leaves the form alone"
       (let [[st'' _] (store/set-comment st' 'cm.core 'f "")]
-        (is (not (re-find #"why f is" (render/render-ns st'' 'cm.core))))
-        (is (re-find #"\(defn f \[\] 1\)" (render/render-ns st'' 'cm.core)))))
+        (is (not (re-find #"why f is" (store.render/render-ns st'' 'cm.core))))
+        (is (re-find #"\(defn f \[\] 1\)" (store.render/render-ns st'' 'cm.core)))))
     (testing "code is refused — forms come in through the form verbs, which verify"
       (is (:error (store/set-comment st 'cm.core 'f ";; ok\n(def sneaky 1)"))))
     (testing "an unknown form is an error, not a silent no-op"
@@ -448,13 +448,13 @@
         [st' _] (store/set-comment st 'rs.core 'b ";; b is special")]
     (testing "one blank line between forms, whatever whitespace was stored"
       (is (= "(ns rs.core)\n\n(defn a [] 1)\n\n;; b is special\n(defn b [] 2)\n"
-             (render/render-ns st' 'rs.core))))
+             (store.render/render-ns st' 'rs.core))))
     (testing "a comment sits directly above its form, inside the gap"
-      (is (re-find #"\n\n;; b is special\n\(defn b" (render/render-ns st' 'rs.core))))
+      (is (re-find #"\n\n;; b is special\n\(defn b" (store.render/render-ns st' 'rs.core))))
     (testing "the file ends with exactly one newline"
-      (is (re-find #"\)\n\z" (render/render-ns st' 'rs.core))))
+      (is (re-find #"\)\n\z" (store.render/render-ns st' 'rs.core))))
     (testing "an empty namespace renders empty, not a stray newline"
-      (is (= "" (render/render-ns (store/empty-store) 'nope.core))))))
+      (is (= "" (store.render/render-ns (store/empty-store) 'nope.core))))))
 
 (deftest writes-never-create-separator-elements
   ;; Rendering supplies the space between forms, so nothing stores it. A
@@ -475,13 +475,13 @@
         (is (empty? (seps s2)))
         (is (= (str "(ns w.core)\n\n(defn d [] 4)\n\n(defn a [] 1)\n\n"
                     "(defn b [] 2)\n\n(defn c [] 3)\n")
-               (render/render-ns s2 'w.core)))
+               (store.render/render-ns s2 'w.core)))
         (testing "move and delete — neither has a trailing separator to carry"
           (let [[s3] (store/move-form s2 'w.core 'c 'a)
                 [s4] (store/remove-form s3 'w.core 'b)]
             (is (empty? (seps s4)))
             (is (= "(ns w.core)\n\n(defn d [] 4)\n\n(defn c [] 3)\n\n(defn a [] 1)\n"
-                   (render/render-ns s4 'w.core)))))))))
+                   (store.render/render-ns s4 'w.core)))))))))
 
 (deftest a-discarded-form-is-not-silently-dropped
   ;; `#_(...)` is CODE that the reader throws away, and rewrite-clj reports it
@@ -502,7 +502,7 @@
       (is (= "#_(defn old [] 1)" (:comment el))))
     (testing "and survives rendering"
       (is (= "(ns d.core)\n\n#_(defn old [] 1)\n(defn fresh [] 2)\n"
-             (render/render-ns s 'd.core))))))
+             (store.render/render-ns s 'd.core))))))
 
 (deftest replay-covers-ingest-and-move
   ;; `replay-delta` returning nil means "I cannot do this — reload everything".
@@ -519,12 +519,12 @@
     (testing ":ingest replays from the log alone — order, sources and comments"
       (let [back (store/replay-delta base d1)]
         (is (some? back) "ingest must not force a reload")
-        (is (= (render/render-ns s1 'r.core) (render/render-ns back 'r.core)))))
+        (is (= (store.render/render-ns s1 'r.core) (store.render/render-ns back 'r.core)))))
     (testing ":move replays to the same order the live write produced"
       (let [[s2 d2] (store/move-form s1 'r.core 'b 'a)
             back    (store/replay-delta s1 d2)]
         (is (some? back) "move must not force a reload")
-        (is (= (render/render-ns s2 'r.core) (render/render-ns back 'r.core)))
+        (is (= (store.render/render-ns s2 'r.core) (store.render/render-ns back 'r.core)))
         (is (= ['r.core 'b 'a]
                (mapv :name (get-in back [:namespaces 'r.core :elements]))))))))
 
@@ -547,7 +547,7 @@
                                             {fid (p/parse-string "(defn a [] 99)")})
               back   (store/replay-delta s0 d)]
           (is (some? back) (str op " must not force a reload"))
-          (is (= (render/render-ns s1 'cs.core) (render/render-ns back 'cs.core))))))
+          (is (= (store.render/render-ns s1 'cs.core) (store.render/render-ns back 'cs.core))))))
     (testing ":rename-ns rewrites AND rekeys the namespace"
       (let [[s1 d] (store/apply-changeset s0 :rename-ns 'cs.core
                                           {fid (p/parse-string "(defn a [] 2)")}
@@ -557,7 +557,7 @@
             back   (store/replay-delta s0 d)]
         (is (some? back) ":rename-ns must not force a reload")
         (is (nil? (get-in back [:namespaces 'cs.core])) "the old name is gone")
-        (is (= (render/render-ns s2 'cs.moved) (render/render-ns back 'cs.moved)))))))
+        (is (= (store.render/render-ns s2 'cs.moved) (store.render/render-ns back 'cs.moved)))))))
 
 (deftest folding-the-journal-reproduces-the-store
   ;; THE invariant. Once the git projection derives each milestone's tree by
@@ -596,7 +596,7 @@
     (testing "and the result renders identically, namespace for namespace"
       (is (= (set (keys (:namespaces s8))) (set (keys (:namespaces folded)))))
       (doseq [n (keys (:namespaces s8))]
-        (is (= (render/render-ns s8 n) (render/render-ns folded n))
+        (is (= (store.render/render-ns s8 n) (store.render/render-ns folded n))
             (str n " does not survive a journal round trip"))))
     (testing "including the comment lifecycle — set, carried, and cleared"
       (is (= ";; added later"
@@ -679,3 +679,26 @@
       (is (nil? (store/form-name-meta nil)))
       (is (nil? (store/form-name-meta {})))
       (is (nil? (store/form-name-meta {:node nil}))))))
+
+(deftest nil-is-not-a-name-and-answers-to-nothing
+  ;; `forms-named` matches `(= nm (:name %))`, and a nameless form has
+  ;; `:name nil` — so asking for nil matched EVERY nameless form, `by-name`
+  ;; came back non-empty, and the id fallback below it never ran. A caller
+  ;; that had only an id for a `defmethod` therefore got "ambiguous: 4 forms
+  ;; bear on " — a refusal naming the empty string, blaming a legacy declare
+  ;; that was not there, and recommending a cleanup that reports clean.
+  (let [st (store/ingest (store/empty-store) 'nn.core
+                         (str "(ns nn.core)\n\n"
+                              "(defmulti kind :k)\n\n"
+                              "(defmethod kind :a [_] :A)\n\n"
+                              "(defmethod kind :b [_] :B)\n\n"
+                              "(defn named \"N.\" [] 1)\n"))
+        nameless (remove :name (store/forms st 'nn.core))]
+    (is (= 2 (count nameless)) "two defmethods, neither with a name")
+    (testing "nil answers to nothing, however many nameless forms there are"
+      (is (= [] (store/forms-named st 'nn.core nil))))
+    (testing "and an ID still addresses exactly the form it names"
+      (let [one (first nameless)]
+        (is (= [(:id one)] (mapv :id (store/forms-named st 'nn.core (:id one)))))))
+    (testing "a real name is unaffected"
+      (is (= '[named] (mapv :name (store/forms-named st 'nn.core 'named)))))))

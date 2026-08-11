@@ -5,7 +5,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.java.shell]
             [slopp.store :as store]
-            [slopp.ops :as ops] [slopp.ops.engine :as session] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
+            [slopp.ops :as ops] [slopp.ops.engine :as engine] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.read.history :as history]))
 
 (def seed
   (str "(ns cc.core)\n"
@@ -45,9 +45,9 @@
       ;; commit, a competing write to the SAME form lands (one-shot: the hook
       ;; must not re-fire on the rebase retry)
       (let [fired (atom false)
-            r (binding [session/*pre-commit-hook*
+            r (binding [engine/*pre-commit-hook*
                         (fn [] (when (compare-and-set! fired false true)
-                                 (binding [session/*pre-commit-hook* nil]
+                                 (binding [engine/*pre-commit-hook* nil]
                                    (ops/edit-replace! sess 'cc.core 'a
                                                       "(defn a [x] :competitor)"
                                                       :prompt "raced in first"))))]
@@ -60,9 +60,9 @@
           (is (not (re-find #":loser" (query/query-source sess 'cc.core))))))
       (testing "but a DIFFERENT-form competitor rebases cleanly instead"
         (let [fired (atom false)
-              r (binding [session/*pre-commit-hook*
+              r (binding [engine/*pre-commit-hook*
                           (fn [] (when (compare-and-set! fired false true)
-                                   (binding [session/*pre-commit-hook* nil]
+                                   (binding [engine/*pre-commit-hook* nil]
                                      (ops/edit-replace! sess 'cc.core 'b
                                                         "(defn b [x] :other)"
                                                         :prompt "raced, different form"))))]
@@ -141,9 +141,9 @@
           (let [b (external/open! {:slopp.ops/dir dir})]
             (try
               (let [fired (atom false)
-                    r (binding [session/*pre-commit-hook*
+                    r (binding [engine/*pre-commit-hook*
                                 (fn [] (when (compare-and-set! fired false true)
-                                         (binding [session/*pre-commit-hook* nil]
+                                         (binding [engine/*pre-commit-hook* nil]
                                            (ops/edit-replace! b 'ch.core 'f
                                                               "(defn ^:unused-ok f \"D.\" [x] :winner)"
                                                               :prompt "raced in first"))))]

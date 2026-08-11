@@ -2,76 +2,52 @@
   "Bridge the store to the owned live image: load a namespace's forms straight
   from the CRDT into the running JVM (no disk, C1), and run its tests there,
   recording the green/red result as provenance (D5/D6, C4)."
-  (:require [slopp.store.render :as render]
+  (:require [slopp.store.render :as store.render]
             [slopp.image.repl :as repl]
-            [slopp.store :as store] [slopp.kernel.rt :as rt] [slopp.image.currency :as currency] [rewrite-clj.node :as n]))
-
-(defn load-ns-into!
-  "Evaluate `ns-sym`'s current source (rendered from the store) into `handle`
-  and mark it in `*loaded-libs*`. Returns the compile error, or nil.
-
-  The LOADING half of `load-ns!`, without the currency stamp — for an image
-  that is not the oracle.
-
-  `slopp.image.currency` is a single process-global registry answering \"does
-  the image hold this form's current source\", and the image it means is THE
-  oracle. `webdev.live` boots a second image on purpose (the oracle is
-  cycled by ordinary editing, so it cannot host a running app), and stamping
-  that image's loads would file them as the oracle's: every currency surface
-  would then report forms as current in a process that never saw them.
-
-  So the stamp is not incidental to loading, and neither is skipping it. If
-  the registry ever becomes per-image, these two collapse back into one
-  function and this docstring should go with them.
-
-  Marks `*loaded-libs*` for the same reason `load-ns!` does: store
-  namespaces have no classpath presence, so without it a later `:require`
-  from another store namespace hits the classpath and fails.
-
-  Skips a `:cljs` namespace (never loadable into a JVM) and returns nil."
-  [handle store ns-sym]
-  (when (store/jvm-loadable? store ns-sym)
-    (let [res (repl/load-checked! handle
-                                  (render/render-ns store ns-sym)
-                                  (render/ns-path ns-sym (store/platform-for store ns-sym)))]
-      (repl/eval! handle
-                  (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
-                          ns-sym))
-      (:err res))))
+            [slopp.store :as store] [slopp.kernel.rt :as rt] [slopp.image.currency :as image.currency] [rewrite-clj.node :as n]))
 
 (defn load-ns!
-  "Evaluate `ns-sym`'s current source into THE ORACLE and stamp it.
+  "Evaluate `ns-sym`'s current source (rendered from the store) into `image`,
+  mark it in `*loaded-libs*`, and stamp what it loaded. Returns the compile
+  error, or nil.
 
-  `load-ns-into!` does the loading; this adds the `slopp.image.currency`
-  stamp, which is the only difference and is oracle-specific — the registry
-  is one process-global record of what the oracle holds. Use `load-ns-into!`
-  for any other image.
+  ONE loader. There used to be two — this and `load-ns-into!` — because the
+  currency record was a single process-global atom meaning THE oracle, so an
+  image that was not the oracle had to be loaded through a door that did not
+  stamp. The record now belongs to the image it describes, so stamping the
+  image you just loaded is correct for every image and there is no door to
+  pick wrong.
 
-  Stamps every form it loaded, the whole-namespace counterpart to
-  `hot-load-form!`'s per-form stamp. Only on success: a namespace that failed
-  to compile is not in the image. The `jvm-loadable?` guard is kept HERE as
-  well as inside `load-ns-into!` — without it a skipped `:cljs` namespace
-  would come back nil, read as success, and stamp forms the image never saw.
+  Doors are still a real hazard, and this docstring carried the warning that
+  says why: any path evaluating a form into an image and not stamping reports
+  its whole namespace as `:never-loaded`. `ingest!` did exactly that for a
+  release, because an enumeration reading as complete stopped anyone counting.
+  What is gone is the SECOND hazard layered on top — where stamping in the
+  wrong PLACE was also a bug, and correctness rested on each caller choosing.
 
-  There are THREE doors, not two. This one, `hot-load-form!`, and
-  `api/ingest!` — which renders and calls `repl/load-checked!` itself rather
-  than coming through here. This docstring used to say \"those two are the
-  only doors\", which is how ingest went unstamped: an enumeration that reads
-  as complete stops anyone counting. Every ingested namespace therefore
-  reported as `:never-loaded` for the life of the session, and nothing
-  derived from one could be judged stale at all.
+  Stamps only on success: a namespace that failed to compile is not in the
+  image, and recording it as loaded manufactures the false green the whole
+  registry exists to prevent.
 
-  A door into the ORACLE that does not stamp reports its whole namespace as
-  never-loaded, so if you add a fourth, stamp there too. A door into another
-  image must NOT stamp — that is `load-ns-into!`, and the distinction is the
-  image, not the caller's convenience."
-  [handle store ns-sym]
+  Marks `*loaded-libs*` because store namespaces have no classpath presence —
+  without it a later `:require` from another store namespace hits the
+  classpath and fails.
+
+  Skips a `:cljs` namespace (never loadable into a JVM) and returns nil. The
+  guard sits here rather than only inside the load, or a skipped namespace
+  comes back nil, reads as success, and stamps forms the image never saw."
+  [image store ns-sym]
   (when (store/jvm-loadable? store ns-sym)
-    (let [err (load-ns-into! handle store ns-sym)]
-      (when-not err
+    (let [res (repl/load-checked! image
+                                  (store.render/render-ns store ns-sym)
+                                  (store.render/ns-path ns-sym (store/platform-for store ns-sym)))]
+      (repl/eval! image
+                  (format "(dosync (commute (deref #'clojure.core/*loaded-libs*) conj '%s))"
+                          ns-sym))
+      (when-not (:err res)
         (doseq [e (store/elements store ns-sym)]
-          (currency/stamp! (:id e) (n/string (:node e)))))
-      err)))
+          (image.currency/stamp! image (:id e) (n/string (:node e)))))
+      (:err res))))
 
 ^:reads (defn test-run
   "Run `ns-sym`'s clojure.test tests in the live image; returns the summary map

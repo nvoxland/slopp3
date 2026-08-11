@@ -15,7 +15,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [slopp.store :as store]
             [slopp.edit :as edit]
-            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store.render :as render]))
+            [slopp.ops :as ops] [slopp.read.query :as query] [slopp.ops.external :as external] [clojure.string :as str] [slopp.store.render :as store.render]))
 
 (deftest ^:external unparseable-source-returns-error-not-throw   ; F3
   (testing "pure gate"
@@ -530,7 +530,7 @@
   ;; delimiter it does not close is correctly refused — so a two-line change
   ;; to a 40-line form cost a 40-line paste, three times in one session.
   (let [sess (external/open!)
-        src  #(render/render-ns (:store @sess) 'wr.core)]
+        src  #(store.render/render-ns (:store @sess) 'wr.core)]
     (try
       (ops/ingest! sess 'wr.core
                    (str "(ns wr.core)\n"

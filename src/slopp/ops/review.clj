@@ -30,7 +30,7 @@
             [slopp.edit.modules :as edit.modules]
             [slopp.index.refs :as refs]
             [slopp.index :as index]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.store :as store] [slopp.ops.done :as done]))
 
 ^:reads (defn ^:export review-scan
@@ -59,11 +59,11 @@
         nses  (if ns [(symbol (str ns))] (sort (keys (:namespaces st))))
         ;; retired: the graph owns the known-set
         tmap  (:test-map @session)
-        rendered (into {} (map (fn [n] [n (render/render-ns st n)])) nses)
+        rendered (into {} (map (fn [n] [n (store.render/render-ns st n)])) nses)
         ns-lint (into (sorted-map)
                       (for [[nsx src] rendered
                             :let [c (count (for [f (index/lint src (store/kondo-lang st nsx))
-                                                 :let [e (render/owner-form st nsx (:row f) (:col f))
+                                                 :let [e (store.render/owner-form st nsx (:row f) (:col f))
                                                        s (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
                                                  :when (and (seq? s) (= 'ns (first s))
                                                             (not (done/marked-unused? st nsx f)))]
@@ -137,7 +137,7 @@
         lint-by-form (frequencies
                       (for [[nsx src] rendered
                             f (index/lint src (store/kondo-lang st nsx))
-                            :let [e (render/owner-form st nsx (:row f) (:col f))]
+                            :let [e (store.render/owner-form st nsx (:row f) (:col f))]
                             :when e]
                         (symbol (str nsx) (str (or (:name e) (:id e))))))
         rows (for [nsx nses

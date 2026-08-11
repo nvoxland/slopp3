@@ -15,8 +15,8 @@
   \"the slow ones\"."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [slopp.web.client :as client]
-            [slopp.web :as web]))
+            [slopp.web.client :as web.client]
+            [slopp.web :as slopp.web]))
 
 (defn requester-contract
   "The suite EVERY requester must pass — the real transport and every fake.
@@ -128,7 +128,7 @@
   (requester-contract
    "fake-requester"
    (fn [routes]
-     {:requester (client/fake-requester "http://fake.test/" routes)
+     {:requester (web.client/fake-requester "http://fake.test/" routes)
       :base-url  "http://fake.test/"
       :dead-url  "http://nobody-is-listening.test/"})))
 
@@ -145,7 +145,7 @@
       (requester-contract
        "jdk http transport"
        (fn [routes]
-         (let [s    (web/serve!
+         (let [s    (slopp.web/serve!
                      {:web/namespaces []
                       :web/routes (vec (for [[[method path] handler] routes]
                                          {:method method :path path
@@ -156,7 +156,7 @@
                       (.close ss)
                       p)]
            (reset! srv s)
-           {:requester client/request
+           {:requester web.client/request
             :base-url  (str "http://127.0.0.1:" (:port s) "/")
             :dead-url  (str "http://127.0.0.1:" dead "/")})))
-      (finally (some-> @srv web/stop!)))))
+      (finally (some-> @srv slopp.web/stop!)))))

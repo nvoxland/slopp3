@@ -6,7 +6,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [rewrite-clj.parser :as p]
             [slopp.store :as store]
-            [slopp.store.render :as render] [slopp.store.merge :as merge]))
+            [slopp.store.render :as store.render] [slopp.store.merge :as merge]))
 
 (def base-src "(ns m.core)\n(defn a [x] x)\n(defn b [x] x)\n(defn c [x] x)\n")
 
@@ -27,7 +27,7 @@
         r      (merge/merge-logs ours theirs)]
     (is (empty? (:conflicts r)))
     (is (= 2 (:merged r)))
-    (let [src (render/render-ns (:store r) 'm.core)]
+    (let [src (store.render/render-ns (:store r) 'm.core)]
       (testing "both sides' work present"
         (is (re-find #"\(\+ x 1\)" src))
         (is (re-find #"\(\+ x 2\)" src))
@@ -44,7 +44,7 @@
         r      (merge/merge-logs ours theirs)]
     (is (= 1 (count (:conflicts r))))
     (testing "ours kept; theirs carried in the conflict record"
-      (is (re-find #":ours" (render/render-ns (:store r) 'm.core)))
+      (is (re-find #":ours" (store.render/render-ns (:store r) 'm.core)))
       (is (re-find #":theirs" (:theirs (first (:conflicts r)))))
       (is (= 'm.core/a (:form (first (:conflicts r))))))))
 
@@ -62,7 +62,7 @@
         theirs (replace! b 'c "(defn c [x] :kept-by-them)")
         r      (merge/merge-logs ours theirs)]
     (is (= 1 (count (:conflicts r))))
-    (is (not (re-find #"kept-by-them" (render/render-ns (:store r) 'm.core))))))
+    (is (not (re-find #"kept-by-them" (store.render/render-ns (:store r) 'm.core))))))
 
 (deftest add-add-id-collisions-are-remapped
   ;; both sides allocate the same next f<n> — the merge must keep BOTH forms
@@ -75,7 +75,7 @@
                                          :prompt "theirs"))
         r      (merge/merge-logs ours theirs)]
     (is (empty? (:conflicts r)))
-    (let [src (render/render-ns (:store r) 'm.core)]
+    (let [src (store.render/render-ns (:store r) 'm.core)]
       (is (re-find #"ours-new" src))
       (is (re-find #"theirs-new" src)))
     (testing "no duplicate form ids after remap"
@@ -89,7 +89,7 @@
         r      (merge/merge-logs ours theirs)]
     (is (empty? (:conflicts r)))
     (is (contains? (set (:new-nses r)) 'm.extra))
-    (is (re-find #"defn e" (render/render-ns (:store r) 'm.extra)))))
+    (is (re-find #"defn e" (store.render/render-ns (:store r) 'm.extra)))))
 
 (deftest iterated-fork-merges-stay-exact
   ;; the fork keeps working after being merged once; later merges must
@@ -107,7 +107,7 @@
     (testing "round 2 lands cleanly — mainline never touched 'a"
       (is (empty? (:conflicts m2)))
       (is (= 1 (:merged m2)))
-      (is (re-find #":round-2" (render/render-ns (:store m2) 'm.core))))
+      (is (re-find #":round-2" (store.render/render-ns (:store m2) 'm.core))))
     (testing "a third merge with nothing new is a no-op"
       (let [main2 (first (merge/record-merge (:store m2) "fork" m2))
             m3    (merge/merge-logs main2 fork2 :from "fork")]
@@ -145,7 +145,7 @@
     (testing "merge #2 edits the fork's form, never mainline's collided one"
       (is (empty? (:conflicts m2)))
       (is (= 1 (:merged m2)))
-      (let [src (render/render-ns (:store m2) 'm.core)]
+      (let [src (store.render/render-ns (:store m2) 'm.core)]
         (is (re-find #"added \[x\] :v2" src))
         (is (re-find #"mine \[x\] :mine" src))))))
 
@@ -159,7 +159,7 @@
         main1  (first (merge/record-merge (:store m1) "fork-a" m1))
         m2     (merge/merge-logs main1 fork-b :from "fork-b")]
     (is (= 1 (:merged m2)))
-    (let [src (render/render-ns (:store m2) 'm.core)]
+    (let [src (store.render/render-ns (:store m2) 'm.core)]
       (is (re-find #":from-a" src))
       (is (re-find #":from-b" src)))))
 
@@ -186,7 +186,7 @@
                    first)
         r      (merge/merge-logs ours theirs)]
     (is (empty? (:conflicts r)))
-    (let [src (render/render-ns (:store r) 'm.core)]
+    (let [src (store.render/render-ns (:store r) 'm.core)]
       (testing "their reordering lands: c is defined before a"
         (is (< (.indexOf src "defn c") (.indexOf src "defn a")) src))
       (testing "our same-file divergence still merges clean beside it"
@@ -209,7 +209,7 @@
                     (store/move-form 'm.core 'gate 'c :prompt "order" :agent "them") first
                     (store/move-form 'm.core 'prim 'gate :prompt "order" :agent "them") first)
         r       (merge/merge-logs ours2 theirs2 :from "web")
-        src     (render/render-ns (:store r) 'm.core)]
+        src     (store.render/render-ns (:store r) 'm.core)]
     (testing "their adds survive the cross-line id collision"
       (is (re-find #"defn prim" src) src)
       (is (re-find #"defn gate" src) src))
@@ -231,7 +231,7 @@
         r      (merge/merge-logs ours t1)]
     (is (some? (:next-id (:store r)))
         "the store survives an all-absent changeset replay")
-    (is (re-find #"defn a" (render/render-ns (:store r) 'm.core)))))
+    (is (re-find #"defn a" (store.render/render-ns (:store r) 'm.core)))))
 
 (deftest replace-aliasing-a-foreign-ns-form-skips-not-nils
   (let [b     (base)
@@ -246,7 +246,7 @@
     (is (some? (:next-id (:store r)))
         "the store survives an aliased :replace")
     (testing "our aliased form is untouched"
-      (is (re-find #"defn b" (render/render-ns (:store r) 'm.core))))
+      (is (re-find #"defn b" (store.render/render-ns (:store r) 'm.core))))
     (testing "the skip is noted, not silent"
       (is (some #(= :replace (:skipped %)) (:notes r)) (pr-str (:notes r))))))
 
@@ -287,7 +287,7 @@
     (testing "the returning copy of our own v2 is recognized, never a conflict"
       (is (empty? (:conflicts r2)) (pr-str (:conflicts r2))))
     (testing "our newer v3 stands"
-      (is (re-find #":v3" (render/render-ns (:store r2) 'm.core))))
+      (is (re-find #":v3" (store.render/render-ns (:store r2) 'm.core))))
     (testing "main's own :merge marker rides through without effect"
       (is (some? (:store r2))))))
 
@@ -304,7 +304,7 @@
         r    (merge/merge-logs ours theirs :from "branch:web#W")]
     (testing "their edit lands on the LIVE original instead of dropping"
       (is (empty? (:conflicts r)) (pr-str (:conflicts r)))
-      (is (re-find #":their-edit" (render/render-ns (:store r) 'm.core))))))
+      (is (re-find #":their-edit" (store.render/render-ns (:store r) 'm.core))))))
 
 (deftest duplicate-name-candidates-refuse-the-merge
   (let [b    (base)
@@ -386,7 +386,7 @@
       (is (not= fx fy) (str fx " vs " fy)))
     (testing "their edit resolves through the INVERSE of their recorded id-map"
       (is (empty? (:conflicts r2)) (pr-str (:conflicts r2)))
-      (is (re-find #":v2" (render/render-ns (:store r2) 'w.core))))))
+      (is (re-find #":v2" (store.render/render-ns (:store r2) 'w.core))))))
 
 (deftest successive-edits-to-a-diverged-form-coalesce-into-one-conflict
   (let [b      (base)
@@ -401,7 +401,7 @@
     (testing "it carries the NEWEST theirs"
       (is (re-find #":t3" (str (:theirs (first (:conflicts r)))))))
     (testing "ours stays live"
-      (is (re-find #":ours" (render/render-ns (:store r) 'm.core))))))
+      (is (re-find #":ours" (store.render/render-ns (:store r) 'm.core))))))
 
 (deftest merged-state-deltas-get-fresh-ids-not-verbatim
   ;; the durable-merge corruption: both lines do config/deps/tier work from

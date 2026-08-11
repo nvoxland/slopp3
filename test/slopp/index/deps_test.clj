@@ -6,7 +6,7 @@
             [clojure.test :refer [deftest is testing]]
             [slopp.ops :as ops]
             [slopp.build :as build]
-            [slopp.index.deps :as deps]
+            [slopp.index.deps :as index.deps]
             [slopp.mcp]
             [slopp.store :as store]
             [slopp.store.db :as db] [slopp.store.merge :as merge] [slopp.ops.branch :as branch] [clojure.edn :as edn] [clojure.java.io :as io] [slopp.ops.external :as external])
@@ -183,9 +183,9 @@
 ;; M4: dependency surface analysis (clj-kondo over the dep's own jars)
 (deftest dep-surface-analysis
   (testing "a dep's own jars are external (classpath diff) and analyzed"
-    (let [jars (deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
+    (let [jars (index.deps/dep-jars 'org.clojure/data.json {:mvn/version "2.5.0"})]
       (is (some #(str/includes? % "data.json") jars))
-      (let [s (deps/surface jars)]
+      (let [s (index.deps/surface jars)]
         (is (contains? (:namespaces s) 'clojure.data.json))
         (testing "public vars carry arities + docstring"
           (let [wr (get-in s [:vars 'clojure.data.json/write-str])]
@@ -216,8 +216,8 @@
 ;; M6: native-compat gate (GraalVM reachability metadata)
 (deftest native-verdict-detects-metadata
   (testing "a dep without reachability metadata → :none (warn, not incompatible)"
-    (is (= :none (:verdict (deps/native-verdict
-                            (deps/dep-jars 'org.clojure/data.json
+    (is (= :none (:verdict (index.deps/native-verdict
+                            (index.deps/dep-jars 'org.clojure/data.json
                                            {:mvn/version "2.5.0"}))))))
   (testing "a jar shipping META-INF/native-image → :declared"
     (let [jar (str (temp-dir) "/withmeta.jar")]
@@ -227,7 +227,7 @@
                             "META-INF/native-image/foo/reflect-config.json"))
         (.write jos (.getBytes "[]"))
         (.closeEntry jos))
-      (is (= :declared (:verdict (deps/native-verdict [jar])))))))
+      (is (= :declared (:verdict (index.deps/native-verdict [jar])))))))
 
 (deftest ^:external build-native-warns-on-missing-metadata
   (let [dir  (temp-dir)

@@ -29,7 +29,7 @@
   `query_rules` reports."
   (:require [clojure.string :as str]
             [rewrite-clj.node :as n]
-            [slopp.store.render :as render]
+            [slopp.store.render :as store.render]
             [slopp.store :as store]
             [slopp.index.refs :as refs]
             [slopp.index.analyze :as analyze]))
@@ -107,7 +107,7 @@
                                 (map #(module-of (:to %)))
                                 (remove #{cmod}))
                           (:var-usages
-                           (analyze/analyze (render/render-ns store nsx))))))
+                           (analyze/analyze (store.render/render-ns store nsx))))))
         collect (fn [pred]
                   (reduce (fn [acc nsx]
                             (let [tmods (deps-of nsx)]

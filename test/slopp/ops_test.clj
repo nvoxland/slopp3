@@ -14,7 +14,7 @@
   cache, history, deps, queries — have their own test namespaces under
   `slopp.api`; what lands here is what needs the whole thing running."
   (:require [clojure.test :refer [deftest is testing]]
-            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.kernel.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as session] [slopp.project.capabilities :as caps] [slopp.read.history :as history] [slopp.read.graph :as graph])
+            [slopp.ops :as ops] [slopp.ops.testrun :as testrun] [clojure.java.io :as io] [clojure.edn :as edn] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.store :as store] [clojure.java.shell] [slopp.image.repl :as repl] [slopp.store.artifacts :as artifacts] [slopp.kernel.boot :as boot] [clojure.string :as str] [slopp.image :as image] [slopp.ops.engine :as engine] [slopp.project.capabilities :as capabilities] [slopp.read.history :as history] [slopp.read.graph :as graph])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
 
@@ -633,16 +633,16 @@
                                        "(defn g \"G.\" [r] (web/handle! r))\n")))
         files {"slopp/web.clj" "(ns slopp.web)"}]
     (testing "a store that USES the framework is given the FILES, not a coord"
-      (is (= files (session/framework-injection uses files))))
+      (is (= files (engine/framework-injection uses files))))
     (testing "a store with no web code gets nothing"
-      (is (nil? (session/framework-injection plain files))))
+      (is (nil? (engine/framework-injection plain files))))
     (testing "and a store that DEFINES slopp.web gets nothing — vendoring there
               would shadow the very code being edited, since src wins"
-      (is (nil? (session/framework-injection defines files))))
+      (is (nil? (engine/framework-injection defines files))))
     (testing "a host that cannot supply the framework (a checkout, a clojure -M
               run) vendors nothing rather than half of it"
-      (is (nil? (session/framework-injection uses nil)))
-      (is (nil? (session/framework-injection uses {}))))))
+      (is (nil? (engine/framework-injection uses nil)))
+      (is (nil? (engine/framework-injection uses {}))))))
 
 (deftest ^:external build-supplies-the-framework-a-store-no-longer-declares
   ;; The build half of D-framework-injection. Once a store stops declaring
@@ -732,7 +732,7 @@
                  (str "(ns fw.app (:require [slopp.web :as web]))\n"
                       "(defn h \"H.\" [r] (web/handle! r))\n"))
           (testing "the store really does use the framework"
-            (is (some? (session/framework-injection
+            (is (some? (engine/framework-injection
                         (:store @sess) (boot/framework-files)))))
           (testing "a RESTART gives the new image the framework AND what the
                     framework itself requires — the store LOADS, which is the
@@ -906,12 +906,12 @@
         (let [r (ops/config-file! sess "capabilities" :key "web.port" :value "7357"
                                   :prompt "real port")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= 7357 (caps/effective (:store @sess) "web.port")))))
+          (is (= 7357 (capabilities/effective (:store @sess) "web.port")))))
       (testing "a wildcard-governed key is known, not alien"
         (let [r (ops/config-file! sess "capabilities" :key "web.auth.groups.admin.members" :value "alice,bob"
                                   :prompt "a group")]
           (is (nil? (:error r)) (pr-str r))
-          (is (= #{"alice" "bob"} (caps/effective (:store @sess) "web.auth.groups.admin.members")))))
+          (is (= #{"alice" "bob"} (capabilities/effective (:store @sess) "web.auth.groups.admin.members")))))
       (testing "a key under an undeclared owner is refused like any unknown key"
         (let [r (ops/config-file! sess "capabilities" :key "groups.admin.members" :value "alice"
                                   :prompt "the retired spelling")]
@@ -921,7 +921,7 @@
                           :prompt "back to default")
         ;; web.port's declared default is nil now — serve! owns the 8080 and the
       ;; dev server derives, so "returns to the default" means returns to unset
-      (is (nil? (caps/effective (:store @sess) "web.port"))))
+      (is (nil? (capabilities/effective (:store @sess) "web.port"))))
       (finally (ops/close! sess)))))
 
 (deftest ^:external config-writes-say-whether-anything-validated-them

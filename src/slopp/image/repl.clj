@@ -5,7 +5,8 @@
   backstop. Phase-1 uses plain restart; the warm-spare optimization is deferred."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [nrepl.core :as nrepl] [slopp.kernel.boot :as boot])
+            [nrepl.core :as nrepl] [slopp.kernel.boot :as boot]
+            [slopp.image.currency :as image.currency])
   (:import [java.io BufferedReader]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]
@@ -369,6 +370,12 @@
   unlike the handle this returns, whose keys are internal and read in the
   body by `eval!`/`stop!` rather than destructured at any boundary.
 
+  `:currency` is the image's own record of what it has loaded, minted HERE so
+  every handle carries one from birth. It used to be a process-global atom,
+  which meant the question \"does the image hold this form's current source\"
+  had an implied subject and a second image had to be kept out by every
+  caller choosing a non-stamping loader.
+
   Any throw after the spawn (port timeout, connect failure, rt load) DESTROYS
   the child before rethrowing — with a custom :cmd the watchdog may not be
   aboard yet, and an abandoned nrepl JVM outlives even parent death. The
@@ -393,7 +400,8 @@
              client (nrepl/client conn 30000)
              session (nrepl/new-session client)]
          (inject-rt! {:process proc :port port :conn conn :client client
-                      :session session :reader rdr :dir dir}))
+                      :session session :reader rdr :dir dir
+                      :currency (image.currency/new-registry)}))
        (catch Throwable t
          (.destroyForcibly proc)
          (throw (ex-info (str "image boot failed: " (ex-message t))
@@ -494,6 +502,11 @@
                 runtime? (fn [n] (or (.startsWith (name n) "clojure.")
                                      (.startsWith (name n) "nrepl.")))]
             (when (every? #(or (contains? b %) (runtime? %)) left)
+              ;; The next tenant gets THIS handle, so it gets this record —
+              ;; and it loaded none of what is in it. Emptying here is the one
+              ;; place a currency record must be cleared without its image
+              ;; dying, which is why `forget-all!` still exists at all.
+              (image.currency/forget-all! image)
               image))))
       (catch Throwable _ nil))))
 
