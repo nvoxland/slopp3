@@ -34,7 +34,7 @@
               (pr-str x))
             400))
 
-^:unsafe ^:reads (defn ^:entry-point observe
+^:unsafe ^:reads (defn ^{:entry-point "query_observe's driver code is evaluated INSIDE the image rt was injected into, so the call is built as source and no static reference in the store reaches it"} observe
   "Temporarily instrument the var named by `target` (qualified symbol),
   capturing the args and return (or thrown exception) of up to `limit` calls
   while `thunk` runs; the original is restored in a finally. The oracle's
@@ -66,7 +66,7 @@
       (finally
         (alter-var-root v (constantly orig))))))
 
-(def ^:ambient-ok ^:export touched-sink
+(def ^{:ambient-ok "rt runs in TWO processes, and a runner cannot pass its collector down a call stack that never crosses — so the tracer publishes which atom is current; nil outside a traced run, so the server's constant image evals cannot land in an earlier run's set"} ^:export touched-sink
   "The atom `instrument!` is currently collecting into, or nil.
 
   THE child-image drain's handle. rt runs in TWO processes: a runner wraps its
@@ -159,7 +159,7 @@
                              (apply orig args))))))))
      (with-meta {:vars @vars :methods @methods} {::prev-sink prev}))))
 
-^:unsafe ^:reads (defn ^:entry-point traced-run
+^:unsafe ^:reads (defn ^{:entry-point "every verified write runs through it, but the call is built as SOURCE and evaluated in the image rt was injected into (slopp.image/traced-test-run, drain-child-rt!) — measured: zero static callers, 386 covering tests"} traced-run
   "Run `test-ns`'s test vars (all of them, or just those named in `only`),
   recording which fn vars of `target-nses` each test touches. `test-ns` may be
   a collection of namespaces — the whole project verifies in ONE run, paying
@@ -242,7 +242,7 @@
       (finally
         (restore! originals)))))
 
-(def ^:ambient-ok self-touched
+(def ^{:ambient-ok "installed ONCE per image by inject-rt! and drained per eval, so it outlives every run a run-scoped atom could serve — a run's own atom is born and restored inside a single traced-run"} self-touched
   "What rt's OWN fns have been called since the last drain (#126).
 
   Separate from any run's `touched` because it outlives them: it is installed
