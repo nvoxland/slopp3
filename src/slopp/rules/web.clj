@@ -862,37 +862,75 @@
    `:any` ADMITS it is saying nothing; a bare `:map` looks like a type while
    saying the same thing, and that is the one a reader trusts by mistake.
 
+   **`^{:web/unconstrained-ok \"why\"}` on the handler discharges it**, and
+   that escape exists because slopp-ui found the rule had none. The teach used
+   to end \"if the shape genuinely is not settled, say `:any`\" — advice that
+   names the very state the rule reports, so an endpoint that legitimately
+   cannot constrain (their `project-api` is a proxy: its response IS whatever
+   a project sent, forwarded byte for byte) was flagged forever with no
+   available action. Their reason for caring is the one to keep: a permanent
+   finding nobody can act on trains a reader to skim the list, spending the
+   credibility of every other finding in it.
+
+   The marker POLICES ITSELF. Carried by an endpoint whose schema does
+   constrain, it is reported as stale and asked to be dropped — so it cannot
+   quietly become a mute button, the same discipline `^:foreign-keys` and
+   `^:unused-ok` are held to.
+
    Advisory, because an unspecified field is a legitimate state while a shape
    is still settling. Whole-store, because a published contract is stable and
    nothing episode-scoped will look at it again."
   [_session store _changed]
-  (for [{:keys [endpoint schema fields]} (unconstrained-contract-fields store)
-        :let [maps  (filter #(= :map (:declares %)) fields)
-              anys  (filter #(= :any (:declares %)) fields)
-              where (fn [f] (if (seq (:path f))
-                              (str/join " → " (map str (:path f)))
-                              "the whole schema"))]]
-    {:endpoint endpoint
-     :schema schema
-     :fields fields
-     :teach (str endpoint "'s " schema " declares "
-                 (count fields) (if (= 1 (count fields))
-                                  " field that constrains nothing"
-                                  " fields that constrain nothing")
-                 (when (seq maps)
-                   (str " — a bare :map at " (str/join ", " (map where maps))
-                        ", which accepts ANY map"))
-                 (when (seq anys)
-                   (str (if (seq maps) "; and :any at " " — :any at ")
-                        (str/join ", " (map where anys))))
-                 ". The generated client validates every response against this"
-                 " schema, so a shape that changes underneath one of these"
-                 " passes forever — the mechanism that exists to catch drift is"
-                 " pointed at the field and switched off."
-                 (when (seq maps)
-                   (str " A bare :map is the misleading one: it looks like a"
-                        " type and admits everything, where :any at least says"
-                        " so."))
-                 " Name the entries — [:map [:kind :string] [:text :string]] —"
-                 " or, if the shape genuinely is not settled, say :any and let"
-                 " the document be honest about it.")}))
+  (let [rows    (unconstrained-contract-fields store)
+        loose   (set (map :endpoint rows))
+        marked  (for [{:keys [ns name meta]} (edit.web/web-endpoint-rows store)
+                      :when (:web/unconstrained-ok meta)]
+                  (symbol (str ns) (str name)))
+        marked? (set marked)]
+    (concat
+     ;; the stale half FIRST: a marker that no longer describes anything is a
+     ;; claim about the code that has quietly stopped being true, and it is
+     ;; the finding a reader is least expecting
+     (for [ep marked :when (not (loose ep))]
+       {:endpoint ep
+        :stale-marker true
+        :teach (str ep " carries ^{:web/unconstrained-ok …} but every field of"
+                    " its contract constrains something — the waiver describes"
+                    " nothing. Remove it. A marker is a CLAIM about the code"
+                    " around it, and one that outlives what it waived reads"
+                    " exactly like coverage while suppressing a rule nobody"
+                    " has checked in the meantime.")})
+     (for [{:keys [endpoint schema fields]} rows
+           :when (not (marked? endpoint))
+           :let [maps  (filter #(= :map (:declares %)) fields)
+                 anys  (filter #(= :any (:declares %)) fields)
+                 where (fn [f] (if (seq (:path f))
+                                 (str/join " → " (map str (:path f)))
+                                 "the whole schema"))]]
+       {:endpoint endpoint
+        :schema schema
+        :fields fields
+        :teach (str endpoint "'s " schema " declares "
+                    (count fields) (if (= 1 (count fields))
+                                     " field that constrains nothing"
+                                     " fields that constrain nothing")
+                    (when (seq maps)
+                      (str " — a bare :map at " (str/join ", " (map where maps))
+                           ", which accepts ANY map"))
+                    (when (seq anys)
+                      (str (if (seq maps) "; and :any at " " — :any at ")
+                           (str/join ", " (map where anys))))
+                    ". The generated client validates every response against this"
+                    " schema, so a shape that changes underneath one of these"
+                    " passes forever — the mechanism that exists to catch drift is"
+                    " pointed at the field and switched off."
+                    (when (seq maps)
+                      (str " A bare :map is the misleading one: it looks like a"
+                           " type and admits everything, where :any at least says"
+                           " so."))
+                    " Name the entries — [:map [:kind :string] [:text :string]]."
+                    " If this endpoint CANNOT constrain — a proxy forwarding"
+                    " another service's bytes — say so where a reader will see"
+                    " it: ^{:web/unconstrained-ok \"a proxy: the response is"
+                    " whatever the project sent\"}. That discharges this, and"
+                    " is reported as stale if the contract later constrains.")}))))

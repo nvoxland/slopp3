@@ -16,7 +16,7 @@
             [slopp.store :as store]
             [slopp.api.endpoints]
             [slopp.api.contracts :as contracts]
-            [slopp.web :as slopp.web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs] [slopp.api.model :as model] [slopp.read.orient :as orient]))
+            [slopp.web :as slopp.web] [slopp.api.server :as server] [slopp.ops.external :as external] [slopp.ops :as ops] [cheshire.core :as json] [clojure.string :as str] [clojure.edn :as edn] [slopp.webdev.cljs :as cljs] [slopp.api.model :as model] [slopp.read.orient :as orient] [slopp.web.contract :as contract]))
 
 (deftest the-api-answers-with-data-that-matches-its-contract
   ;; The whole argument for the REST shape, made testable: an endpoint is a
@@ -877,3 +877,39 @@
              (vec (distinct (undeclared [:map [:milestones [:sequential [:map [:commit :string]]]]]
                                         {:milestones [{:commit "d1" :at "now"}]}
                                         []))))))))
+
+(deftest every-path-parameter-is-declared-in-the-endpoints-request
+  ;; slopp-ui, measuring the published document: `/api/form/:id` declares `:id`
+  ;; in `:request`, while `/api/change/:range` and `/api/source/:ns/:name`
+  ;; declare nil. One document, two conventions.
+  ;;
+  ;; It never cost them a screen — they derive the parameters from the PATH —
+  ;; which is exactly why it went unreported for so long. It costs a consumer
+  ;; that trusts `:request`, which generates a client that cannot be called.
+  ;;
+  ;; The convention is not new: `form`'s own docstring argues it ("declared
+  ;; even though this is a GET with no body… without it the generated client
+  ;; takes a params map that only the path reads from"). What was missing is
+  ;; anything that could tell when an endpoint stopped following it.
+  (let [doc      (contract/contract-document ['slopp.api.endpoints])
+        declared (fn [schema]
+                   ;; entry keys of a [:map [:k …] …], however the schema was
+                   ;; named — the document carries VALUES, so by the time we
+                   ;; see it the name is gone and it is plain data
+                   (when (vector? schema)
+                     (set (keep #(when (and (vector? %) (keyword? (first %)))
+                                   (first %))
+                                (rest schema)))))
+        missing  (for [{:keys [path request]} (:endpoints doc)
+                       :let [params (map #(keyword (subs % 1))
+                                         (re-seq #":[a-zA-Z][a-zA-Z0-9-]*" path))
+                             have   (declared request)
+                             gap    (remove (or have #{}) params)]
+                       :when (seq gap)]
+                   {:path path :missing (vec gap) :declares (vec (or have []))})]
+    (is (seq (filter #(re-find #"/:" (:path %)) (:endpoints doc)))
+        "fixture: the surface HAS parameterised paths — an empty population
+         would satisfy the assertion below while checking nothing")
+    (is (= [] (vec missing))
+        (str "every :param in a path must appear in that endpoint's :request, "
+             "or a generated client cannot address it: " (pr-str (vec missing))))))

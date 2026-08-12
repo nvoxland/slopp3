@@ -46,6 +46,13 @@
   [_req]
   {:status 200 :body {:ok true}})
 
+(defn ^{:web/method :get :web/path "/c/admin" :web/auth [:group "admin"]
+        :web/response [:map [:secret :string]]}
+  c-admin
+  "Fixture: an endpoint only a group may call — the case `:public` cannot show."
+  [_req]
+  {:status 200 :body {:secret "s"}})
+
 (deftest a-contract-publishes-the-typed-surface-and-nothing-else
   (let [doc     (contract/contract-document ['slopp.web.contract-test])
         by-addr (into {} (map (juxt (juxt :method :path) identity)) (:endpoints doc))]
@@ -54,7 +61,7 @@
       (is (= 1 (:slopp/contract-version doc))))
 
     (testing "an endpoint is addressed by method AND path — one path serves two verbs"
-      (is (= #{[:get "/c/things"] [:post "/c/things"] [:get "/c/bare"]}
+      (is (= #{[:get "/c/things"] [:post "/c/things"] [:get "/c/bare"] [:get "/c/admin"]}
              (set (keys by-addr)))))
 
     (testing "schemas travel as VALUES, equal to what the var declared"
@@ -125,3 +132,24 @@
       (let [bare (by-addr [:get "/c/bare"])]
         (is (contains? bare :doc))
         (is (nil? (:doc bare)))))))
+
+(deftest an-endpoint-says-who-may-CALL-it
+  ;; slopp-ui's ask, and their argument for it: `:auth` and `:effectful?` are
+  ;; the two facts a reader wants BEFORE calling anything. One of them arrived
+  ;; and this one did not.
+  ;;
+  ;; It is cheaper than either, because `:web/auth` is already REQUIRED — the
+  ;; `web-auth-refusal` gate refuses an endpoint that declares none. So unlike
+  ;; `:request`, this key can never be nil-because-unknown, and a consumer
+  ;; never has to tell "public" from "nobody said".
+  (let [doc     (contract/contract-document ['slopp.web.contract-test])
+        by-addr (into {} (map (juxt (juxt :method :path) identity)) (:endpoints doc))]
+    (testing ":public travels as itself"
+      (is (= :public (:auth (by-addr [:get "/c/things"])))))
+    (testing "and so does a GROUP — the value, not merely the fact of a value"
+      ;; the half a boolean `:authed?` would lose, and the half slopp-ui's UI
+      ;; needs: it renders who may call, not whether anyone may
+      (is (= [:group "admin"] (:auth (by-addr [:get "/c/admin"])))))
+    (testing "every endpoint carries it, because the gate refuses one without"
+      (is (every? #(contains? % :auth) (:endpoints doc))
+          (pr-str (remove #(contains? % :auth) (:endpoints doc)))))))

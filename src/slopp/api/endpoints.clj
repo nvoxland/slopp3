@@ -43,6 +43,7 @@
                (:namespaces (:web/reads req)))})
 
 (defn ^{:web/method :get :web/path "/api/ns/:ns" :web/auth :public
+        :web/request contracts/ns-outline-request
         :web/response contracts/ns-outline
         :web/reads {:outline [:browse/ns-outline [:path-params :ns]]}}
   ns-outline
@@ -90,6 +91,7 @@
   {:status 200 :body (:timeline (:web/reads req))})
 
 (defn ^{:web/method :get :web/path "/api/change/:range" :web/auth :public
+        :web/request contracts/change-request
         :web/response contracts/change-view
         :web/reads {:change [:ui/change [:path-params :range]]}}
   change
@@ -128,6 +130,7 @@
     {:status 404 :body {:error "no such form"}}))
 
 (defn ^{:web/method :get :web/path "/api/source/:ns/:name" :web/auth :public
+        :web/request contracts/source-request
         :web/response contracts/form-source
         :web/reads {:source [:browse/form-source [:path-params]]}}
   source
@@ -186,6 +189,7 @@
    :body (pr-str (:contract (:web/reads req)))})
 
 (defn ^{:web/method :get :web/path "/api/module/:m" :web/auth :public
+        :web/request contracts/module-request
         :web/response contracts/module-detail
         :web/reads {:detail [:browse/module [:path-params :m]]}}
   module

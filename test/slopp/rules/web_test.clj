@@ -984,3 +984,41 @@
               matter: it is not a type, and the validator believes it"
       (let [f (first (rules.web/web-unconstrained-contract-check nil s nil))]
         (is (re-find #"validat" (:teach f)) (pr-str f))))))
+
+(deftest an-endpoint-that-cannot-constrain-can-say-so-and-the-marker-polices-itself
+  ;; slopp-ui found this, and it is a defect in the rule rather than in their
+  ;; code. The teach ends "if the shape genuinely is not settled, say :any and
+  ;; let the document be honest about it" — and the rule REPORTS :any. So the
+  ;; advice names the state it is flagging, and their `project-api`, a proxy
+  ;; forwarding a project's bytes verbatim, had no way to discharge it. Their
+  ;; argument for why that matters is the one worth keeping: a permanent
+  ;; finding with no available action trains a reader to skim the list, which
+  ;; spends the credibility of every OTHER finding in it.
+  ;;
+  ;; `:any` stays reported — it is honest, not discharged. What discharges is a
+  ;; marker carrying its REASON, the shape `^:foreign-keys` and `^:unused-ok`
+  ;; already have here.
+  (let [mk (fn [extra resp]
+             (store/ingest (store/empty-store) 'uw.api
+                           (str "(ns uw.api)\n\n"
+                                "(defn ^{:web/method :get :web/path \"/p\""
+                                " :web/auth :public" extra
+                                " :web/response " resp "} proxy \"P.\" [r] r)\n")))
+        plain (mk "" ":any")
+        proxy (mk (str " :web/unconstrained-ok \"a proxy: the response IS whatever"
+                       " the project sent, forwarded byte for byte\"")
+                  ":any")
+        stale (mk " :web/unconstrained-ok \"no longer true\"" "[:map [:id :string]]")]
+
+    (testing "without the marker it still fires — the finding is TRUE"
+      (is (seq (rules.web/web-unconstrained-contract-check nil plain nil))))
+
+    (testing "the marker discharges it"
+      (is (empty? (rules.web/web-unconstrained-contract-check nil proxy nil))))
+
+    (testing "and it polices itself — a marker on a schema that DOES constrain
+              is reported, so this cannot quietly become a mute button"
+      (let [f (rules.web/web-unconstrained-contract-check nil stale nil)]
+        (is (= 1 (count f)) (pr-str f))
+        (is (:stale-marker (first f)) (pr-str f))
+        (is (re-find #"unconstrained-ok" (str (:teach (first f)))) (pr-str f))))))

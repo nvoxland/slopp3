@@ -48,7 +48,15 @@
   `{:slopp/contract-version 1
     :endpoints [{:method :get :path \"/x\" :name x
                  :handler my.app/x :doc \"GET /x — …\"
-                 :request nil :response […]}]}`
+                 :auth :public :request nil :response […]}]}`
+
+  `:auth` is the endpoint's `:web/auth` declaration verbatim — `:public`, or
+  `[:group \"admin\"]`, or whatever an app declares. It is the cheapest key
+  here to trust, because the auth write gate REFUSES an endpoint that declares
+  none: unlike `:request`, it can never be nil-because-nobody-said, so a
+  consumer never has to tell \"public\" from \"unknown\". Published as the
+  VALUE rather than a boolean because who may call is what a reader wants;
+  whether anyone may is not a question anybody asks.
 
   `:handler` is the qualified symbol, and it is here because `:name` alone does
   not RESOLVE. Measured on slopp's own nine endpoints, three of them —
@@ -100,5 +108,6 @@
            :name     (:name m)
            :handler  (symbol (str (:ns m)) (str (:name m)))
            :doc      (undent (:doc m))
+           :auth     (:web/auth m)
            :request  (:web/request m)
            :response (:web/response m)}))})

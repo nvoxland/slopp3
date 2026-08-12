@@ -191,20 +191,18 @@
     :escape "extract the shared inline schema to a named .cljc var both endpoints reference, or accept the duplication"
     :teach "2+ endpoints declare the same inline request/response schema — a shared shape belongs in one named .cljc schema so the server and the generated client agree (D-web-contracts part 2)"}
    {:rule :web-unconstrained-contract :grain :done
-    :escape "name the entries — [:map [:kind :string] [:text :string]] — or, when the shape genuinely is not settled, declare :any so the document says so out loud; or accept it, this is advisory and never blocks"
-    :teach (str "a published endpoint declares a field that constrains"
-                " NOTHING: a bare :map, which accepts any map, or :any. The"
-                " cost is a silent mechanism rather than vagueness — a"
-                " generated client validates every response against this"
-                " schema, so a shape that changes underneath such a field"
-                " passes validation forever. Measured in the wild: a :diff"
-                " moved from [String] to [[String String]] and went unnoticed"
-                " for weeks. :any and a bare :map are not the same offence —"
-                " :any admits it is saying nothing, a bare :map looks like a"
-                " type while saying the same thing. This is the PRIOR question"
-                " to web-undocumented-contract: that one asks whether a"
-                " declared field says what it means, this asks whether it is"
-                " declared at all, and prose does not make a field real")}
+    :escape "name the entries — [:map [:kind :string] [:text :string]]. If the endpoint genuinely CANNOT constrain — a proxy forwarding another service's bytes — say so with ^{:web/unconstrained-ok \"why\"}, which discharges it and is itself reported as stale once the contract does constrain. Saying :any is HONEST and does not discharge: it is the reported state, not the way out"
+    :teach (str "a published endpoint declares a field that constrains nothing"
+                " — a bare :map, which accepts any map, or :any, which accepts"
+                " anything. The cost is not vagueness but a SILENT mechanism:"
+                " the generated client validates every response against the"
+                " published schema, so a field whose shape can change without"
+                " failing validation has the one thing built to catch drift"
+                " pointed at it and switched off. Measured — a :diff moved from"
+                " [String] to [[String String]] and passed on every call for"
+                " weeks. Both are reported and they are not the same offence:"
+                " :any ADMITS it says nothing, a bare :map looks like a type"
+                " while saying the same thing")}
    {:rule :web-undocumented-contract :grain :done
     :escape "add :doc (or :description) to the entry's property map — [:total {:doc \"hits before the limit is applied\"} :int] — or accept it; this is advisory and never blocks"
     :teach (str "a published endpoint's :web/request/:web/response schema has"

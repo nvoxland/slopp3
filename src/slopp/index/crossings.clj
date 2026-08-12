@@ -163,6 +163,10 @@
                    in-process assembly. The map it returns reaches handlers as
                    :web/deps and performers as their first argument, all inside
                    the image; nothing leaves through this key"
+   :web/unconstrained-ok "waives web-unconstrained-contract for an endpoint that
+                   genuinely cannot constrain its shape — a statement ABOUT a
+                   declaration, not a declaration of its own, so nothing
+                   crosses through it"
    :rule/applies-to "the rule registry describing itself to itself"
    :rule/severity   "the rule registry describing itself to itself"})
 

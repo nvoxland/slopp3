@@ -112,6 +112,50 @@
   the source exactly, so a form renders from tokens alone."
   [:tuple :string :string])
 
+(def change-request
+  "`GET /api/change/:range` — what a caller SENDS.
+
+  Only the path segment. Declared for the reason [[form-request]] gives at
+  length: `:web/request` is what the caller sends, and a generated wrapper
+  whose params map has no entry for `:range` cannot address the endpoint at
+  all. slopp-ui reported this as one document carrying two conventions, and
+  they were right — `form` declared its parameter and four others did not."
+  [:map
+   [:range {:doc (str "the milestone range to review, `from..to` — two commit"
+                      " point ids. Interpolated into the PATH. Both ends are"
+                      " user input: an unparseable range is a 404, which is a"
+                      " different answer from a range that parsed and changed"
+                      " nothing")} :string]])
+
+(def source-request
+  "`GET /api/source/:ns/:name` — what a caller SENDS.
+
+  Both segments, and both are the address rather than a filter: there is no
+  response without them."
+  [:map
+   [:ns {:doc (str "the namespace holding the form, e.g. `app.core` —"
+                   " interpolated into the PATH")} :string]
+   [:name {:doc (str "the form's name within that namespace. A name can be"
+                     " ambiguous where a namespace holds more than one form"
+                     " answering to it; the response carries the :form-id that"
+                     " resolves it")} :string]])
+
+(def ns-outline-request
+  "`GET /api/ns/:ns` — what a caller SENDS."
+  [:map
+   [:ns {:doc (str "the namespace to outline, e.g. `app.core` — interpolated"
+                   " into the PATH. Unknown is a 404 rather than an empty"
+                   " outline: `{:forms []}` would say the namespace exists and"
+                   " holds nothing, which is a different statement")} :string]])
+
+(def module-request
+  "`GET /api/module/:m` — what a caller SENDS."
+  [:map
+   [:m {:doc (str "the module name — the first TWO namespace segments, e.g."
+                  " `slopp.store`. Interpolated into the PATH. Unknown is a"
+                  " 404 rather than an empty frame, on the same reasoning"
+                  " ns-outline uses")} :string]])
+
 (def form-request
   "`GET /api/form/:id` — what a caller SENDS.
 

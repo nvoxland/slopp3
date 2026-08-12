@@ -18,14 +18,34 @@
             [slopp.ops :as ops]
             [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity] [slopp.store.render :as store.render]))
 
 (defn path-ns
-  "src/foo/bar_baz.clj → foo.bar-baz; nil for anything that isn't a source
-  or test .clj path (those remote files are not slopp's to ingest)."
+  "`src/foo/bar_baz.clj` → `foo.bar-baz`; nil for anything that is not a
+  slopp-written source path — those remote files are not slopp's to ingest.
+
+  Roots come from `store.render/source-roots`, the same set `source-path`
+  writes into, so a clone takes exactly what a build produces. This used to
+  hard-code `(?:src|test)/(.+)\\.clj`, which is a second and narrower answer to
+  a question already answered once — and it was wrong in two directions at
+  once: every `.cljc` namespace and every `instruments/` file was dropped.
+
+  **The failure was silent, which is the part worth remembering.** `clone!`
+  reports `:namespaces n` for what it decided to take, so a lossy import
+  announces success with a smaller number and nothing downstream can tell. It
+  surfaced only because a survivor happened to require a casualty, three weeks
+  after it started: `slopp.api.endpoints` could not find `slopp.api.contracts`,
+  which reads as a load-order bug and is not one.
+
+  `.cljs` is matched too, so a clone SEES such a file rather than dropping it
+  silently — but a `:cljs` namespace cannot load into a JVM image, and its
+  platform is declared in config `clone!` restores only after ingesting.
+  Taking one is a real ordering question rather than a regex."
   [path]
-  (when-let [[_ rel] (re-matches #"(?:src|test)/(.+)\.clj" (str path))]
-    (symbol (-> rel (str/replace "/" ".") (str/replace "_" "-")))))
+  (let [roots (str/join "|" (sort store.render/source-roots))
+        re    (re-pattern (str "(?:" roots ")/(.+)\\.clj[cs]?"))]
+    (when-let [[_ rel] (re-matches re (str path))]
+      (symbol (-> rel (str/replace "/" ".") (str/replace "_" "-"))))))
 
 (defn- checked-out-branch
   "The branch checked out at local WORKING repo `url` (nil for bare repos,
@@ -162,8 +182,17 @@
                         (ops/file-put! sess path text :agent agent
                                        :prompt (str "clone: file from " url)))
                       (db/set-meta! conn "git-base-sha" tip))
-                    {:dir (str dir) :namespaces (count sources)
-                     :base tip :branch used}
+                    ;; ACCOUNT for what was left behind. `:namespaces` counts what the clone
+                    ;; decided to take, so on its own a lossy import announces success
+                    ;; with a smaller number and nothing downstream can tell — which is
+                    ;; how `path-ns` dropped every .cljc and every instrument for three
+                    ;; weeks. A file slopp did not write is ordinary (build.clj, a
+                    ;; README); saying which ones is what makes the ordinary case
+                    ;; checkable instead of indistinguishable from the bug.
+                    (let [ignored (vec (sort (remove path-ns (keys tree))))]
+                      (cond-> {:dir (str dir) :namespaces (count sources)
+                               :base tip :branch used}
+                        (seq ignored) (assoc :ignored ignored)))
                     (catch clojure.lang.ExceptionInfo e
                       {:error (str "clone failed at " (ex-message e)
                                    " — partial store left at " dir
