@@ -455,3 +455,33 @@
           (is (< before (:seq (image.currency/stamped img f3)))
               "the healthy path advanced the record")))
       (finally (repl/stop! img)))))
+
+(deftest a-quoted-symbol-is-DATA-and-not-a-use
+  ;; friction #26, reached from CI. `slopp.sync/clone!` re-gates every form on
+  ;; import, and slopp's own `slopp.store/def-heads` — a quoted SET naming the
+  ;; head symbols the analyzer recognises, `defmacro` among them — was refused
+  ;; as though it USED defmacro. A codebase could not import itself.
+  ;;
+  ;; The rule is the one `all-symbols` already applies to tagged literals: the
+  ;; gate should no more read inside quoted data than inside a string. To
+  ;; EXECUTE a banned symbol you must call it unquoted, and every assertion
+  ;; below that matters is the one proving that half still refuses.
+  (let [refusal (fn [src] (:error (edit/parse-form src)))]
+    (testing "a quoted collection naming banned symbols is data"
+      (is (nil? (refusal "(def heads '#{def defn defmacro defmulti})")))
+      (is (nil? (refusal "(def forms '(defmacro x [] nil))")))
+      (is (nil? (refusal "(defn head? [s] (contains? '#{defmacro eval} s))"))))
+
+    (testing "and the gate still refuses the USE, which is the whole point"
+      ;; without these the change is indistinguishable from switching the
+      ;; denylist off
+      (is (some? (refusal "(defmacro m [] nil)")))
+      (is (some? (refusal "(defn go [s] (eval s))")))
+      (is (some? (refusal "(defn go [s] (load-string s))")))
+      (testing "including a banned symbol UNQUOTED beside a quoted one"
+        (is (some? (refusal "(defn go [s] (let [ok '#{defmacro}] (eval s))))")))))
+
+    (testing "a quoted symbol inside metadata is data too, but an evaluated
+              metadata VALUE is not — the existing rule stands"
+      (is (nil? (refusal "(def ^{:heads '#{defmacro}} x 1)")))
+      (is (some? (refusal "(def ^{:h (eval 1)} y 2)"))))))

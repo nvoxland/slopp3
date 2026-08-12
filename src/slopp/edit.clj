@@ -184,7 +184,17 @@
           ;; a tagged literal is DATA: the gate reads no more inside one than
           ;; inside a string. `#?`/`#?@` are the exception, and the reason is
           ;; that they change what code is READ.
-          hits    (filter banned-sym? (all-symbols node tagged?))]
+          ;;
+          ;; QUOTED forms are data by the identical argument, and leaving them
+          ;; out cost more than the tagged case: `slopp.store/def-heads` is a
+          ;; quoted SET naming the head symbols this analyzer recognises —
+          ;; `defmacro` among them — so the vocabulary a gate reads was refused
+          ;; BY that gate, and slopp could not import its own projection. To
+          ;; execute a banned symbol you have to call it unquoted, which the
+          ;; walk still sees; a quoted mention is a name, not a call.
+          quoted? (fn [x] (and (seq? x) (= 'quote (first x))))
+          data?   (fn [x] (or (tagged? x) (quoted? x)))
+          hits    (filter banned-sym? (all-symbols node data?))]
       (cond
         (some #{"?" "?@"} tags)
         (str "dialect (D3): reader conditionals (#?/#?@) are not allowed in"
