@@ -520,6 +520,17 @@ about this now** (`assertions-never-red`): a test that gained assertions and
 never bounced this episode comes back as an advisory, because a rule that
 relies on you remembering is not a rule.
 
+**And watch its NEIGHBOUR stay green in the same run.** The third clause,
+and the one that separates "the assertion is real" from "the test ran at
+all": a red you caused deliberately proves the assertion is wired to the
+subject only if something ELSE in that same run was green at that moment. A
+fixture that failed to build fails every assertion downstream of it, so it
+produces the red you were expecting for a reason that has nothing to do with
+what you are testing — and it reads identically. Assert the fixture BUILT
+(`:forms`, a count, the value you actually got) beside what you are proving,
+and read both. Two writes in a row went red here for fixture reasons that
+looked exactly like the defect under test.
+
 **A filter used as evidence needs a positive control.** The sibling of the
 above, and the cheapest habit on this page: before believing a filter found
 nothing, assert its POPULATION was non-empty. Two empty sets compare equal, and
