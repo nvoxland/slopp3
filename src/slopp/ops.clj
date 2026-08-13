@@ -47,9 +47,22 @@
   manifest from the CURRENT actual dependency graph — kondo-resolved, so
   :refer'd calls count — and record it as one delta per edge. Called once by
   open! for a populated store whose db predates the module system (:modules
-  nil); by construction the result is acyclic with zero violations, so
-  adoption never breaks working code — the gate then blocks DRIFT until the
-  agent declares new edges (module_dep).
+  nil); the result has zero VIOLATIONS by construction, so adoption never
+  breaks working code — the gate then blocks DRIFT until the agent declares
+  new edges (module_dep).
+
+  It is NOT acyclic by construction, and `:cycles` reports what it derived.
+  A module is the first two segments, so `pb.app` calling `pa.core` while
+  `pa.core.impl` calls back into `pb.app` closes a module cycle with no
+  namespace cycle anywhere — a codebase Clojure loads happily. Since
+  module_dep cycle-checks every add, a store grown under the gate cannot
+  tangle, which makes adoption the one moment a knot can enter and the one
+  moment anybody is looking at the manifest.
+
+  Judged on PRODUCTION edges through the same `module-layers` the module
+  graph reads, so a second derivation cannot drift from what the graph
+  shows. `:cycles` is [] when clean, never nil; `:note` rides along only
+  when there is something to say.
 
   An edge only `-test` namespaces cross is adopted as a TEST-ONLY edge, so
   the manifest a project inherits does not open its production graph on a
@@ -76,9 +89,24 @@
          (reduce #(record %1 %2 nil) $ (sort production))
          (reduce #(record %1 %2 true) $ (sort test))))
      [])
-    {:modules (count production)
-     :edges   (reduce + 0 (map count (vals production)))
-     :test-edges (reduce + 0 (map count (vals test)))}))
+    (let [cycles (vec (:cycles (store/module-layers
+                                (into {} (map (fn [[m ds]] [m (vec ds)])) production))))]
+      (cond-> {:modules (count production)
+               :edges   (reduce + 0 (map count (vals production)))
+               :test-edges (reduce + 0 (map count (vals test)))
+               :cycles cycles}
+        (seq cycles)
+        (assoc :note
+               (str (count cycles)
+                    (if (= 1 (count cycles)) " module cycle" " module cycles")
+                    " came in with the code: "
+                    (str/join "; " (map #(str/join " ⇄ " %) cycles))
+                    ". Nothing is broken and nothing loads in a circle — a"
+                    " module is the first two segments, so this is a"
+                    " cross-module call in each direction. It cannot be"
+                    " introduced later, since declaring an edge that closes a"
+                    " cycle is refused, so untangling means moving what"
+                    " crosses and then module_dep {from … to … remove true}."))))))
 
 (defn await-image!
   "Block until the session's background image boot has finished, then return

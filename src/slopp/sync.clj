@@ -189,10 +189,22 @@
                     ;; weeks. A file slopp did not write is ordinary (build.clj, a
                     ;; README); saying which ones is what makes the ordinary case
                     ;; checkable instead of indistinguishable from the bug.
-                    (let [ignored (vec (sort (remove path-ns (keys tree))))]
+                    (let [ignored (vec (sort (remove path-ns (keys tree))))
+                          ;; ACCOUNT for the shape of what came in, not just the
+                          ;; count. Adoption derives the manifest from the code
+                          ;; as it stands, and an imported codebase can arrive
+                          ;; tangled — a module cycle needs only a cross-module
+                          ;; call in each direction, which is a codebase Clojure
+                          ;; loads happily. Since declaring an edge that closes a
+                          ;; cycle is refused, a clone is the one moment a knot
+                          ;; can enter, and reporting `:namespaces n` alone lets
+                          ;; it enter silently.
+                          cycles (vec (:cycles (store/module-layers
+                                                (:modules (:store @sess)))))]
                       (cond-> {:dir (str dir) :namespaces (count sources)
                                :base tip :branch used}
-                        (seq ignored) (assoc :ignored ignored)))
+                        (seq ignored) (assoc :ignored ignored)
+                        (seq cycles) (assoc :cycles cycles)))
                     (catch clojure.lang.ExceptionInfo e
                       {:error (str "clone failed at " (ex-message e)
                                    " — partial store left at " dir

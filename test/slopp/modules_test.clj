@@ -1997,3 +1997,44 @@
         ;; nothing and fail no test that did not know to look
         (is (not (str/includes? src "\"slopp/lang.clj\""))
             "slopp.lang is :cljc — it must also compile to JS for a client")))))
+
+(deftest ^:external adoption-says-when-it-derived-a-tangle
+  ;; slopp-ui asked whether adoption SAYS anything about a cycle at the moment
+  ;; it derives the manifest, having just built the screen that reports one.
+  ;; It said nothing, and its docstring claimed "by construction the result is
+  ;; acyclic with zero violations" — true of the violations, false of the
+  ;; cycles, and false exactly for the population adoption exists to serve.
+  ;;
+  ;; `module_dep` cycle-checks every add, so a store grown under the gate
+  ;; cannot tangle — the two refusals this fixture hit while being written say
+  ;; so directly. Adoption is therefore the ONE moment a knot can enter, and
+  ;; the one moment anybody is looking at the manifest.
+  ;;
+  ;; A module cycle needs DIFFERENT namespaces on each side: `pb.app` calls
+  ;; `pa.core`, and `pa.core.impl` calls back into `pb.app`. Modules are the
+  ;; first two segments, so that closes `pa.core ⇄ pb.app` with no ns-level
+  ;; require cycle — a codebase Clojure loads happily.
+  (let [sess (external/open!)]
+    (try
+      (swap! sess assoc :adopting? true)
+      (let [rs (mapv (fn [[n s]] (assoc (ops/ingest! sess n s) :ns n))
+                     [['pa.core "(ns pa.core)\n\n(defn base \"B.\" [x] x)\n"]
+                      ['pb.app (str "(ns pb.app (:require [pa.core :as c]))\n\n"
+                                    "(defn go \"G.\" [x] (c/base x))\n")]
+                      ['pa.core.impl (str "(ns pa.core.impl (:require [pb.app :as app]))\n\n"
+                                          "(defn back \"B.\" [x] (app/go x))\n")]])]
+        (swap! sess dissoc :adopting?)
+        ;; The fixture is asserted BEFORE the report is, and it earned that
+        ;; twice: the first two runs were red against `{:modules 0 :edges 0}`,
+        ;; red for reasons that had nothing to do with what is under test. A
+        ;; fixture that failed to build satisfies every absence assertion
+        ;; downstream of it.
+        (is (= [2 2 2] (mapv :forms rs))
+            (str "fixture must BUILD: " (pr-str rs)))
+        (let [r (ops/adopt-modules! sess :agent "t")]
+          (is (= [["pa.core" "pb.app"]] (:cycles r))
+              (str "adoption must NAME the tangle it just recorded: " (pr-str r)))
+          (is (re-find #"cycle" (str (:note r)))
+              (str "and say what it means, at the one moment anybody is looking: "
+                   (pr-str r)))))
+      (finally (ops/close! sess)))))

@@ -1165,6 +1165,22 @@
     (throw (ex-info (str "no serializer for config format " (:format entry))
                     {:entry entry}))))
 
+(def ^:private simple-def-heads
+  "Heads whose ONLY definition is the symbol in second position.
+
+  The complement of the compound heads [[form-symbols]] handles in their own
+  clauses: `defrecord` also defines `->R`/`map->R`, `deftype` also defines
+  `->T`, `defprotocol` also defines each method var. Kept beside
+  [[def-heads]], which answers the neighbouring question — whose second
+  element NAMES the form — and is deliberately a different set.
+
+  A named set rather than an inline `case` clause because a `case` test
+  constant is implicitly quoted, and the dialect gate reads symbols there as
+  USES: `defmacro` in that position had this form refusing to re-ingest,
+  which is exactly what the gate's own teach advises fixing this way — \"a
+  data-driven form the analyzer can read\"."
+  '#{def defn defn- defmacro defmulti defonce deftest ns})
+
 (defn form-symbols
   "EVERY symbol a top-level form defines — a set, possibly empty.
 
@@ -1195,15 +1211,16 @@
           [head nm] (when (seq? s) s)]
       (if-not (and (seq s) (symbol? head) (symbol? nm))
         #{}
-        (case head
-          (def defn defn- defmacro defmulti defonce deftest ns) #{nm}
-          defrecord #{nm (symbol (str "->" nm)) (symbol (str "map->" nm))}
-          deftype   #{nm (symbol (str "->" nm))}
-          defprotocol (into #{nm}
-                            (keep (fn [x] (when (and (seq? x) (symbol? (first x)))
-                                            (first x))))
-                            (drop 2 s))
-          #{})))))
+        (if (simple-def-heads head)
+          #{nm}
+          (case head
+            defrecord #{nm (symbol (str "->" nm)) (symbol (str "map->" nm))}
+            deftype   #{nm (symbol (str "->" nm))}
+            defprotocol (into #{nm}
+                              (keep (fn [x] (when (and (seq? x) (symbol? (first x)))
+                                              (first x))))
+                              (drop 2 s))
+            #{}))))))
 
 (defn apply-changeset
   "Coordinated multi-form edit (e.g. rename): replace several forms' nodes —
