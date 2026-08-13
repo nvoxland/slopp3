@@ -831,7 +831,20 @@ named) — judged on PRODUCTION edges, so a `-test` namespace's fixture
 require never vetoes an architecture decision, even though it does show
 up in the declared manifest. An `:instrument` module (`module_role`) is
 out of that view for the same reason and stays in the manifest the same
-way, so its edges are still gated while it cannot distort the layers. **Red-first specs targeting a package-private ns go in a
+way, so its edges are still gated while it cannot distort the layers. **A store grown through the tools therefore cannot tangle — but one you
+IMPORT can arrive tangled**, and that is the one moment a cycle enters.
+`clone` and adoption both report `:cycles`; read it. This is normal in
+existing code rather than a defect to panic about: a module is the first
+two segments, so `b.app` calling `a.core` while `a.core.impl` calls back
+into `b.app` closes a module cycle with no namespace cycle anywhere — a
+codebase that loads perfectly well, and what a utility reaching back into
+its caller looks like. It is one-time debt: nothing can add to it later,
+so untangle by moving what crosses and then `module_dep {from to remove
+true}`. A cycle among namespaces INSIDE one module is a DIFFERENT
+finding, and `:cycles` will not carry it: both ends are in the same
+module, so there is no cross-module edge and the module view reports a
+clean store. No agent tool reports that one today — it surfaces on the
+module page of the web UI. **Red-first specs targeting a package-private ns go in a
 SAME-PACKAGE test ns** (`x.y.z` spec → `x.y.z-test` or another `x.y.*`
 test ns): an outside spec naming not-yet-existing deep vars hits the
 visibility gate before its stubs can land, and the escape it teaches

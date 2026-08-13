@@ -424,6 +424,51 @@ guard. The durable half is a second check aimed at the gap itself —
 the generic namespace holds no route to an app type's analysis, so the next
 unclassifiable case has to announce itself as a require.
 
+### Sharpening (2026-08-12): "by construction X cannot happen" is a claim about every DOOR, and the import door is never the one you looked at
+
+Two claims of that form fell in one afternoon, both mine, both found by a
+consumer asking what a shape looks like rather than accepting the sentence.
+
+1. `adopt-modules!`'s docstring: *"by construction the result is acyclic with
+   zero violations."* False. A module is the first two segments, so `pb.app`
+   calling `pa.core` while `pa.core.impl` calls back into `pb.app` closes a
+   module cycle with no namespace cycle in it — an entirely ordinary codebase.
+2. The correction I sent WITH that fix: *"a genuine namespace cycle cannot
+   exist anyway — Clojure refuses to load one."* Also false. Edges are
+   kondo-resolved on var USAGE, and `declare` + a top-level `require` after it
+   satisfies the loader without a require cycle. Verified loading in a plain
+   JVM.
+
+The second is the instructive one: it was asserted in the message that
+retired the first, about the same subject, by someone who had just been
+burned. Being burned did not generalise, because the claim did not FEEL like
+the same kind of claim.
+
+**What makes this class survive is that the enforcement is real and visible.**
+Building the tangled fixture took three attempts, each refused by a different
+correct mechanism: package-private visibility at three segments, then the
+module gate's undeclared-edge refusal, and only the adoption bypass let it
+through. From inside the system every route to the state is blocked, so
+"cannot happen" reads as obviously true — and it is true of every door except
+the one whose PURPOSE is to admit code that was never gated.
+
+> A "cannot happen" claim is a claim about the complete set of entry points.
+> Enumerate them, and check the one that exists to accept unvetted input
+> FIRST: adoption, clone, import, restore. Its whole job is to bypass the
+> enforcement the claim rests on, so it is simultaneously the likeliest
+> counterexample and the least likely to have a test.
+
+The narrower rule, which is cheap and would have caught both: **do not write
+"by construction" without a test under it.** Neither claim had one. Both were
+disprovable in a single measurement, and one of them nearly retired a live
+renderer as dead code — the `module-detail` `:cycles` branch, which turns out
+to be the ONLY surface where an intra-module tangle appears at all, since the
+module-grain view reports a clean store for exactly that shape.
+
+Related but distinct from the absence discipline above: there the measurement
+was real and the causal claim untested; here there was no measurement at all,
+only an inference from enforcement the author could see working.
+
 ### The prefix and its length, written down in two places
 
 Twice in two days, in different namespaces, the same defect: a name matched by
