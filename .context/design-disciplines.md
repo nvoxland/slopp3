@@ -424,6 +424,35 @@ guard. The durable half is a second check aimed at the gap itself —
 the generic namespace holds no route to an app type's analysis, so the next
 unclassifiable case has to announce itself as a require.
 
+### Sharpening (2026-08-13): a grade that reports the RULE's confidence where the reader needs the FINDING's consequence
+
+From slopp-ui, who hit two instances of it in one day and argued they are one
+habit rather than two bugs. Both are rules slopp ships.
+
+`web-dangling-route-refs` grades a `str`-built href `:info` — meaning *the
+analyzer could not resolve this*, which is a true statement about the
+ANALYZER. The reader is asking *is this link dead*, which is a question about
+the CODE. Those come apart, because the literal prefix of a concatenation is
+statically knowable: `(str "/p/" slug)` against a declared `/p/:slug` is
+benign, and the same form after that route is renamed emits dead links
+forever — same rule, same kind, same severity. `alias-drift` had the same
+shape: twenty rows, two of them a genuine collision where one alias names two
+namespaces, eighteen harmless residue, and every row reading identically.
+
+> A severity earned by *how sure the checker is* is not the same axis as *what
+> it costs the reader if true*, and a report graded on the first while read on
+> the second buries its own worst findings among its most common ones. When a
+> finding has a knowable part and an unknowable part, CHECK the knowable part
+> and grade on that — the unknowable remainder is a smaller, honester finding.
+
+The tell is a grade whose definition is a sentence about the analysis rather
+than about the code. `:info` because "no static pass can resolve a local" is
+that sentence exactly, and it is what let a route rename hide.
+
+Related to Core 9's proxy rule and to the escape-with-no-action argument, and
+distinct from both: the check is CORRECT here, its population is right, and it
+is reporting the wrong axis of a real finding.
+
 ### Sharpening (2026-08-12): "by construction X cannot happen" is a claim about every DOOR, and the import door is never the one you looked at
 
 Two claims of that form fell in one afternoon, both mine, both found by a
