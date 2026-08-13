@@ -2038,3 +2038,41 @@
               (str "and say what it means, at the one moment anybody is looking: "
                    (pr-str r)))))
       (finally (ops/close! sess)))))
+
+(deftest a-namespace-cycle-inside-one-module-is-reachable
+  ;; The claim this retires is mine: "a genuine namespace cycle cannot exist
+  ;; anyway — Clojure refuses to load one." slopp-ui asked for a measurement
+  ;; rather than accepting it, on the grounds that it is the same shape of
+  ;; claim as the "acyclic by construction" one it had just disproved. It was
+  ;; wrong for the reason they guessed: edges are kondo-resolved on var USAGE,
+  ;; and a require cycle is not the only way to use a var.
+  ;;
+  ;; `declare` the var, then `require` at TOP LEVEL after it — the classic
+  ;; hand cycle-break. When `z3.core.b` compiles `z3.core.a/f`, the var exists
+  ;; (declared, unbound), so the loader is satisfied and there is no require
+  ;; cycle. Verified in a plain JVM: it loads and both calls return.
+  ;;
+  ;; The plain shape does NOT work and is worth naming so nobody re-tests it:
+  ;; a fully-qualified call with no require at all fails with "No such var",
+  ;; because the requiring side compiles first.
+  (let [st (-> (store/empty-store)
+               (store/ingest 'z3.core.a (str "(ns z3.core.a)\n(declare f)\n"
+                                             "(require '[z3.core.b :as b])\n"
+                                             "(defn f [] (b/g))\n"))
+               (store/ingest 'z3.core.b (str "(ns z3.core.b)\n(defn g [] 1)\n"
+                                             "(defn h [] (z3.core.a/f))\n")))
+        by-ns (reduce (fn [m r] (update m (str (:from-ns r)) (fnil conj #{}) (str (:to r))))
+                      {} (edit.modules/module-usage-rows st))]
+    (testing "the fixture is one module, which is what makes this the module-detail population"
+      (is (= ["z3.core" "z3.core"]
+             (mapv (comp str edit.modules/module-of) ['z3.core.a 'z3.core.b]))))
+    (testing "the usage graph closes, so module-detail's :cycles is NOT a dead branch"
+      (is (= {"z3.core.a" #{"z3.core.b"} "z3.core.b" #{"z3.core.a"}} by-ns))
+      (is (= [["z3.core.a" "z3.core.b"]]
+             (mapv vec (:cycles (store/module-layers by-ns))))))
+    (testing "and the MODULE grain reports nothing about the same store"
+      ;; the load-bearing half: both namespaces are in one module, so there is
+      ;; no cross-module edge to derive. The index's :cycles and the detail's
+      ;; :cycles are orthogonal findings, not the same finding at two grains —
+      ;; this tangle is visible ONLY from inside the module.
+      (is (= {:production {} :test {}} (edit.modules/derive-module-edges st))))))
