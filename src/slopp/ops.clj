@@ -3024,7 +3024,10 @@ recompiled (engine/after-write! session ns-sym)]
   orienting. :host is the serving process's code-currency record
   (orient/host-brief over the kernel's boot-info, reached through the
   late-ref carrier — absent when this process didn't boot from a store):
-  which code the host actually runs, and what a restart would change."
+  which code the host actually runs, and what a restart would change.
+  :module-cycles rides only when the manifest has one — impossible to create
+  under the gate, so it was inherited at import, and this is the only place
+  outside the web UI that says so."
   [session]
   (let [st       (:store @session)
         nss      (sort (keys (:namespaces st)))
@@ -3076,6 +3079,11 @@ recompiled (engine/after-write! session ns-sym)]
                     ;; five stale namespaces to a process that
                     ;; held every one of them current.
                     (rules.currency/drift (:image @session) st)))
+        ;; DERIVED, never remembered. A cycle is standing debt rather than an
+        ;; event, so reading the manifest each time means it survives a
+        ;; restart, covers import as well as adoption, and cannot disagree
+        ;; with the module graph — one `module-layers`, one answer.
+        cycles   (vec (:cycles (store/module-layers (:modules st))))
         intent   (:last-intent @session)
         stop     #{"with" "that" "this" "must" "have" "from" "when" "will" "your"
                    "tell" "every" "should" "their" "them" "than" "then" "they"
@@ -3111,6 +3119,20 @@ recompiled (engine/after-write! session ns-sym)]
                         " them, don't narrate them. (Full loop: the slopp skill.)")}
       (seq ms)   (assoc :milestones ms)
       last-done  (assoc :last-done last-done)
+      ;; A tangle can only have been INHERITED — `module_dep` cycle-checks
+      ;; every add, so nothing a store does under the gate can create one.
+      ;; That makes this the rarest thing in the brief and the one nobody
+      ;; else will mention: adoption reports it once at open and the report
+      ;; is discarded, leaving the web UI's module page as the only surface.
+      (seq cycles)
+      (assoc :module-cycles cycles
+             :module-cycles-note
+             (str "inherited at import — nothing loads in a circle and the code"
+                  " is not broken. A module is the first two segments, so this"
+                  " is a cross-module call in each direction. Nothing can add"
+                  " to it (an edge that closes a cycle is refused), so it is"
+                  " one-time debt: move what crosses, then module_dep"
+                  " {from … to … remove true}."))
       host       (assoc :host host)
       ;; the reviewer UI, when the server brought one up. It is for a HUMAN,
       ;; and its only other announcement is a line on the server's stderr —

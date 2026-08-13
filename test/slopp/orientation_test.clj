@@ -585,3 +585,41 @@
           (is (= "http://127.0.0.1:7359/p/slopp2" (:hub b)))
           (is (nil? (:hub-note b)) (pr-str (:hub-note b)))))
       (finally (ops/close! sess)))))
+
+(deftest ^:external the-brief-names-a-module-tangle-the-store-inherited
+  ;; `adopt-modules!` now REPORTS the cycles it derives, and `boot-image!`
+  ;; throws that return away — so a store that inherited a tangle at open said
+  ;; nothing, and the only place the finding surfaced was the web UI's module
+  ;; page. That assumes someone opens it and has the UI at all.
+  ;;
+  ;; DERIVED from the manifest rather than remembered from the adoption event,
+  ;; which is what makes it right rather than merely present: a cycle is
+  ;; STANDING DEBT, not something that happened once. Deriving it means it
+  ;; survives a restart, covers the clone path for free, and cannot disagree
+  ;; with the module graph — same `module-layers`, one producer.
+  (let [sess (external/open!)]
+    (try
+      (testing "a clean manifest says nothing — this is the ordinary state and
+                does not need explaining every session"
+        (let [b (ops/session-brief sess)]
+          (is (nil? (:module-cycles b)))
+          (is (nil? (:module-cycles-note b)))))
+      (testing "a tangle is NAMED, with what to do about it"
+        (swap! sess assoc-in [:store :modules]
+               {"a.core" #{"b.app"} "b.app" #{"a.core"}})
+        (let [b (ops/session-brief sess)]
+          (is (= [["a.core" "b.app"]] (:module-cycles b))
+              (str "the brief must name the members: " (pr-str b)))
+          (is (string? (:module-cycles-note b)))
+          ;; A finding whose remedy the reader cannot run is worse than no
+          ;; finding: it trains them to skim, which spends the credibility of
+          ;; every other line in the brief. So the note has to say the code is
+          ;; not broken (nothing loads in a circle) and name the verb that
+          ;; actually retracts an edge.
+          (is (re-find #"module_dep" (:module-cycles-note b))
+              (str "and say what to do: " (pr-str (:module-cycles-note b))))))
+      (testing "and it goes away when the manifest does, rather than sticking
+                to the session as a remembered event"
+        (swap! sess assoc-in [:store :modules] {})
+        (is (nil? (:module-cycles (ops/session-brief sess)))))
+      (finally (ops/close! sess)))))
