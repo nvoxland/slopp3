@@ -36,9 +36,21 @@ if [ -n "${1:-}" ]; then
   CAPS_SRC=$(cat "$1") || { echo "FAIL: cannot read capability registry from $1" >&2; exit 2; }
   CAPS_LABEL="$1"
 else
-  CAPS_SRC=$(git show slopp/main:src/slopp/project/capabilities.clj 2>/dev/null) \
-    || { echo "FAIL: cannot read the capability registry from slopp/main -- is the projection published?" >&2; exit 2; }
-  CAPS_LABEL="slopp/main @ $(git log -1 --format='%h %cs' slopp/main 2>/dev/null || echo '?')"
+  # RESOLVE the ref rather than naming it. `actions/checkout` makes only the
+  # ref it checked out a LOCAL branch; every other branch arrives as a
+  # remote-tracking ref, so `slopp/main` does not exist in CI even with
+  # fetch-depth: 0 -- that fetches all HISTORY, not all local branches. This
+  # lane runs from a `main` checkout, so the branch it needs is always the
+  # remote-tracking one there and always the local one here.
+  SLOPP_REF=""
+  for r in slopp/main origin/slopp/main; do
+    if git rev-parse --verify --quiet "$r^{commit}" >/dev/null; then SLOPP_REF="$r"; break; fi
+  done
+  [ -n "$SLOPP_REF" ] \
+    || { echo "FAIL: no slopp/main or origin/slopp/main in this checkout -- is the projection published, and does this job fetch it?" >&2; exit 2; }
+  CAPS_SRC=$(git show "$SLOPP_REF:src/slopp/project/capabilities.clj" 2>/dev/null) \
+    || { echo "FAIL: cannot read the capability registry from $SLOPP_REF -- is the projection published?" >&2; exit 2; }
+  CAPS_LABEL="$SLOPP_REF @ $(git log -1 --format='%h %cs' "$SLOPP_REF" 2>/dev/null || echo '?')"
 fi
 
 DECLARED=$(printf '%s' "$CAPS_SRC" | grep -oE '\{:key "[^"]+"' | sed -E 's/^\{:key "//; s/"$//' | sort -u)
