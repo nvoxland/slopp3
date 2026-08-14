@@ -992,3 +992,54 @@
         (is (seq (rules/assertions-never-red-check nil obs [fid])))))
     (testing "the op is a registered marker, or foreign sync full-reloads on every sighting"
       (is (contains? fields/markers :observe)))))
+
+(deftest a-str-built-href-is-checked-as-far-as-its-literal-goes
+  ;; From slopp-ui, who hit this on a real screen. `link-refs` already reads an
+  ;; INLINE `(str "/lit" …)` as a `:prefix` and checks it — the gap is that the
+  ;; ordinary way to write one binds it first:
+  ;;
+  ;;   (let [to (str "/p/" (:slug x) "/")] … [:a {:href to} …])
+  ;;
+  ;; so the attr value is the SYMBOL `to` and the ref falls to `:unresolved`,
+  ;; graded `:info`. That grade means "no static pass can resolve a local",
+  ;; which is a fact about the ANALYZER; the reader is asking whether the link
+  ;; is dead, which is a fact about the CODE.
+  ;;
+  ;; The two come apart on a ROUTE RENAME. Rename `/p/:slug` and this `str`
+  ;; keeps building `/p/…` forever — every link the page emits is dead, and the
+  ;; finding reads exactly like the benign one. That is `stale-pattern`'s
+  ;; argument one shape over: a string naming a route that no longer exists.
+  (let [mk (fn [body]
+             (let [s (store/ingest (store/empty-store) 'shop.ui
+                                   (str "(ns shop.ui)\n\n"
+                                        "(defn ^{:web/method :get :web/path \"/p/:slug\""
+                                        " :web/auth :public} page \"P.\" [req]\n"
+                                        "  " body ")\n"))]
+               (first (store/record-config-put s "capabilities" :manifest
+                                               "web.enabled" "true"))))
+        check (fn [body] (rules.web/web-dangling-route-refs-check nil (mk body) nil))]
+
+    (testing "a literal prefix that DOES match a declared route is checked and clean"
+      (let [found (check "(let [to (str \"/p/\" (:slug req) \"/\")] [:a {:href to} \"go\"])")]
+        (is (= [] found)
+            (str "resolvable to a served prefix — neither dangling nor unknowable: "
+                 (pr-str found)))))
+
+    (testing "a literal prefix matching NOTHING is a dangling link, not an :info"
+      (let [found (check "(let [to (str \"/nope/\" (:slug req) \"/\")] [:a {:href to} \"go\"])")]
+        (is (= ["/nope/"] (mapv :path found)) (pr-str found))
+        (is (= [nil] (mapv :severity found))
+            (str "this is the finding the :info grade was hiding: " (pr-str found)))))
+
+    (testing "a genuinely dynamic base stays unresolvable, and says so"
+      (let [found (check "(let [to (str (base req) \"/x\")] [:a {:href to} \"go\"])")]
+        (is (= [:info] (mapv :severity found)) (pr-str found))))
+
+    (testing "an AMBIGUOUS name is not resolved — two bindings, no answer"
+      ;; erring toward :info here is the safe direction: a wrong prefix would
+      ;; manufacture a dangling finding, and a false one costs every reader of
+      ;; every done.
+      (let [found (check (str "[:div (let [to (str \"/p/\" 1)] [:a {:href to} \"a\"])"
+                              " (let [to (str \"/nope/\" 2)] [:a {:href to} \"b\"])]"))]
+        (is (every? #{:info} (map :severity found))
+            (str "shadowed name must stay unresolved: " (pr-str found)))))))

@@ -91,164 +91,6 @@
   (when (keyword? x)
     (keyword (first (str/split (name x) #"[#.]")))))
 
-(defn- link-refs
-  "Route references in one form's SEXPR: the URL-bearing attribute of a hiccup
-  element that HAS one. Root-relative string values are :exact; (str \"/lit\" …)
-  with a root-relative literal first arg is :prefix; other dynamic values are
-  :unresolved. Absolute URLs (scheme or //), anchors, and non-root-relative
-  strings are not route references at all. :action takes its method from the
-  same map's :method attr (default :get); :href is always :get.
-
-  THE TAG DECIDES — see `url-attrs`. Reading instead \"any map in this form with
-  an :href key\" was a coincidence test: it made `{:op :add :action :replace}` a
-  route reference, 16 of them store-wide, none dischargeable by anyone. The
-  attribute map must also sit in hiccup ATTRIBUTE position (second element,
-  after the tag), which is what an attr map IS. Grounding in the HTML spec is
-  not a tighter heuristic, it is the actual question, so there is no residue
-  left to shave. A map assembled elsewhere and passed in by name is missed —
-  the right side to err on: a missed ref costs a 404 nobody was told about, a
-  false one costs every reader of every done."
-  [sexpr]
-  (for [v     (filter vector? (tree-seq coll? seq sexpr))
-        :when (map? (second v))
-        :let  [m (second v)]
-        attr  (url-attrs (hiccup-tag (first v)))
-        :when (contains? m attr)
-        :let [val (get m attr)
-              method (if (= :action attr)
-                       (let [mv (get m :method "get")]
-                         (keyword (str/lower-case (if (keyword? mv) (name mv) (str mv)))))
-                       :get)
-              ref (cond
-                    (string? val)
-                    (when (and (str/starts-with? val "/")
-                               (not (str/starts-with? val "//")))
-                      {:kind :exact :path val})
-
-                    (and (seq? val) (= 'str (first val)) (string? (second val))
-                         (str/starts-with? (second val) "/")
-                         (not (str/starts-with? (second val) "//")))
-                    {:kind :prefix :path (second val)}
-
-                    (nil? val) nil
-
-                    :else {:kind :unresolved :value (pr-str val)})]
-        :when ref]
-    (assoc ref :attr attr :method method)))
-
-(defn ui-route-refs
-  "Every route REFERENCE the store's forms render: literal :href/:action
-  attrs classified :exact / :prefix / :unresolved, each row carrying the
-  qualified :form. A pure function of the forms (the keyword-inventory
-  property) — correct on every branch, after every merge, at any revision.
-  Test namespaces are fixtures.
-
-  TWO markers skip a form whole, and the difference between them is the whole
-  point of having two:
-
-  - `^{:web/external-path \"why\"}` — the target is served by something OUTSIDE
-    this store (nginx, another service). A genuine crossing, honest about it.
-  - `^{:web/client-path \"why\"}` — the target is THIS app's own path, and the
-    literal is a key the CLIENT router parses. Nothing serves it as written:
-    the render adds the mount point first, and a `:web/spa` fallback answers it.
-
-  One marker used to serve both, and the crossings inventory then reported an
-  SPA's own screens as leaving for \"somebody else's server\" — seven forms of
-  false statement in the one report someone reads to find out what is NOT
-  checked here. Widening the old marker's meaning would have kept the lie;
-  teaching the check to SEE the prefixing is not possible in general, because
-  the base arrives through an ordinary function call."
-  [store]
-  (vec
-   (for [nsx (sort (keys (:namespaces store)))
-         :when (not (store.render/test-ns? nsx))
-         e (store/forms store nsx)
-         :when (:name e)
-         :let [sx (try (n/sexpr (:node e)) (catch Exception _ nil))
-               mt (when (seq? sx) (meta (second sx)))]
-         :when (and sx
-                    (not (:web/external-path mt))
-                    (not (:web/client-path mt)))
-         ref (link-refs sx)]
-     (assoc ref :form (symbol (str nsx) (str (:name e)))))))
-
-(defn ^:export routes-report
-  "The `query_routes` payload. `web.enabled` false → `{:enabled false
-  :routes [] :note …}` — a store that never opted into HTTP has no web
-  surface and no web rules (the adoption story). Enabled → every endpoint
-  row (`endpoints`), each carrying `:rendered-by` (the forms whose
-  `ui-route-refs` target it — exact refs through the router's matcher,
-  prefix refs through the path pattern) when any do, plus the derived
-  performer vocabularies (`:effect-kinds` / `:read-kinds`)."
-  [store]
-  (if-not (capabilities/effective store "web.enabled")
-    {:enabled false :routes []
-     :note (str "web.enabled is false — config_file {path \"capabilities\" "
-                "key \"web.enabled\" value \"true\"} opts this store into HTTP")}
-    (let [refs    (ui-route-refs store)
-          renders (fn [row]
-                    (->> refs
-                         (filter (fn [{:keys [kind method path]}]
-                                   (case kind
-                                     :exact  (some? (router/match [row] method path))
-                                     :prefix (str/starts-with? (str (:path row)) path)
-                                     false)))
-                         (map :form) distinct sort vec not-empty))]
-      {:enabled true
-       :routes (mapv #(if-let [r (renders %)] (assoc % :rendered-by r) %)
-                     (endpoints store))
-       :effect-kinds (set (keys (performers store :web/effect)))
-       :read-kinds (set (keys (performers store :web/read)))})))
-
-(defn dangling-route-refs
-  "`ui-route-refs` joined against what the store actually serves: declared
-  endpoints (through the router's matcher, so parameterized paths match),
-  `web.static.*` mounts (an :exact path must map to a file that EXISTS on
-  the manifest), and route/mount prefixes for :prefix refs. Returns
-  `{:dangling [ref …] :unresolved [ref …]}` — dynamic refs are NAMED, never
-  counted clean."
-  [store]
-  (let [refs   (ui-route-refs store)
-        routes (endpoints store)
-        ;; a trailing slash on the value is trimmed, because the join below adds its
-        ;; own: `public/` would build `public//app.css`, which no manifest holds,
-        ;; and every asset link in the app would read as dangling
-        mounts (into {}
-                     (keep (fn [[k v]]
-                             (when-let [[_ m] (re-matches #"web\.static\.(.+)" (str k))]
-                               [m (str/replace (str v) #"/+$" "")])))
-                     (get-in store [:config "capabilities" :values]))
-        static-file? (fn [path]
-                       (some (fn [[url-prefix file-prefix]]
-                               (and (str/starts-with? path (str url-prefix "/"))
-                                    (some? (store/file-content
-                                            store
-                                            (str file-prefix "/"
-                                                 (subs path (inc (count url-prefix))))))))
-                             mounts))
-        ;; a document declaring :web/spa answers for client routes BELOW each
-        ;; prefix, so a link to /store/form/f1 is served even though no
-        ;; endpoint declares that path. Scoped, exactly as the fallback rows
-        ;; are: a path outside every prefix still dangles, which is the half
-        ;; of this that keeps the gate worth having.
-        spa-prefixes (into #{} (mapcat :web/spa) routes)
-        client-route? (fn [path]
-                        (some #(str/starts-with? path (str % "/")) spa-prefixes))
-        served? (fn [{:keys [kind method path]}]
-                  (case kind
-                    :exact  (boolean (or (router/match routes method path)
-                                         (static-file? path)
-                                         (client-route? path)))
-                    :prefix (boolean
-                             (or (some #(str/starts-with? (str (:path %)) path) routes)
-                                 (some (fn [[url-prefix _]]
-                                         (str/starts-with? path (str url-prefix "/")))
-                                       mounts)
-                                 (client-route? path)))
-                    false))]
-    {:dangling   (vec (remove served? (remove #(= :unresolved (:kind %)) refs)))
-     :unresolved (filterv #(= :unresolved (:kind %)) refs)}))
-
 (defn- request-literals
   "The literal ring REQUESTS in one form's sexpr: maps carrying a string `:uri`,
    as `{:method :uri}`. `:request-method` gives the method (`:get` when a test
@@ -445,23 +287,6 @@
                                       (str (:name e)))
                         :web/effects (vec (:web/effects m))}))))
                changed))))
-
-(defn web-dangling-route-refs-check
-  "Done-advisory (D-web-html): rendered links/forms targeting a path no
-   declared route or static mount serves — the UI nil-pun: it ships and
-   404s. Fires STORE-WIDE, like dead surface, because deleting a route
-   dangles an UNCHANGED form's link. Inert until web.enabled. The
-   `^{:web/external-path \\\"why\\\"}` marker on the rendering form discharges.
-
-   Dynamic (`:unresolved`) refs ride along as `:severity :info` findings:
-   listed at done, never status-flipping. They used to be omitted entirely
-   — the only way to keep them from flipping an `:error` rule red — which
-   hid the one part of this check a human has to judge."
-  [_session st* _changed]
-  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
-    (let [{:keys [dangling unresolved]} (dangling-route-refs st*)]
-      (vec (concat dangling
-                   (map #(assoc % :severity :info) unresolved))))))
 
 (defn web-stale-client-check
   "Done-advisory (D-web-contracts part 2): the generated typed client
@@ -934,3 +759,213 @@
                     " it: ^{:web/unconstrained-ok \"a proxy: the response is"
                     " whatever the project sent\"}. That discharges this, and"
                     " is reported as stale if the contract later constrains.")}))))
+
+(defn- unique-let-inits
+  "`{name init}` for every local in `sexpr` bound EXACTLY ONCE by a
+  let-shaped form — the binding a route reference has to be read through when
+  the href is a name rather than an expression.
+
+  `(let [to (str \"/p/\" slug)] [:a {:href to} …])` is the ordinary way to
+  write a built path, and it loses the literal prefix that the inline
+  `{:href (str \"/p/\" slug)}` keeps. Recovering it is the difference between
+  reporting *no static pass can resolve a local* — a fact about the analyzer —
+  and answering whether the link is dead, which is what the reader asked.
+
+  EXACTLY ONCE is the whole safety argument. A name bound twice in one form
+  resolves to nothing here, because resolving it to the wrong initializer
+  would manufacture a dangling finding out of working code, and a false
+  finding costs every reader of every done while a missed one costs a 404
+  somebody was already going to get. Shadowing is rare; being wrong about it
+  is not worth the coverage."
+  [sexpr]
+  (let [binders #{'let 'let* 'when-let 'if-let 'when-some 'if-some 'loop}
+        pairs   (for [x (tree-seq coll? seq sexpr)
+                      :when (and (seq? x) (binders (first x)) (vector? (second x)))
+                      [nm init] (partition 2 (second x))
+                      :when (symbol? nm)]
+                  [nm init])]
+    (into {} (for [[nm ps] (group-by first pairs)
+                   :when (= 1 (count ps))]
+               [nm (second (first ps))]))))
+
+(defn- link-refs
+  "Route references in one form's SEXPR: the URL-bearing attribute of a hiccup
+  element that HAS one. Root-relative string values are :exact; (str \"/lit\" …)
+  with a root-relative literal first arg is :prefix; other dynamic values are
+  :unresolved. Absolute URLs (scheme or //), anchors, and non-root-relative
+  strings are not route references at all. :action takes its method from the
+  same map's :method attr (default :get); :href is always :get.
+
+  THE TAG DECIDES — see `url-attrs`. Reading instead \"any map in this form with
+  an :href key\" was a coincidence test: it made `{:op :add :action :replace}` a
+  route reference, 16 of them store-wide, none dischargeable by anyone. The
+  attribute map must also sit in hiccup ATTRIBUTE position (second element,
+  after the tag), which is what an attr map IS. Grounding in the HTML spec is
+  not a tighter heuristic, it is the actual question, so there is no residue
+  left to shave. A map assembled elsewhere and passed in by name is missed —
+  the right side to err on: a missed ref costs a 404 nobody was told about, a
+  false one costs every reader of every done."
+  [sexpr]
+  (for [inits [(unique-let-inits sexpr)]
+        v     (filter vector? (tree-seq coll? seq sexpr))
+        :when (map? (second v))
+        :let  [m (second v)]
+        attr  (url-attrs (hiccup-tag (first v)))
+        :when (contains? m attr)
+        :let [raw (get m attr)
+              ;; a name resolves to what it was bound to, when that is
+              ;; unambiguous. The classification below is unchanged and simply
+              ;; sees through the binding — `:value` still reports what the
+              ;; author WROTE, so an unresolvable ref still names the symbol
+              ;; the reader has to go look at.
+              val (if (symbol? raw) (get inits raw raw) raw)
+              method (if (= :action attr)
+                       (let [mv (get m :method "get")]
+                         (keyword (str/lower-case (if (keyword? mv) (name mv) (str mv)))))
+                       :get)
+              ref (cond
+                    (string? val)
+                    (when (and (str/starts-with? val "/")
+                               (not (str/starts-with? val "//")))
+                      {:kind :exact :path val})
+
+                    (and (seq? val) (= 'str (first val)) (string? (second val))
+                         (str/starts-with? (second val) "/")
+                         (not (str/starts-with? (second val) "//")))
+                    {:kind :prefix :path (second val)}
+
+                    (nil? val) nil
+
+                    :else {:kind :unresolved :value (pr-str raw)})]
+        :when ref]
+    (assoc ref :attr attr :method method)))
+
+(defn ui-route-refs
+  "Every route REFERENCE the store's forms render: literal :href/:action
+  attrs classified :exact / :prefix / :unresolved, each row carrying the
+  qualified :form. A pure function of the forms (the keyword-inventory
+  property) — correct on every branch, after every merge, at any revision.
+  Test namespaces are fixtures.
+
+  TWO markers skip a form whole, and the difference between them is the whole
+  point of having two:
+
+  - `^{:web/external-path \"why\"}` — the target is served by something OUTSIDE
+    this store (nginx, another service). A genuine crossing, honest about it.
+  - `^{:web/client-path \"why\"}` — the target is THIS app's own path, and the
+    literal is a key the CLIENT router parses. Nothing serves it as written:
+    the render adds the mount point first, and a `:web/spa` fallback answers it.
+
+  One marker used to serve both, and the crossings inventory then reported an
+  SPA's own screens as leaving for \"somebody else's server\" — seven forms of
+  false statement in the one report someone reads to find out what is NOT
+  checked here. Widening the old marker's meaning would have kept the lie;
+  teaching the check to SEE the prefixing is not possible in general, because
+  the base arrives through an ordinary function call."
+  [store]
+  (vec
+   (for [nsx (sort (keys (:namespaces store)))
+         :when (not (store.render/test-ns? nsx))
+         e (store/forms store nsx)
+         :when (:name e)
+         :let [sx (try (n/sexpr (:node e)) (catch Exception _ nil))
+               mt (when (seq? sx) (meta (second sx)))]
+         :when (and sx
+                    (not (:web/external-path mt))
+                    (not (:web/client-path mt)))
+         ref (link-refs sx)]
+     (assoc ref :form (symbol (str nsx) (str (:name e)))))))
+
+(defn ^:export routes-report
+  "The `query_routes` payload. `web.enabled` false → `{:enabled false
+  :routes [] :note …}` — a store that never opted into HTTP has no web
+  surface and no web rules (the adoption story). Enabled → every endpoint
+  row (`endpoints`), each carrying `:rendered-by` (the forms whose
+  `ui-route-refs` target it — exact refs through the router's matcher,
+  prefix refs through the path pattern) when any do, plus the derived
+  performer vocabularies (`:effect-kinds` / `:read-kinds`)."
+  [store]
+  (if-not (capabilities/effective store "web.enabled")
+    {:enabled false :routes []
+     :note (str "web.enabled is false — config_file {path \"capabilities\" "
+                "key \"web.enabled\" value \"true\"} opts this store into HTTP")}
+    (let [refs    (ui-route-refs store)
+          renders (fn [row]
+                    (->> refs
+                         (filter (fn [{:keys [kind method path]}]
+                                   (case kind
+                                     :exact  (some? (router/match [row] method path))
+                                     :prefix (str/starts-with? (str (:path row)) path)
+                                     false)))
+                         (map :form) distinct sort vec not-empty))]
+      {:enabled true
+       :routes (mapv #(if-let [r (renders %)] (assoc % :rendered-by r) %)
+                     (endpoints store))
+       :effect-kinds (set (keys (performers store :web/effect)))
+       :read-kinds (set (keys (performers store :web/read)))})))
+
+(defn dangling-route-refs
+  "`ui-route-refs` joined against what the store actually serves: declared
+  endpoints (through the router's matcher, so parameterized paths match),
+  `web.static.*` mounts (an :exact path must map to a file that EXISTS on
+  the manifest), and route/mount prefixes for :prefix refs. Returns
+  `{:dangling [ref …] :unresolved [ref …]}` — dynamic refs are NAMED, never
+  counted clean."
+  [store]
+  (let [refs   (ui-route-refs store)
+        routes (endpoints store)
+        ;; a trailing slash on the value is trimmed, because the join below adds its
+        ;; own: `public/` would build `public//app.css`, which no manifest holds,
+        ;; and every asset link in the app would read as dangling
+        mounts (into {}
+                     (keep (fn [[k v]]
+                             (when-let [[_ m] (re-matches #"web\.static\.(.+)" (str k))]
+                               [m (str/replace (str v) #"/+$" "")])))
+                     (get-in store [:config "capabilities" :values]))
+        static-file? (fn [path]
+                       (some (fn [[url-prefix file-prefix]]
+                               (and (str/starts-with? path (str url-prefix "/"))
+                                    (some? (store/file-content
+                                            store
+                                            (str file-prefix "/"
+                                                 (subs path (inc (count url-prefix))))))))
+                             mounts))
+        ;; a document declaring :web/spa answers for client routes BELOW each
+        ;; prefix, so a link to /store/form/f1 is served even though no
+        ;; endpoint declares that path. Scoped, exactly as the fallback rows
+        ;; are: a path outside every prefix still dangles, which is the half
+        ;; of this that keeps the gate worth having.
+        spa-prefixes (into #{} (mapcat :web/spa) routes)
+        client-route? (fn [path]
+                        (some #(str/starts-with? path (str % "/")) spa-prefixes))
+        served? (fn [{:keys [kind method path]}]
+                  (case kind
+                    :exact  (boolean (or (router/match routes method path)
+                                         (static-file? path)
+                                         (client-route? path)))
+                    :prefix (boolean
+                             (or (some #(str/starts-with? (str (:path %)) path) routes)
+                                 (some (fn [[url-prefix _]]
+                                         (str/starts-with? path (str url-prefix "/")))
+                                       mounts)
+                                 (client-route? path)))
+                    false))]
+    {:dangling   (vec (remove served? (remove #(= :unresolved (:kind %)) refs)))
+     :unresolved (filterv #(= :unresolved (:kind %)) refs)}))
+
+(defn web-dangling-route-refs-check
+  "Done-advisory (D-web-html): rendered links/forms targeting a path no
+   declared route or static mount serves — the UI nil-pun: it ships and
+   404s. Fires STORE-WIDE, like dead surface, because deleting a route
+   dangles an UNCHANGED form's link. Inert until web.enabled. The
+   `^{:web/external-path \\\"why\\\"}` marker on the rendering form discharges.
+
+   Dynamic (`:unresolved`) refs ride along as `:severity :info` findings:
+   listed at done, never status-flipping. They used to be omitted entirely
+   — the only way to keep them from flipping an `:error` rule red — which
+   hid the one part of this check a human has to judge."
+  [_session st* _changed]
+  (when (= "true" (get-in st* [:config "capabilities" :values "web.enabled"]))
+    (let [{:keys [dangling unresolved]} (dangling-route-refs st*)]
+      (vec (concat dangling
+                   (map #(assoc % :severity :info) unresolved))))))

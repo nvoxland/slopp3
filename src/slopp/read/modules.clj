@@ -415,17 +415,30 @@
 
 (defn ^:export alias-drift
   "Every `:require` of a STORE namespace under something other than its
-  `canonical-alias` — `[{:ns :lib :as :canonical}]`, sorted.
+  `canonical-alias` — `[{:ns :lib :as :canonical}]`, sorted, plus
+  `:ambiguous` on the rows that matter most.
 
   Why this is worth a check when the tools are immune to it: the reference
   graph is kondo-resolved and alias-blind, so renames, sweeps and
   `query_depends` were never confused. A READER is. When `modules` names
   `slopp.edit.modules` in one namespace and `slopp.read.modules` in another,
   `modules/module-surface` in a slice is two different functions and nothing
-  on the page says which. Measured when this was written: five aliases each
-  naming more than one store namespace, one of them naming three — plus
-  aliases resembling their namespace not at all, nearly all residue from
-  renames that moved the namespace and left the `:as` behind.
+  on the page says which.
+
+  **`:ambiguous` is the half a reader can be WRONG about**, and it carries
+  every namespace the alias resolves to across this store. The rest is
+  residue — a rename moved the namespace and left the `:as` behind — which
+  costs a reader time and not correctness. Measured on a real store by
+  slopp-ui: 20 rows, 2 ambiguous. Reporting all twenty identically meant the
+  two were indistinguishable from the eighteen until a human worked out which
+  aliases collide, which is a grade describing the alias (is it canonical)
+  where the reader is asking about the consequence (does it mean two things
+  here). Both halves still report: an unmarked row is not a non-finding.
+
+  Ambiguity is judged over EVERY require, not just the drifted ones. An alias
+  can be canonical for one namespace and drifted onto another, and it is the
+  drifted row that reports — but it is only ambiguous BECAUSE of the
+  canonical one, which would be invisible to a scan of drift alone.
 
   It also removes the one way a hand sweep can be wrong where the graph is
   right: enumerating call sites by searching for `alias/name` covers a subset
@@ -447,22 +460,30 @@
   External libs are excluded — `clojure.string :as str` is not slopp's
   convention to police."
   [store]
-  (vec
-   (sort-by (juxt (comp str :ns) (comp str :lib))
-            (for [ns-sym (keys (:namespaces store))
-                  :let [e (store/form-named store ns-sym ns-sym)
-                        sx (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
-                  :when (seq? sx)
-                  clause (rest sx)
-                  :when (and (seq? clause) (= :require (first clause)))
-                  spec (rest clause)
-                  :when (and (vector? spec) (symbol? (first spec)))
-                  :let [lib (first spec)
-                        as  (second (drop-while #(not= :as %) spec))]
-                  :when (and as (contains? (:namespaces store) lib))
-                  :let [want (canonical-alias store lib)]
-                  :when (not= as want)]
-              {:ns ns-sym :lib lib :as as :canonical want}))))
+  (let [requires (for [ns-sym (keys (:namespaces store))
+                       :let [e (store/form-named store ns-sym ns-sym)
+                             sx (when e (try (n/sexpr (:node e)) (catch Exception _ nil)))]
+                       :when (seq? sx)
+                       clause (rest sx)
+                       :when (and (seq? clause) (= :require (first clause)))
+                       spec (rest clause)
+                       :when (and (vector? spec) (symbol? (first spec)))
+                       :let [lib (first spec)
+                             as  (second (drop-while #(not= :as %) spec))]
+                       :when (and as (contains? (:namespaces store) lib))]
+                   {:ns ns-sym :lib lib :as as})
+        ;; over EVERY require, canonical or not — see the docstring
+        by-alias (reduce (fn [m {:keys [as lib]}]
+                           (update m as (fnil conj (sorted-set)) lib))
+                         {} requires)]
+    (vec
+     (sort-by (juxt (comp str :ns) (comp str :lib))
+              (for [{:keys [ns lib as]} requires
+                    :let [want (canonical-alias store lib)]
+                    :when (not= as want)
+                    :let [libs (get by-alias as)]]
+                (cond-> {:ns ns :lib lib :as as :canonical want}
+                  (< 1 (count libs)) (assoc :ambiguous (vec libs))))))))
 
 (defn ^:export empty-namespaces
   "Namespaces holding nothing but their own `ns` form, sorted.

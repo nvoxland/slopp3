@@ -759,3 +759,44 @@
                              (str "(ns al.ok (:require [al.solo :as solo]))\n"
                                   "(defn go \"G.\" [] (solo/s))\n"))]
         (is (= [] (read.modules/alias-drift ok)))))))
+
+(deftest alias-drift-says-which-rows-can-make-a-reader-WRONG
+  ;; From slopp-ui, on this report: twenty rows, two of which named an alias
+  ;; that means two different namespaces in the same store — `app/f` in a slice
+  ;; is two different functions and the page does not say which. The other
+  ;; eighteen were rename residue, which only slows a reader down.
+  ;;
+  ;; Every row read identically, so the two that can make a reader WRONG were
+  ;; indistinguishable from eighteen that cannot until a human worked out which
+  ;; aliases collide. Same shape as the `:info` grade one report over: the row
+  ;; described non-canonical-ness (a property of the NAME) where the reader
+  ;; needed the consequence (is this ambiguous HERE).
+  (let [st (-> (store/empty-store)
+               (store/ingest 'au.app "(ns au.app)\n(defn f \"F.\" [] 1)\n")
+               (store/ingest 'au.client.app "(ns au.client.app)\n(defn f \"F.\" [] 2)\n")
+               (store/ingest 'au.helper "(ns au.helper)\n(defn h \"H.\" [] 3)\n")
+               (store/ingest 'au.c1 (str "(ns au.c1 (:require [au.app :as app]))\n"
+                                         "(defn g \"G.\" [] (app/f))\n"))
+               (store/ingest 'au.c2 (str "(ns au.c2 (:require [au.client.app :as app]))\n"
+                                         "(defn g \"G.\" [] (app/f))\n"))
+               (store/ingest 'au.c3 (str "(ns au.c3 (:require [au.helper :as zz]))\n"
+                                         "(defn g \"G.\" [] (zz/h))\n")))
+        rows (read.modules/alias-drift st)
+        by   (into {} (map (juxt (juxt (comp str :ns) (comp str :as)) identity)) rows)]
+    (testing "the fixture drifts at all — an empty report satisfies every
+              assertion below no matter what the rows say"
+      (is (seq rows) (pr-str rows)))
+    (testing "an alias naming TWO store namespaces says so, and names them"
+      ;; whichever of the two `app` requires is non-canonical is the row that
+      ;; reports; assert on the property rather than on which one drifts, so
+      ;; this does not depend on how canonical-alias breaks the tie
+      (let [amb (filter :ambiguous rows)]
+        (is (seq amb) (str "the collision must be marked: " (pr-str rows)))
+        (is (every? #(= 'app (:as %)) amb) (pr-str amb))
+        (is (= #{'au.app 'au.client.app}
+               (set (mapcat :ambiguous amb)))
+            (str "and name BOTH namespaces the alias resolves to: " (pr-str amb)))))
+    (testing "ordinary residue is NOT marked — otherwise the mark sorts nothing"
+      (let [row (get by ["au.c3" "zz"])]
+        (is (some? row) (str "expected a drift row for the residue alias: " (pr-str rows)))
+        (is (nil? (:ambiguous row)) (pr-str row))))))
