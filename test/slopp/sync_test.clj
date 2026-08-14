@@ -706,3 +706,50 @@
              (pr-str (into {} (filter (fn [[p _]]
                                         (not (store/projected-config-paths p)))
                                       read-by)))))))
+
+(deftest ^:external a-pull-merges-a-tracked-file-instead-of-handing-it-over
+  ;; Both sides edit ONE tracked file in DIFFERENT places. That used to be
+  ;; `file diverged: base/remote/ours all differ` — a conflict, quarantined,
+  ;; and an agent doing by hand a merge that three-way does for free.
+  (let [dir-a (temp-dir)
+        dir-b (str (temp-dir) "/clone")
+        bare  (bare-repo! (str (temp-dir) "/remote.git"))
+        sa    (external/open! {:slopp.ops/dir dir-a})]
+    (try
+      (ops/ingest! sa 'gc.core seed)
+      (ops/file-put! sa "NOTES.md" "top\nmiddle\nbottom\n" :agent "alice")
+      (external/commit-point! sa "v1" :agent "alice")
+      (is (nil? (:error (sync/push! dir-a :url bare))))
+      (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
+
+      ;; A edits the FIRST line; B will edit the LAST
+      (ops/file-put! sa "NOTES.md" "TOP\nmiddle\nbottom\n" :agent "alice")
+      (external/commit-point! sa "v2" :agent "alice")
+      (is (nil? (:error (sync/push! dir-a))))
+
+      (let [sb (external/open! {:slopp.ops/dir dir-b})]
+        (try
+          (is (= "top\nmiddle\nbottom\n" (get-in @sb [:store :files "NOTES.md"]))
+              "fixture: the clone carried the file")
+          (ops/file-put! sb "NOTES.md" "top\nmiddle\nBOTTOM\n" :agent "bob")
+
+          (let [r (sync/pull! sb :agent "bob")]
+            (is (nil? (:error r)) (pr-str r))
+            (testing "disjoint edits both survive, with no work handed to anyone"
+              (is (empty? (:conflicts r)) (str "no conflict expected: " (pr-str r)))
+              (is (= "TOP\nmiddle\nBOTTOM\n"
+                     (get-in @sb [:store :files "NOTES.md"]))
+                  (str "both edits must land: "
+                       (pr-str (get-in @sb [:store :files "NOTES.md"])))))
+            (testing "and the history says it was a merge, not an authored put"
+              (let [d (->> (store/deltas (:store @sb))
+                           (filter #(= :file-put (:op %))) last)]
+                (is (re-find #"merged" (str (:prompt d)))
+                    (str "the delta must record HOW the content arrived: "
+                         (pr-str (:prompt d)))))))
+          (finally (ops/close! sb))))
+      (finally
+        (ops/close! sa)
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))

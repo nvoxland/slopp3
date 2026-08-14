@@ -427,3 +427,39 @@
       (is (= "8080" (get-in store [:config "capabilities" :values "web.port"]))))
     (testing "the re-minted delta keeps provenance to theirs"
       (is (some :merged-from (drop (count (store/deltas ours)) (store/deltas store)))))))
+
+(deftest text-merge-is-three-way-and-knows-nothing-about-git
+  ;; A tracked file used to be absorbed whole: ours-unchanged took theirs
+  ;; wholesale, and all-three-differ was a CONFLICT — so two people editing
+  ;; different paragraphs of one README handed an agent a manual merge that a
+  ;; three-way would have done. That is work pushed onto an agent for no
+  ;; reason.
+  ;;
+  ;; PURE, and deliberately not in the git namespace: it takes three strings
+  ;; and returns one. The implementation borrows jgit's merge algorithm — the
+  ;; same one git itself uses, already on the classpath because the projection
+  ;; needs jgit — but it constructs no Repository and touches no disk, so an
+  ;; import from a directory that was never in git uses this unchanged.
+  (testing "edits to DIFFERENT lines both survive"
+    (let [r (merge/merge-text "a\nb\nc\n" "A\nb\nc\n" "a\nb\nC\n")]
+      (is (= "A\nb\nC\n" (:merged r)) (pr-str r))
+      (is (nil? (:conflict r)) (pr-str r))))
+
+  (testing "edits to the SAME line conflict, and the conflict SHOWS the hunk"
+    (let [r (merge/merge-text "a\nb\nc\n" "a\nX\nc\n" "a\nY\nc\n")]
+      (is (nil? (:merged r)) (pr-str r))
+      (is (string? (:conflict r)))
+      (testing "the unaffected lines are not part of the conflict — the agent
+                is shown the overlap, not the whole file"
+        (is (clojure.string/includes? (str (:conflict r)) "X") (pr-str r))
+        (is (clojure.string/includes? (str (:conflict r)) "Y") (pr-str r))
+        (is (clojure.string/starts-with? (str (:conflict r)) "a\n") (pr-str r)))))
+
+  (testing "one side unchanged is not a conflict in either direction"
+    (is (= "A\nb\n" (:merged (merge/merge-text "a\nb\n" "A\nb\n" "a\nb\n"))))
+    (is (= "a\nB\n" (:merged (merge/merge-text "a\nb\n" "a\nb\n" "a\nB\n")))))
+
+  (testing "a missing base is treated as empty rather than throwing — a file
+            the remote ADDED has no base to merge against"
+    (let [r (merge/merge-text nil "" "new\n")]
+      (is (= "new\n" (:merged r)) (pr-str r)))))

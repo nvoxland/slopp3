@@ -516,3 +516,52 @@
                :merged merged :conflicts conflicts :notes notes
                :changed-form-ids (vec (distinct changed)) :new-nses new-nses
                :applied applied :id-map idmap :fork-point fork-point})))))))
+
+(defn ^:export merge-text
+  "Three-way merge of TEXT: `{:merged s}` when it resolves, `{:conflict s}`
+  with the overlapping hunks marked when it does not. `base` may be nil (a
+  file the other side ADDED has nothing to merge against).
+
+  **Pure, and knows nothing about git.** Three strings in, one out — no
+  Repository, no working tree, no disk. That is the whole reason it lives
+  here rather than beside the projection: an import from a directory that
+  was never in a git repo has to reach the same logic, and slopp WORKS WITH
+  git rather than depending on it.
+
+  The algorithm is jgit's — the same one git itself performs, already on the
+  classpath because the projection needs jgit for objects and refs.
+  Borrowing a battle-tested merge is worth more than owning one: a merge
+  that is subtly wrong corrupts a file while reporting success, which is the
+  worst failure shape available here.
+
+  Why a whole-file 3-way at all, when a form is slopp's unit: a tracked file
+  has no forms, and `:files` is path→text with no sub-file addressing, so the
+  whole file IS the store's unit for it. Absorbing one wholesale was
+  therefore consistent — and it made two edits to different paragraphs of one
+  README a hand-merge for an agent, which is work nothing was gaining from.
+  Conflicting hunks still stop, and show the reader the overlap rather than
+  the file."
+  [base ours theirs]
+  (let [b (or base "") o (or ours "") t (or theirs "")]
+    (cond
+      ;; The trivial cases, short-circuited BEFORE the algorithm — cheaper, and
+      ;; total where the algorithm is not: an empty base against an empty side
+      ;; is a degenerate input jgit reports as a conflict, and "we changed
+      ;; nothing" is not a conflict in any reading.
+      (= o t) {:merged o}
+      (= o b) {:merged t}
+      (= t b) {:merged o}
+
+      :else
+      (let [raw (fn [s] (org.eclipse.jgit.diff.RawText. (.getBytes ^String s "UTF-8")))
+            res (.merge (org.eclipse.jgit.merge.MergeAlgorithm.)
+                        org.eclipse.jgit.diff.RawTextComparator/DEFAULT
+                        (raw b) (raw o) (raw t))
+            out (java.io.ByteArrayOutputStream.)]
+        (.formatMerge (org.eclipse.jgit.merge.MergeFormatter.) out res
+                      ["base" "ours" "theirs"]
+                      (java.nio.charset.Charset/forName "UTF-8"))
+        (let [text (.toString out "UTF-8")]
+          (if (.containsConflicts res)
+            {:conflict text}
+            {:merged text}))))))

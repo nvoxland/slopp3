@@ -18,7 +18,7 @@
             [slopp.ops :as ops]
             [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity] [slopp.store.render :as store.render] [slopp.edit.modules :as edit.modules]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity] [slopp.store.render :as store.render] [slopp.edit.modules :as edit.modules] [slopp.store.merge :as store.merge]))
 
 (defn path-ns
   "`src/foo/bar_baz.clj` → `foo.bar-baz`; nil for anything that is not a
@@ -275,28 +275,44 @@
                     (applied! ns-sym))))))))))
 
 (defn- apply-files!
-  "Absorb remote changes to NON-CODE files (base→tip) into the files
-  manifest — the deps.edn-style 3-way: applied when OUR copy still equals
-  the base's; all-three-diverged is a conflict.
+  "Absorb remote changes to NON-CODE files (base→tip), dispatching on what
+  the path IS rather than treating every one as an opaque blob:
 
-  A projected CONFIG rendering is not a file and is never absorbed: those
-  paths (`store/projected-config-paths`, plus anything this store already
-  holds `:config` for) are outputs of the store's own declarations, and
-  writing one into `:files` would leave two copies of the same fact in
-  fields the projection reads BOTH of. They are NOTED rather than skipped
-  silently, naming the verb that would make the change for real — a remote
-  whose `capabilities` moved is telling us something, even though it is not
-  telling us in a way we can absorb."
+  - a projected CONFIG rendering is not a file and is never absorbed
+    (`store/projected-config-paths`, plus anything this store already holds
+    `:config` for). Those are outputs of the store's own declarations, and
+    writing one into `:files` would leave two copies of the same fact in
+    fields the projection reads BOTH of. NOTED rather than skipped silently,
+    naming the verb that would make the change for real.
+  - TEXT three-way merges (`store.merge/merge-text`), so edits to different
+    parts of one file both land. Only genuinely overlapping hunks stop, and
+    the quarantined payload shows the OVERLAP rather than the whole file.
+  - BINARY cannot be merged and does not pretend to: ours-unchanged takes
+    theirs, and divergence is a conflict. Line-merging bytes would produce a
+    corrupt file while reporting success, which is the worst failure
+    available here — so the test is explicit rather than incidental.
+
+  Whole-file is the right grain for the first two: `:files` is path→text with
+  no sub-file addressing, so the whole file IS the store's unit. What changed
+  is that a DIVERGENCE inside that unit no longer costs an agent a manual
+  merge it was gaining nothing from."
   [session treeM treeT changed conflict! note! agent]
-  (let [st        (:store @session)
+  (let [st         (:store @session)
         projected? (fn [path]
                      (or (contains? store/projected-config-paths path)
-                         (some? (get-in st [:config path]))))]
+                         (some? (get-in st [:config path]))))
+        ;; a NUL byte, spelled without putting one in this source: a stored
+        ;; control byte makes the form read as BINARY to grep and it goes
+        ;; invisible to every text sweep
+        nul?       (fn [s] (and (string? s) (boolean (some #(zero? (int %)) s))))]
     (doseq [path changed
             :when (and (nil? (path-ns path)) (not= "deps.edn" path))
             :let [mv (get treeM path)
                   tv (get treeT path)
-                  cv (get-in @session [:store :files path])]]
+                  cv (get-in @session [:store :files path])
+                  ;; ours is content-addressed ({:sha …}), or any side carries
+                  ;; a NUL — either way there are no lines to merge
+                  binary? (or (map? cv) (boolean (some nul? [mv tv cv])))]]
       (cond
         (projected? path)
         (note! (str path ": the remote changed a projected declaration, not a"
@@ -319,9 +335,31 @@
             (conflict! path nil (str "file change failed: " (:error r)))
             (note! (str path ": file " (if (some? tv) "updated" "removed")))))
 
-        :else
+        ;; all three differ. A DELETION on either side is not mergeable text —
+        ;; an agent should confirm destruction, the same stance a whole-namespace
+        ;; deletion takes.
+        (or binary? (nil? tv) (nil? cv))
         (conflict! path nil
-                   (str "file diverged: base/remote/ours all differ"))))))
+                   (str "file diverged: base/remote/ours all differ"
+                        (cond binary?   " — binary, so there is nothing to merge"
+                              (nil? tv) " — the remote DELETED it while we changed it"
+                              :else     " — we deleted it while the remote changed it")))
+
+        :else
+        (let [{:keys [merged conflict]} (store.merge/merge-text mv cv tv)]
+          (if merged
+            (let [r (ops/file-put! session path merged :agent agent
+                                   :prompt (str "pull: " path
+                                                " — three-way merged with the remote"))]
+              (if (:error r)
+                (conflict! path nil (str "file change failed: " (:error r)))
+                (note! (str path ": file merged with the remote (both sides"
+                            " changed, no overlapping lines)"))))
+            (conflict! path nil
+                       (str "file diverged and the changes OVERLAP — the merged"
+                            " copy below carries conflict markers; resolve the"
+                            " marked hunks, file_put the result, then"
+                            " git_resolve:\n" conflict))))))))
 
 (defn- apply-pull!
   "The pull body once fetch/merge-base decided there IS something to absorb:
