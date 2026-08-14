@@ -467,3 +467,138 @@
         (ops/close! sess)
         (rm-rf! seed-d)
         (rm-rf! (.getParentFile (io/file origin)))))))
+
+(deftest ^:external a-clone-keeps-the-declarations-the-PATH-carries
+  ;; An export is ONE-WAY for almost everything: jars never come back, and a
+  ;; git export exists to feed external tools that understand files. Import is
+  ;; the narrow case where such a tool changed an export and we want the change
+  ;; back — as ordinary tracked form edits on top of what was there, not as a
+  ;; replacement. On THAT path a store's declarations are preserved because
+  ;; nothing removes them, exactly as they survive an agent's ordinary editing.
+  ;;
+  ;; So the contract this pins is narrower than "the store round-trips": a fact
+  ;; the export genuinely CARRIES must not be dropped on the way back in. Two
+  ;; are carried in the PATH itself, and both were being discarded —
+  ;; `path-ns`'s regex captures the namespace name and throws away the root and
+  ;; the extension, which is precisely where role and platform live.
+  ;;
+  ;; Deliberately NOT asserted: purity tiers (in no file at all), structured
+  ;; config, and the declared module manifest. Those are slopp-internal, they
+  ;; are not inputs, and a clone re-derives what it can — adoption rebuilds a
+  ;; manifest from actual usage. Losing them on a clone is a design boundary;
+  ;; losing a path-encoded fact is a defect.
+  (let [dir-a (temp-dir)
+        dir-b (str (temp-dir) "/clone")
+        bare  (bare-repo! (str (temp-dir) "/remote.git"))
+        sess  (external/open! {:slopp.ops/dir dir-a})]
+    (try
+      (swap! sess assoc :adopting? true)
+      (ops/ingest! sess 'rt.core "(ns rt.core)\n\n(defn base \"B.\" [x] x)\n")
+      (ops/ingest! sess 'rt.lab "(ns rt.lab)\n\n(defn probe \"P.\" [] 1)\n")
+      (swap! sess dissoc :adopting?)
+
+      (let [ds [(ops/module-platform! sess "rt.core" :cljc :prompt "portable")
+                (ops/module-role! sess "rt.lab" :instrument :prompt "run by hand")]]
+        ;; assert the FIXTURE before the round trip: a declaration that never
+        ;; landed is absent from the clone for a reason that has nothing to do
+        ;; with cloning, and the red reads identically
+        (is (empty? (filter :error ds)) (str "declarations must LAND: " (pr-str ds))))
+
+      (let [before (:store @sess)]
+        (is (= {"rt.core" :cljc} (:module-platforms before)) "fixture: platform declared")
+        (is (= {"rt.lab" :instrument} (:module-roles before)) "fixture: role declared")
+
+        (external/commit-point! sess "v1" :agent "alice")
+        (let [p (sync/push! dir-a :url bare)]
+          (is (nil? (:error p)) (pr-str p)))
+        (let [c (sync/clone! bare dir-b :agent "bob")]
+          (is (nil? (:error c)) (pr-str c)))
+
+        (let [sb (external/open! {:slopp.ops/dir dir-b})]
+          (try
+            (let [after (:store @sb)]
+              (testing "source survives — the half that was already guaranteed"
+                (is (= (query/query-source sess 'rt.core)
+                       (query/query-source sb 'rt.core))))
+              (testing "platform — the export carries it as the file EXTENSION"
+                (is (= (:module-platforms before) (:module-platforms after))))
+              (testing "role — the export carries it as the ROOT DIRECTORY"
+                (is (= (:module-roles before) (:module-roles after)))))
+            (finally (ops/close! sb)))))
+      (finally
+        (ops/close! sess)
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))
+
+(deftest ^:external a-pull-faces-the-same-done-gate-an-agent-does
+  ;; An import's writes go onto the branch through the ordinary verbs, which
+  ;; is right — but the milestone that closed it was minted with
+  ;; `commit_point :target head`, and `:target` is documented as "a pure
+  ;; retroactive marker: NO done runs, status is derived from the log at that
+  ;; spot". So the episode gate — impacted ^:external tests, lint, dead
+  ;; surface, the :error advisories — never ran on imported work at all.
+  ;;
+  ;; That matters because an external tool never had to satisfy any of it. The
+  ;; remote here is a genuine slopp store that FORCED a red milestone, which is
+  ;; the honest way to model "a change that loads but is not valid slopp":
+  ;; `f` stops satisfying `f-t`, and nothing in the write path objects because
+  ;; each form compiles.
+  (let [dir-a (temp-dir)
+        dir-b (str (temp-dir) "/clone")
+        bare  (bare-repo! (str (temp-dir) "/remote.git"))
+        sa    (external/open! {:slopp.ops/dir dir-a})]
+    (try
+      (ops/ingest! sa 'gc.core seed)
+      (external/commit-point! sa "v1" :agent "alice")
+      (is (nil? (:error (sync/push! dir-a :url bare))))
+      (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
+
+      ;; break f WITHOUT touching its test — loadable, and red
+      (ops/edit-replace! sa 'gc.core 'f "(defn f [x] (+ x 999))"
+                         :prompt "breaks f-t on purpose" :agent "alice")
+      (let [m (external/commit-point! sa "v2 (red, forced)" :agent "alice" :force true)]
+        (is (= :red (:status m)) (str "fixture: the remote must carry a RED state: " (pr-str m))))
+      (is (nil? (:error (sync/push! dir-a))))
+
+      (let [sb (external/open! {:slopp.ops/dir dir-b})]
+        (try
+          (let [r (sync/pull! sb :agent "bob")]
+            (testing "the change still LANDS — import writes to the branch like an agent does"
+              (is (some #{'gc.core} (:pulled r)) (pr-str r))
+              (is (str/includes? (query/query-source sb 'gc.core) "999")))
+            (testing "but it does NOT mint a milestone on a red verdict"
+              (is (= :red (:status r)) (str "the pull must run done and report its verdict: "
+                                            (pr-str r)))
+              (is (nil? (:marker r))
+                  (str "a red import must not close with a milestone: " (pr-str r))))
+            (testing "and the refusal is actionable: what is in progress, and what is wrong"
+              (is (= :red (get-in r [:findings :test-status])) (pr-str r))
+              (is (pos? (get-in r [:findings :failures] 0)) (pr-str r))
+              (is (string? (:error r)))
+              (is (re-find #"done" (str (:error r)))
+                  (str "name the gate the agent has to satisfy: " (pr-str (:error r))))))
+
+          ;; The recovery the message PROMISES, exercised rather than asserted.
+          ;; It matters beyond politeness: the refused milestone is what would
+          ;; have carried the `:git-sha` chain node, so without a working second
+          ;; pass the red path strands this line off the remote's history and
+          ;; the next push cannot fast-forward.
+          (testing "an agent fixes it here, pulls again, and the import closes"
+            (ops/edit-replace! sb 'gc.core 'f-t "(deftest f-t (is (= 1000 (f 1))))"
+                               :prompt "reconcile the test with what arrived"
+                               :agent "bob")
+            (let [r2 (sync/pull! sb :agent "bob")]
+              (is (nil? (:error r2)) (pr-str r2))
+              (is (string? (:marker r2))
+                  (str "the second pass must close the import: " (pr-str r2)))
+              (let [d (->> (store/deltas (:store @sb))
+                           (filter #(= :commit (:op %))) last)]
+                (is (string? (:git-sha d))
+                    (str "the closing milestone carries the chain node: " (pr-str d))))))
+          (finally (ops/close! sb))))
+      (finally
+        (ops/close! sa)
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))

@@ -45,7 +45,7 @@ slopp.store: slopp.cache slopp.ops (test) slopp.read (test)
 slopp.subform: slopp.read slopp.ops (test)
 slopp.subform-plan: slopp.edit slopp.store
 slopp.surgeon: slopp.read slopp.ops (test)
-slopp.sync: slopp.git slopp.kernel slopp.ops slopp.read slopp.store
+slopp.sync: slopp.edit slopp.git slopp.kernel slopp.ops slopp.read slopp.store
 slopp.sync-plan: slopp.sync slopp.store (test)
 slopp.trace: slopp.ops (test)
 slopp.unsafe: slopp.edit slopp.read slopp.store slopp.ops (test)
