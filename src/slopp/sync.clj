@@ -18,7 +18,7 @@
             [slopp.ops :as ops]
             [slopp.kernel.boot :as boot]
             [slopp.store.db :as db]
-            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity] [slopp.store.render :as store.render] [slopp.edit.modules :as edit.modules] [slopp.store.merge :as store.merge]))
+            [slopp.git :as git] [rewrite-clj.node :as n] [rewrite-clj.parser :as p] [slopp.store :as store] [slopp.git.client :as git.client] [slopp.read.query :as query] [slopp.ops.external :as external] [slopp.kernel.parity :as parity] [slopp.store.render :as store.render] [slopp.edit.modules :as edit.modules] [slopp.store.merge :as merge]))
 
 (defn path-ns
   "`src/foo/bar_baz.clj` → `foo.bar-baz`; nil for anything that is not a
@@ -346,7 +346,7 @@
                               :else     " — we deleted it while the remote changed it")))
 
         :else
-        (let [{:keys [merged conflict]} (store.merge/merge-text mv cv tv)]
+        (let [{:keys [merged conflict]} (merge/merge-text mv cv tv)]
           (if merged
             (let [r (ops/file-put! session path merged :agent agent
                                    :prompt (str "pull: " path
