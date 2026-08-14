@@ -449,6 +449,30 @@ The tell is a grade whose definition is a sentence about the analysis rather
 than about the code. `:info` because "no static pass can resolve a local" is
 that sentence exactly, and it is what let a route rename hide.
 
+**The resolution, in slopp-ui's words: keep the number, deny it the grade.**
+The unresolvable remainder is still worth showing; it is just not what decides
+the severity.
+
+**And confidence is not the only non-code axis.** Two more, both of which read
+as statements about the code and are not:
+
+- **the POPULATION.** A ranked or percentile grade guarantees that something
+  always looks worst, including in a codebase where everything is fine —
+  manufacturing an alarm out of a distribution. Absolute thresholds cannot do
+  that.
+- **the OBSERVER.** slopp-ui's `gap-step` shades a module by how thin its
+  record is and deliberately excludes `:uncovered` from the shade, because
+  coverage is measured against the SESSION's trace map — so a listener that
+  has run nothing reports everything uncovered, and a freshly-booted store
+  paints uniformly alarming for a reason about the process. The number is
+  still shown.
+
+That last one is worth keeping because it is not a rule and not a severity —
+it is a COLOUR on a diagram, written weeks before this discipline was, and it
+reached the same answer. The same failure in a different medium is what
+suggests this is a real property of graded output rather than a rule-writing
+habit.
+
 Related to Core 9's proxy rule and to the escape-with-no-action argument, and
 distinct from both: the check is CORRECT here, its population is right, and it
 is reporting the wrong axis of a real finding.
