@@ -602,3 +602,107 @@
         (rm-rf! dir-a)
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
+
+(deftest ^:external a-pull-does-not-blob-the-config-it-projected
+  ;; `apply-files!` absorbs every changed path that is neither a namespace nor
+  ;; `deps.edn` by calling `file-put!` — as an opaque `:files` blob. That net
+  ;; is right for `build.clj` (genuinely authored) and wrong for
+  ;; `capabilities`, `gates`, `rules`, `META-INF/MANIFEST.MF` and `modules`,
+  ;; which are RENDERINGS of state the store already holds: `:config` is
+  ;; semantic with per-key history, `:modules` is edge-grain.
+  ;;
+  ;; Blobbing one writes a SECOND copy of the same fact in a different field,
+  ;; and `insert-commit!` projects from BOTH `:files` and `:config` — so they
+  ;; can then disagree about what the store declares. For `modules` it is
+  ;; flatly contradictory: `config_file` refuses that path outright while pull
+  ;; wrote it as a file.
+  ;;
+  ;; An export is one-way. These paths are outputs, not inputs.
+  (let [dir-a (temp-dir)
+        dir-b (str (temp-dir) "/clone")
+        bare  (bare-repo! (str (temp-dir) "/remote.git"))
+        sa    (external/open! {:slopp.ops/dir dir-a})]
+    (try
+      (ops/ingest! sa 'gc.core seed)
+      (external/commit-point! sa "v1" :agent "alice")
+      (is (nil? (:error (sync/push! dir-a :url bare))))
+      (is (nil? (:error (sync/clone! bare dir-b :agent "bob"))))
+
+      ;; A changes a CAPABILITY after B's clone, so the projected file differs
+      ;; between the merge base and the tip — which is what puts it in the
+      ;; pull's changed set at all.
+      (let [c (ops/config-file! sa "capabilities" :key "web.enabled" :value "true"
+                                :prompt "this project serves HTTP" :agent "alice")]
+        (is (nil? (:error c)) (str "fixture: the capability must land: " (pr-str c))))
+      (external/commit-point! sa "v2" :agent "alice")
+      (is (nil? (:error (sync/push! dir-a))))
+
+      (let [sb (external/open! {:slopp.ops/dir dir-b})]
+        (try
+          (let [r (sync/pull! sb :agent "bob")]
+            (is (nil? (:error r)) (pr-str r))
+            (testing "the pull SAW the path — without this the assertion below
+                      passes against a pull that never considered it"
+              ;; NOT merely "a note mentions capabilities" — the note it USED to
+              ;; emit was "capabilities: file updated", which contains the word
+              ;; and describes the bug. Assert the note says it was not
+              ;; imported and names the verb that would make the change.
+              (is (some #(and (re-find #"capabilities" (str %))
+                              (re-find #"not imported" (str %))
+                              (re-find #"config_file" (str %)))
+                        (:notes r))
+                  (str "the ignored projection must be NOTED and actionable: " (pr-str r))))
+            (testing "and did not write a second copy of it as a file"
+              (is (nil? (get-in @sb [:store :files "capabilities"]))
+                  (str "a rendering of :config must not land in :files: "
+                       (pr-str (keys (:files (:store @sb))))))))
+          (finally (ops/close! sb))))
+      (finally
+        (ops/close! sa)
+        (rm-rf! dir-a)
+        (rm-rf! (.getParentFile (io/file dir-b)))
+        (rm-rf! (.getParentFile (io/file bare)))))))
+
+(deftest ^:external every-config-path-the-code-reads-is-declared-projected
+  ;; `store/projected-config-paths` is declared, not derived — it has to answer
+  ;; for a store holding no config at all (a fresh clone), which is exactly
+  ;; when an incoming change would be blobbed. The cost is that it can go
+  ;; stale, and the symptom is SILENT: the next pull writes a second copy of
+  ;; the new path into `:files` and reports "file updated".
+  ;;
+  ;; Pinned against what the CODE READS, which is where the drift starts — a
+  ;; new config path arrives when something starts reading one. Two earlier
+  ;; attempts pinned against a store's `:config` map and BOTH failed their own
+  ;; fixture assertion: neither a session on "." nor `built-store` carries
+  ;; config, because config projects into the tree as FILES. An empty map
+  ;; satisfies a subset check no matter what the declared set says, so the
+  ;; population assertion is what caught it — twice.
+  ;;
+  ;; Incomplete in one direction, deliberately: a path that is only WRITTEN
+  ;; (`vocabulary`, `META-INF/MANIFEST.MF`) or only PROJECTED (`modules`) has
+  ;; no read to find. Those are in the declared set and this cannot verify
+  ;; them; it verifies the half that grows.
+  (let [st       (external/built-store)
+        rx       (re-pattern (str "\\[:" "config \"([^\"]+)\""))
+        ;; a PROBE, not a config path: `store.fields/op-registry` uses it to
+        ;; assert an op crossed a field. Exempted by name because the honest
+        ;; alternative is declaring a path the store will never hold.
+        probes   #{"sample"}
+        read-by  (into (sorted-map)
+                       (reduce (fn [a [p n]] (update a p (fnil conj #{}) n)) {}
+                               (for [n (keys (:namespaces st))
+                                     f (store/forms st n)
+                                     m (re-seq rx (str (:node f)))
+                                     :when (not (probes (second m)))]
+                                 [(second m) n])))]
+    (testing "there is a population — an empty scan satisfies the subset check
+              no matter what the declared set says"
+      (is (<= 4 (count read-by)) (str "config paths the code reads: " (pr-str (keys read-by)))))
+    (testing "the check bites"
+      (is (seq (remove store/projected-config-paths #{"a-path-nobody-declared"}))))
+    (is (empty? (remove store/projected-config-paths (keys read-by)))
+        (str "undeclared config path(s) — add them to"
+             " store/projected-config-paths or a pull will blob them: "
+             (pr-str (into {} (filter (fn [[p _]]
+                                        (not (store/projected-config-paths p)))
+                                      read-by)))))))

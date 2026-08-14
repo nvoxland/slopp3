@@ -277,25 +277,51 @@
 (defn- apply-files!
   "Absorb remote changes to NON-CODE files (base→tip) into the files
   manifest — the deps.edn-style 3-way: applied when OUR copy still equals
-  the base's; all-three-diverged is a conflict."
+  the base's; all-three-diverged is a conflict.
+
+  A projected CONFIG rendering is not a file and is never absorbed: those
+  paths (`store/projected-config-paths`, plus anything this store already
+  holds `:config` for) are outputs of the store's own declarations, and
+  writing one into `:files` would leave two copies of the same fact in
+  fields the projection reads BOTH of. They are NOTED rather than skipped
+  silently, naming the verb that would make the change for real — a remote
+  whose `capabilities` moved is telling us something, even though it is not
+  telling us in a way we can absorb."
   [session treeM treeT changed conflict! note! agent]
-  (doseq [path changed
-          :when (and (nil? (path-ns path)) (not= "deps.edn" path))
-          :let [mv (get treeM path)
-                tv (get treeT path)
-                cv (get-in @session [:store :files path])]]
-    (cond
-      (= cv tv) nil
-      (= cv mv) (let [r (if (some? tv)
-                          (ops/file-put! session path tv :agent agent
-                                         :prompt (str "pull: " path))
-                          (ops/file-remove! session path :agent agent
-                                            :prompt (str "pull: removed " path)))]
-                  (if (:error r)
-                    (conflict! path nil (str "file change failed: " (:error r)))
-                    (note! (str path ": file " (if (some? tv) "updated" "removed")))))
-      :else (conflict! path nil
-                       (str "file diverged: base/remote/ours all differ")))))
+  (let [st        (:store @session)
+        projected? (fn [path]
+                     (or (contains? store/projected-config-paths path)
+                         (some? (get-in st [:config path]))))]
+    (doseq [path changed
+            :when (and (nil? (path-ns path)) (not= "deps.edn" path))
+            :let [mv (get treeM path)
+                  tv (get treeT path)
+                  cv (get-in @session [:store :files path])]]
+      (cond
+        (projected? path)
+        (note! (str path ": the remote changed a projected declaration, not a"
+                    " file — not imported. This path is rendered FROM the"
+                    " store, so absorbing it would leave two copies of the"
+                    " same fact. If the change was meant, make it here: "
+                    (if (= "modules" path)
+                      "module_dep {from … to …}"
+                      (str "config_file {path \"" path "\" key … value …}"))))
+
+        (= cv tv) nil
+
+        (= cv mv)
+        (let [r (if (some? tv)
+                  (ops/file-put! session path tv :agent agent
+                                 :prompt (str "pull: " path))
+                  (ops/file-remove! session path :agent agent
+                                    :prompt (str "pull: removed " path)))]
+          (if (:error r)
+            (conflict! path nil (str "file change failed: " (:error r)))
+            (note! (str path ": file " (if (some? tv) "updated" "removed")))))
+
+        :else
+        (conflict! path nil
+                   (str "file diverged: base/remote/ours all differ"))))))
 
 (defn- apply-pull!
   "The pull body once fetch/merge-base decided there IS something to absorb:

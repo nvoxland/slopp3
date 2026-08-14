@@ -1816,3 +1816,25 @@
   so equality against a symbol excludes all three."
   [store ns-sym]
   (last (filter #(= ns-sym (:ns %)) (deltas store))))
+
+(def ^:export projected-config-paths
+  "Tree paths that are RENDERINGS of structured store state, not authored
+  files — the import side of what `commit-paths` writes.
+
+  Every projected tree carries these: `render-config` turns a `:config` entry
+  into its file format, and the module manifest projects as `modules`. So a
+  git remote always shows them, and an importer that treats them as ordinary
+  files writes a SECOND copy of a fact the store already holds semantically —
+  in `:files`, which the projection also reads, so the two can then disagree.
+  `modules` is the sharpest case: `config_file` refuses that path outright
+  because the manifest is edge-grain, while a file write had no such
+  objection.
+
+  DECLARED rather than derived from `(:config store)`, because the store that
+  needs the answer is often the one missing the entry: a fresh clone holds no
+  config at all, and that is exactly when an incoming change would be blobbed.
+  Callers should treat a path as projected if it is in here OR the store
+  already has `:config` for it — the set covers slopp's own paths on a store
+  that has never seen them, and the store's own keys cover a project's."
+  #{"capabilities" "client" "gates" "rules" "vocabulary"
+    "META-INF/MANIFEST.MF" "modules"})
