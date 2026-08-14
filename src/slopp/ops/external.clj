@@ -1021,6 +1021,16 @@ client-deps (merge (:client-deps st) (:client provided))
   against the episode's baseline and cannot answer a whole-store question at
   all — naming them is what stops a green from claiming coverage it never had.
 
+  `:checked` is the same argument, applied to every OTHER whole-store read.
+  Each of those is folded in only when it has something to say, so a clean
+  store and a read that never ran produced identical output — the exact
+  failure this check exists to prevent, sitting inside the check. It maps each
+  read to the POPULATION it examined rather than merely naming it, because a
+  name only claims it ran: a read reporting 0 is visibly broken, where an
+  absent key was indistinguishable from clean. Found by slopp-ui, who could
+  verify one regrade from `:swept` and had to hand-build a control for the
+  other.
+
   Plus, when this project has a managed app server up, `:app {:behind n
   :url}` — how many code changes the SERVED image is behind the store it just
   called green. `0` is reported rather than omitted: the question is \"is the
@@ -1099,6 +1109,25 @@ client-deps (merge (:client-deps st) (:client provided))
         ;; check here after the R6 rules move emptied it.
         husks (read.modules/empty-namespaces st)
         aliasdrift (read.modules/alias-drift st)
+        ;; WHAT RAN, always — the same argument `:rules` already makes with
+        ;; `:swept`, applied to the reads that had no equivalent. Every read
+        ;; below is folded into the result only when it has something to say,
+        ;; so a clean store and a read that never ran produced byte-identical
+        ;; output. That is the exact failure this check exists to prevent,
+        ;; sitting in the check itself.
+        ;;
+        ;; The POPULATION rather than the name, because a name only claims it
+        ;; ran. A read that examined 0 namespaces is visibly broken, where
+        ;; "alias-drift: absent" was indistinguishable from clean — which is
+        ;; how slopp-ui came to verify a regrade by hand-building a control.
+        checked {:lint             (count nses)
+                 :dead-surface     (count nses)
+                 :tier-layering    (count (remove #(str/ends-with? (str %) "-test") nses))
+                 :module-debt      (count nses)
+                 :empty-namespaces (count nses)
+                 :alias-drift      (count nses)
+                 :crossings        (count nses)
+                 :rule-sweep       (:forms sweep)}
         errs  (filterv #(= :error (:level %)) lint)
         warns (filterv #(= :warning (:level %)) lint)
         tests (engine/run-verification! session (vec nses) nil
@@ -1134,6 +1163,7 @@ client-deps (merge (:client-deps st) (:client provided))
     (cond-> {:namespaces (count nses)
              :lint-errors (count errs)
              :lint-warnings (count warns)
+             :checked checked
              :rules sweep
              :test tests
              :status (if red? :red :green)}

@@ -1044,3 +1044,43 @@
         (letfn [(rm! [f] (when (.isDirectory f) (run! rm! (.listFiles f))) (.delete f))]
           (rm! (io/file dir)))
         (ops/close! sess)))))
+
+(deftest ^:external full-check-says-which-whole-store-reads-it-RAN
+  ;; From slopp-ui, who hit it verifying two regrades on a fresh jar and needed
+  ;; DIFFERENT evidence for each. `web-dangling-route-refs` appears in the
+  ;; rule sweep's `:swept` list, which distinguishes *ran and found nothing*
+  ;; from *did not run*. `alias-drift` has no such list, so they had to build a
+  ;; control by hand: introduce a deliberate non-canonical alias, watch it
+  ;; report, revert.
+  ;;
+  ;; `full-check!`'s own docstring already makes the argument, for one half of
+  ;; its output: `:rules` is always present with `:swept`/`:not-swept` because
+  ;; "naming them is what stops a green from claiming coverage it never had".
+  ;; Every OTHER whole-store read was `cond->`'d in only when non-empty, so a
+  ;; clean store and a read that never ran produced identical output — on the
+  ;; one surface whose entire job is to be believed.
+  ;;
+  ;; `:checked` carries the POPULATION each read examined, not just its name.
+  ;; A name alone would say "it ran"; the number is the positive control, and a
+  ;; read reporting 0 is visibly broken rather than quietly clean.
+  (let [sess (external/open!)]
+    (try
+      (ops/ingest! sess 'fc.core "(ns fc.core)\n\n(defn ^:export f \"F.\" [] 1)\n")
+      (let [r (external/full-check! sess)
+            c (:checked r)]
+        (testing "the fixture is a real store — every count below is 0 on an
+                  empty one, which would satisfy the shape while proving nothing"
+          (is (pos? (:namespaces r)) (pr-str r)))
+        (testing ":checked is ALWAYS present, on a store with nothing to report"
+          (is (map? c) (str "expected :checked on a green result: " (pr-str r))))
+        (testing "it names every whole-store read that vanishes when clean"
+          (is (every? c [:dead-surface :tier-layering :module-debt
+                         :empty-namespaces :alias-drift])
+              (str "reads missing from :checked: "
+                   (pr-str (remove c [:dead-surface :tier-layering :module-debt
+                                      :empty-namespaces :alias-drift])))))
+        (testing "and each says how big a population it examined"
+          (is (every? #(and (number? %) (pos? %)) (vals c))
+              (str "a read that examined nothing is not a clean read: "
+                   (pr-str c)))))
+      (finally (ops/close! sess)))))
