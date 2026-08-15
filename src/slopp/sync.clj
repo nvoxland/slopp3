@@ -485,10 +485,26 @@
 ^:reads (defn alignment
   "Q12: PROOF that the published slopp branch is the store's latest
   milestone — {:branch :branch-head :latest-milestone :milestone-sha
-  :aligned :note} — or nil when there is no resolvable LOCAL remote,
-  branch, or minted milestone. One call answers the cross-check agents
+  :head-milestone :aligned :note} — or nil when there is no resolvable LOCAL
+  remote, branch, or milestone. One call answers the cross-check agents
   otherwise perform by hand (throwaway worktrees, raw sqlite, duplicate
-  test runs). `commits` = query-commits rows, newest first."
+  test runs). `commits` = query-commits rows, newest first.
+
+  It asks the branch HEAD which milestone it is — `git/stamped-milestone`
+  reads the `Slopp-Commit:` trailer every projected commit carries — rather
+  than comparing against the sha the store recorded. Those are different
+  facts, and the difference is not hypothetical: a sha is pinned when a commit
+  is MINTED, which says nothing about what was published. On 2026-08-14 a
+  refused push left a pin naming a commit nobody had; the pin is
+  first-writer-wins, so no later projection could correct it, and this read
+  went permanently false against a mirror that WAS the latest milestone's
+  projection — while advising a `git_push` that could not fix it. A stamp
+  rides the artifact and cannot disagree with the artifact.
+
+  A head with NO stamp was not minted here: it is an ADOPTED remote commit
+  from a pull, and for those the milestone's `:sha` is the remote's own commit
+  id — an observation rather than a mint record — so sha equality is the
+  right question there, and only there."
   [dir remote branch commits]
   (try
     (when-let [target (and remote (resolve-remote dir remote))]
@@ -501,20 +517,50 @@
                 b    (or branch "slopp")]
             (try
               (when-let [head (.resolve repo (str "refs/heads/" b))]
-                (when-let [latest (first (filter :sha commits))]
+                ;; the LATEST milestone, not the latest one that happens to
+                ;; carry a sha: a milestone the projection never minted is
+                ;; genuinely unaligned, and skipping to an older row reported
+                ;; alignment against a milestone nobody asked about.
+                (when-let [latest (first commits)]
                   (let [head-sha (.name head)
-                        aligned  (= head-sha (:sha latest))]
+                        stamp    (try
+                                   (with-open [rw (org.eclipse.jgit.revwalk.RevWalk. repo)]
+                                     (git/stamped-milestone
+                                      (.getFullMessage (.parseCommit rw head))))
+                                   (catch Exception _ nil))
+                        aligned  (if stamp
+                                   (= stamp (:commit latest))
+                                   (= head-sha (:sha latest)))]
                     {:branch b :branch-head head-sha
                      :latest-milestone (:commit latest)
                      :milestone-sha (:sha latest)
+                     ;; what the verdict was actually based on — a reader who
+                     ;; cannot see WHICH milestone the head claims to be has to
+                     ;; go and do the cross-check this exists to replace
+                     :head-milestone stamp
                      :aligned aligned
-                     :note (if aligned
+                     :note (cond
+                             (and aligned stamp)
+                             (str "the " b " branch head STAMPS milestone "
+                                  (:commit latest) " — read off the commit"
+                                  " itself, not a recorded sha; no"
+                                  " worktree/sqlite cross-check needed")
+
+                             aligned
                              (str "the " b " branch head IS milestone "
-                                  (:commit latest) "'s projection — identical"
-                                  " by construction; no worktree/sqlite"
-                                  " cross-check needed")
-                             (str "the " b " branch head is NOT the latest"
-                                  " milestone — git_push publishes it"))})))
+                                  (:commit latest) "'s adopted commit; no"
+                                  " worktree/sqlite cross-check needed")
+
+                             stamp
+                             (str "the " b " branch head is milestone " stamp
+                                  "'s projection, not the latest ("
+                                  (:commit latest) ") — git_push publishes it")
+
+                             :else
+                             (str "the " b " branch head carries no milestone"
+                                  " stamp and is not milestone "
+                                  (:commit latest) "'s adopted commit —"
+                                  " git_push publishes it"))}))) 
               (finally (.close repo)))))))
     (catch Exception _ nil)))
 

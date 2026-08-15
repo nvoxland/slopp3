@@ -115,12 +115,26 @@
                         WHERE delta_id = ? AND fingerprint = ?" delta-id fp])))
 
 (defn- record-sha!
-  "Pin delta→sha; first writer wins (determinism makes ties identical for
-  native commits — read-back keeps every projector converged regardless)."
+  "Pin delta→sha for the projection AS IT CURRENTLY MINTS. Last writer wins.
+
+  This was first-writer-wins, on the argument that determinism makes re-writes
+  ties. They are ties — right up until a projection DIVERGES, and then
+  `INSERT OR IGNORE` preserves precisely the wrong value, because the
+  correcting one always arrives second. Measured 2026-08-14: a refused push
+  left the store pinning a sha for a commit that exists nowhere, and no later
+  projection could replace it. Determinism is the reason the change is safe,
+  not a reason it was unnecessary.
+
+  A pin is a record of what this projection produces, which is refreshable by
+  definition. It is NOT evidence that the commit was ever published, and
+  nothing may read it as such — `sync/alignment` asks the branch head's own
+  `Slopp-Commit:` stamp instead."
   [conn delta-id fp sha line]
-  (jdbc/execute! conn ["INSERT OR IGNORE INTO git_map
-                          (delta_id, fingerprint, sha, line)
-                        VALUES (?,?,?,?)" delta-id fp sha line])
+  (jdbc/execute! conn ["INSERT INTO git_map (delta_id, fingerprint, sha, line)
+                        VALUES (?,?,?,?)
+                        ON CONFLICT(delta_id, fingerprint)
+                          DO UPDATE SET sha = excluded.sha, line = excluded.line"
+                       delta-id fp sha line])
   (lookup-sha conn delta-id fp))
 
 ;; ---------------------------------------------------------------------------
@@ -432,3 +446,20 @@
     (.markStart rw (.parseCommit rw (ObjectId/fromString sha-a)))
     (.markStart rw (.parseCommit rw (ObjectId/fromString sha-b)))
     (some-> (.next rw) (.name))))
+
+(defn stamped-milestone
+  "The milestone id a projected commit MESSAGE stamps itself with — the
+  `Slopp-Commit:` trailer `commit-message` writes — or nil for a commit this
+  projection did not mint (an ADOPTED remote commit, from a pull, carries no
+  trailer).
+
+  One producer, one reader, deliberately adjacent. It lets a caller ask the
+  COMMIT which milestone it is rather than trust a sha recorded when the commit
+  was minted, and those are different facts: minting happens whether or not the
+  push that follows it succeeds. On 2026-08-14 a refused push left a pinned sha
+  naming a commit nobody had, and because the pin is first-writer-wins no later
+  projection could correct it. A stamp rides the artifact, so it cannot
+  disagree with the artifact."
+  [message]
+  (when message
+    (second (re-find #"(?m)^Slopp-Commit:[ \t]*(\S+)[ \t]*$" message))))

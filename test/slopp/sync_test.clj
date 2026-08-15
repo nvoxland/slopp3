@@ -26,6 +26,14 @@
     (when (.isDirectory f) (run! rm-rf! (.listFiles f)))
     (.delete f)))
 
+(defn- work-repo!
+  "A NON-bare repo at `dir` — publish-local! mirrors into the checkout itself,
+   so alignment cannot be exercised against `bare-repo!`."
+  [dir]
+  (-> (Git/init) (.setInitialBranch "main")
+      (.setDirectory (io/file dir)) (.call) (.close))
+  dir)
+
 (defn- bare-repo! [dir]
   (-> (Git/init) (.setBare true) (.setInitialBranch "main")
       (.setDirectory (io/file dir)) (.call) (.close))
@@ -753,3 +761,38 @@
         (rm-rf! dir-a)
         (rm-rf! (.getParentFile (io/file dir-b)))
         (rm-rf! (.getParentFile (io/file bare)))))))
+
+(deftest ^:external alignment-reads-the-branch-heads-stamp-not-a-recorded-sha
+  ;; OBSERVED 2026-08-14. A commit_point minted a chain that diverged, the push
+  ;; was refused (correctly), and `record-sha!` had ALREADY pinned the tip it
+  ;; minted. A later projection re-minted the right sha and pushed fine, but the
+  ;; pin is INSERT OR IGNORE, so the wrong value stuck. `:aligned` then read the
+  ;; pin and reported false forever against a mirror that was, in fact, the
+  ;; latest milestone's projection -- and advised `git_push`, which cannot fix
+  ;; it because the projection was already published.
+  ;;
+  ;; The sha is recorded when a commit is MINTED, which says nothing about what
+  ;; was PUBLISHED. The projected commit already stamps `Slopp-Commit: dN`, so
+  ;; the branch head can be asked which milestone it is.
+  (let [dir (work-repo! (temp-dir))
+        s   (external/open! {:slopp.ops/dir dir})]
+    (try
+      (ops/ingest! s 'al.core "(ns al.core)\n(defn ^:unused-ok f [x] x)\n")
+      (external/commit-point! s "first" :agent "alice")
+      (is (nil? (:error (sync/publish-local! dir "main")))
+          "fixture: the mirror must actually publish, or every assertion below is vacuous")
+      (let [rows   (ops/query-commits s)
+            latest (first rows)]
+        (is (some? (:commit latest)) "fixture: there must be a milestone to align against")
+        (testing "a truthful row aligns"
+          (is (:aligned (sync/alignment dir "." "slopp/main" rows))))
+        (testing "a recorded sha naming a commit nobody has does NOT make it misreport"
+          (is (:aligned (sync/alignment dir "." "slopp/main"
+                                        [(assoc latest :sha (apply str (repeat 40 "0")))]))))
+        (testing "and it can still say NO -- the stamp names a different milestone"
+          ;; Without this the assertions above are equally consistent with
+          ;; ":aligned true unconditionally", which is the shape of green this
+          ;; whole entry is about.
+          (is (not (:aligned (sync/alignment dir "." "slopp/main"
+                                             [(assoc latest :commit "d99999999")]))))))
+      (finally (ops/close! s)))))

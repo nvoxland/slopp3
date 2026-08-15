@@ -280,3 +280,44 @@
               (is (nil? (at "src/gl/shared.clj")))))
           (finally (git/close-ctx! ctx))))
       (finally (ops/close! sess)))))
+
+(deftest a-projected-commit-stamps-the-milestone-it-came-from
+  (testing "the message commit-message writes is the message stamped-milestone reads"
+    ;; ONE producer, ONE reader, asserted as a round trip. The trailer is the
+    ;; only thing that lets a reader ask a commit WHICH milestone it is instead
+    ;; of trusting a sha recorded when it was minted -- and a sha recorded at
+    ;; mint time says nothing about what was published.
+    (let [msg (#'slopp.git/commit-message {:id "d27235" :description "a title"})]
+      (is (= "d27235" (slopp.git/stamped-milestone msg)) msg)))
+  (testing "a red milestone and an agent trailer do not confuse the reader"
+    (let [msg (#'slopp.git/commit-message {:id "d42" :description "t" :status :red
+                                           :author "a" :agent "ag"})]
+      (is (= "d42" (slopp.git/stamped-milestone msg)) msg)))
+  (testing "a commit this projection did not mint carries no stamp"
+    ;; An ADOPTED remote commit (a pull) is a real chain node with no trailer.
+    ;; nil is the discriminator alignment uses to fall back, so it is asserted
+    ;; rather than assumed.
+    (is (nil? (slopp.git/stamped-milestone "someone else's commit\n\nSigned-off-by: x\n")))
+    (is (nil? (slopp.git/stamped-milestone nil)))))
+
+(deftest a-re-projection-corrects-a-pin-it-had-already-written
+  ;; The pin was INSERT OR IGNORE on the argument that minting is deterministic,
+  ;; so re-writes are ties. Ties they are -- until a projection DIVERGES, and
+  ;; then first-writer-wins preserves exactly the wrong one: the correcting
+  ;; value always arrives second. Measured 2026-08-14, where a refused push left
+  ;; the store pinning a sha for a commit that exists nowhere, permanently.
+  ;;
+  ;; A pin says what the projection CURRENTLY mints. That is refreshable by
+  ;; definition, and it is not evidence that anything was published -- nothing
+  ;; may read it as such.
+  (let [dir (str (java.nio.file.Files/createTempDirectory
+                  "slopp-pin" (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (with-open [conn (slopp.store.db/open! dir)]
+      (slopp.git/ensure-map! conn)
+      (is (= "aaaaaaa" (#'slopp.git/record-sha! conn "d1" "fp1" "aaaaaaa" "main"))
+          "fixture: the first pin must land, or the correction below proves nothing")
+      (is (= "bbbbbbb" (#'slopp.git/record-sha! conn "d1" "fp1" "bbbbbbb" "main"))
+          "a later projection corrects the pin instead of being ignored")
+      (testing "a different fingerprint is a different row, not a correction"
+        (is (= "ccccccc" (#'slopp.git/record-sha! conn "d1" "fp2" "ccccccc" "main")))
+        (is (= "bbbbbbb" (#'slopp.git/record-sha! conn "d1" "fp1" "bbbbbbb" "main")))))))
