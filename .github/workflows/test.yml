@@ -123,10 +123,24 @@ jobs:
       # declaration polices itself — when it stops describing a real
       # difference the check fails asking you to drop it, so this cannot
       # quietly become a mute button.
+      # `main` is not a LOCAL branch here: actions/checkout creates
+      # remote-tracking refs only, so a bare `main` resolves in a developer
+      # clone and fails on the runner with "invalid object name". Same
+      # ref-resolution gap that made check-shipped-prose.sh unrunnable, and it
+      # fails the same silent way — the job that exists to compare two copies
+      # cannot reach one of them. Accept either spelling, and say which is
+      # missing rather than letting `git show` explain it.
       - name: The kernel's two copies still agree
         run: |
-          git show main:src/slopp/kernel/rt.clj   > /tmp/rt-main.clj
-          git show main:src/slopp/kernel/boot.clj > /tmp/boot-main.clj
+          MAIN=""
+          for r in main origin/main; do
+            if git rev-parse --verify --quiet "$r^{commit}" >/dev/null; then MAIN="$r"; break; fi
+          done
+          [ -n "$MAIN" ] \
+            || { echo "FAIL: no main or origin/main in this checkout -- this job needs BOTH refs; does it fetch depth 0?" >&2; exit 2; }
+          echo "comparing against $MAIN @ $(git log -1 --format='%h %cs' "$MAIN")"
+          git show "$MAIN:src/slopp/kernel/rt.clj"   > /tmp/rt-main.clj
+          git show "$MAIN:src/slopp/kernel/boot.clj" > /tmp/boot-main.clj
           clojure -M -m slopp.sync kernel /tmp/rt-main.clj   src/slopp/kernel/rt.clj
           clojure -M -m slopp.sync kernel /tmp/boot-main.clj src/slopp/kernel/boot.clj
   test-via-slopp:
