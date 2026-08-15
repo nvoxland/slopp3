@@ -43,6 +43,25 @@ import re
 import sys
 
 GREEN = "\U0001f7e2"
+# A finished record does not always wear the marker. 2026-08-14: a heading
+# reading "## RESOLVED 2026-08-14 by a route the options below all missed" sat
+# in the open half through a clean run, because the scan looked for the EMOJI
+# and the author had spelled it out instead. Same class as the table-row and
+# bullet misses above -- a check computed over a proxy (the marker) reporting on
+# the proxy in the real thing's voice. So the word counts too, and it is matched
+# only where a verdict is DECLARED (start of the line, or right after the
+# marker), never mid-sentence, or every entry describing what "resolved" would
+# look like would fire.
+# A DATE is what separates a verdict from prose. Without it this fires on
+# "## Done looks like" (a section title in three GOAL files), "Closed-over
+# state", "Done-advisories were..." and "- done note ..." -- eight false
+# positives measured, and a checker that cries wolf gets skipped, which is
+# worse than the miss it was written for.
+FINISHED_WORD = re.compile(
+    r"^\s*(?:[-*]\s*|#{2,3}\s*|\|\s*)?[*_]*(?:✅\s*)?[*_]*"
+    r"(?:DONE|RESOLVED|FIXED|CLOSED|SHIPPED|LANDED)[*_]*[\s:,—-]+\d{4}-\d{2}-\d{2}",
+    re.IGNORECASE,
+)
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "ideas"
 EXEMPT_MARK = "<!-- backlog: analysis -->"
 
@@ -56,6 +75,20 @@ def md_files(base):
         for n in sorted(names):
             if n.endswith(".md"):
                 yield os.path.join(dirpath, n)
+
+
+def declares_finished(line):
+    """Does this line DECLARE a verdict (a finished word carrying a date)?
+
+    A table row carries its verdict in whichever cell the table put it, not
+    the first -- so cells are tested individually. The emoji check above needs
+    no equivalent because it scans the whole line.
+    """
+    if FINISHED_WORD.match(line):
+        return True
+    if line.lstrip().startswith("|"):
+        return any(FINISHED_WORD.match(c.strip()) for c in line.split("|"))
+    return False
 
 
 def points_at_done(line, nxt=""):
@@ -78,7 +111,7 @@ def main():
         if EXEMPT_MARK in "\n".join(lines):
             continue
         for i, line in enumerate(lines):
-            if GREEN not in line:
+            if GREEN not in line and not declares_finished(line):
                 continue
             nxt = lines[i + 1] if i + 1 < len(lines) else ""
             if points_at_done(line, nxt):
