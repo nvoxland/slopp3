@@ -130,7 +130,14 @@ plus the links, and skips cleanly when `ideas/` is absent (a fresh clone).
   existing on disk. **Those two are projections**: `build!` materializes them
   from the store over `target/jar-src/`, so a hand-edit there is silently
   discarded at build time and looks exactly like a stale jar. Edit
-  `slopp.kernel.boot` / `slopp.kernel.rt` through the tools like everything else. What is
+  `slopp.kernel.boot` / `slopp.kernel.rt` through the tools like everything else.
+  **After changing either, run `bin/extract-projection.sh`** — it re-derives the
+  two tracked copies from the store, so they are GENERATED rather than typed.
+  They stay committed because `deps.edn` is `{:paths ["src"]}` and a bare clone
+  with no jar bootstraps from exactly those two files; generated is not the same
+  as untracked. Forgetting is caught by the `kernel-parity` CI lane, which names
+  the script — the copies have drifted five times and every reconciliation was a
+  copy. What is
   special about them is narrower than "needs a restart", and the distinction
   is worth knowing because it decides whether you interrupt the user:
   **a kernel function the poll loop CALLS is hot-fixable** (`reload-ns!` is
