@@ -51,8 +51,12 @@ git_resolve {path}
 - **`git_clone`** rebuilds a fileless store from a remote and grafts onto the
   remote's history so later pushes fast-forward.
 - **`query_git`** and **`query_commits`** show the projection state and prove
-  store/git alignment -- the branch head against the latest milestone's minted
-  sha.
+  store/git alignment -- by asking the branch head which milestone it is. Every
+  projected commit carries a `Slopp-Commit:` trailer naming the milestone it
+  came from, so the proof reads the artifact rather than trusting a sha the
+  store recorded when the commit was minted. Minting happens whether or not the
+  push after it succeeds; the two are different facts, and only one of them is
+  on the commit.
 
 Two stores collaborating through one repo, including edits made directly in
 GitHub's web editor, is a tested workflow, not a theoretical one.
